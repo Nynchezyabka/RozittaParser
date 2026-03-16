@@ -129,9 +129,15 @@ class ChatsService:
         self,
         limit: int = 200,
         log=None,
+        cache_db_path: Optional[str] = None,
+        force_refresh: bool = False,
     ) -> List[ChatInfo]:
         """
         Возвращает список всех диалогов пользователя.
+
+        При cache_db_path — сначала пробует отдать кэш из SQLite
+        (актуальный не старше 24 часов). Сеть трогает только если
+        кэш пуст, устарел или force_refresh=True.
 
         ID чатов берутся напрямую из Telethon через get_peer_id(entity)
         и используются AS IS — без finalize_telegram_id, так как
@@ -142,8 +148,10 @@ class ChatsService:
         Запрос делается в try/except, ошибка не прерывает загрузку.
 
         Args:
-            limit: Максимальное число диалогов (по умолчанию 200).
-            log:   Колбэк для UI-логов. Если None — используется logger.info.
+            limit:          Максимальное число диалогов (по умолчанию 200).
+            log:            Колбэк для UI-логов. Если None — используется logger.info.
+            cache_db_path:  Путь к SQLite-файлу кэша. None — кэш не используется.
+            force_refresh:  True — игнорировать кэш, загрузить с сервера.
 
         Returns:
             Список ChatInfo, отсортированный по типу:
@@ -153,6 +161,22 @@ class ChatsService:
             TelegramError: при критической ошибке Telegram API.
         """
         _log = log or logger.info
+
+        # ── Кэш ────────────────────────────────────────────────────────
+        if cache_db_path and not force_refresh:
+            try:
+                from core.database import DBManager
+                with DBManager(cache_db_path) as _db:
+                    cached = _db.load_dialogs_cache(max_age_hours=24)
+                    age    = _db.dialogs_cache_age_minutes()
+                if cached:
+                    age_str = f"{age} мин. назад" if age is not None else "недавно"
+                    _log(f"📋 Загружено {len(cached)} чатов из кэша (обновлено {age_str})")
+                    _log("💡 Для обновления нажмите кнопку 🔄 Обновить чаты")
+                    return cached
+            except Exception as exc:
+                logger.warning("chats: не удалось прочитать кэш: %s", exc)
+
         _log("📄 Получение списка всех диалогов...")
 
         try:
@@ -253,6 +277,17 @@ class ChatsService:
 
         _log(f"✅ Найдено {len(dialogs)} диалогов")
         logger.info("chats: get_dialogs → %d results", len(dialogs))
+
+        # ── Сохраняем в кэш ─────────────────────────────────────────────
+        if cache_db_path and dialogs:
+            try:
+                from core.database import DBManager
+                with DBManager(cache_db_path) as _db:
+                    _db.save_dialogs_cache(dialogs)
+                logger.info("chats: кэш диалогов обновлён (%d записей)", len(dialogs))
+            except Exception as exc:
+                logger.warning("chats: не удалось сохранить кэш: %s", exc)
+
         return dialogs
 
     # ------------------------------------------------------------------
@@ -329,9 +364,12 @@ class ChatsService:
         _log("📋 Получение списка топиков форума...")
 
         # --- Уровень 1: GetForumTopicsRequest (пагинация) ---
+        # GetForumTopicsRequest требует InputChannel (с access_hash), а не Channel.
+        # get_input_entity() возвращает правильный InputChannel из кэша сессии.
         topics: Dict[int, str] = {}
         try:
-            topics = await self._fetch_topics_via_api(entity, _log)
+            input_entity = await self._client.get_input_entity(entity)
+            topics = await self._fetch_topics_via_api(input_entity, _log)
             if topics:
                 logger.info("chats: get_topics via API → %d topics", len(topics))
                 return topics

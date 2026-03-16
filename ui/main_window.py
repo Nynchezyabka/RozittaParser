@@ -1502,9 +1502,9 @@ class MainWindow(QMainWindow):
     # СЛОТЫ: ЧАТЫ
     # ──────────────────────────────────────────────────────────────────────
 
-    def _load_chats(self) -> None:
+    def _load_chats(self, force_refresh: bool = False) -> None:
         from features.chats.ui import ChatsWorker
-        worker = ChatsWorker(self._cfg)
+        worker = ChatsWorker(self._cfg, force_refresh=force_refresh)
         worker.chats_loaded.connect(self._on_chats_loaded,       Qt.UniqueConnection)
         worker.log_message.connect(self._log.append_info,        Qt.UniqueConnection)
         worker.error.connect(self._on_worker_error,              Qt.UniqueConnection)
@@ -1514,7 +1514,7 @@ class MainWindow(QMainWindow):
         self._rozetta.set_tip("Загружаю список чатов...")
 
     def _on_refresh_chats(self) -> None:
-        self._load_chats()
+        self._load_chats(force_refresh=True)
 
     def _on_chats_loaded(self, chats: list) -> None:
         self._chats_screen.inject_chats(chats)
@@ -1584,6 +1584,15 @@ class MainWindow(QMainWindow):
             self._show_toast("Нет активной сессии Telegram", "error")
             return
 
+        # Проверяем: ChatsWorker / TopicsWorker могли ещё не закрыть соединение с SQLite-сессией.
+        # Ждём завершения всех Telethon-воркеров перед стартом ParseWorker.
+        from features.chats.ui import ChatsWorker as _ChatsWorker, TopicsWorker as _TopicsWorker
+        for w in list(self._active_workers):
+            if isinstance(w, (_ChatsWorker, _TopicsWorker)) and w.isRunning():
+                name = type(w).__name__
+                self._log.append_info(f"⏳ Жду завершения {name} перед парсингом...")
+                w.wait(30_000)   # max 30 сек (загрузка чатов может быть долгой)
+
         self._update_progress(0)
         self._start_btn.setEnabled(False)
         self._start_btn.setText("⏳  ВЫПОЛНЯЕТСЯ...")
@@ -1593,6 +1602,10 @@ class MainWindow(QMainWindow):
         self._rozetta.set_tip("Парсинг в процессе...")
         self._set_status("busy", f"Парсинг: {params.chat.get('title', '')}...")
 
+        # 300 мс — даём ChatsWorker завершить loop.close() и освободить SQLite
+        QTimer.singleShot(300, lambda: self._start_parse_worker(params))
+
+    def _start_parse_worker(self, params: ParseParams) -> None:
         worker = ParseWorker(params, self._cfg)
         worker.log_message.connect(self._log.append_info,        Qt.UniqueConnection)
         worker.progress.connect(self._update_progress,           Qt.UniqueConnection)

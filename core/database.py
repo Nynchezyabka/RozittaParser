@@ -46,6 +46,7 @@ _WAL_PRAGMAS = (
     "PRAGMA synchronous  = NORMAL;"
     "PRAGMA foreign_keys = ON;"
     "PRAGMA busy_timeout = 60000;"
+    "PRAGMA wal_autocheckpoint = 100;"   # P3-1: сброс WAL каждые 100 страниц
 )
 
 _MAX_RETRIES      = 3
@@ -112,6 +113,18 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     model_type  TEXT    NOT NULL DEFAULT 'base',
     created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (message_id, peer_id)
+);
+
+CREATE TABLE IF NOT EXISTS cached_dialogs (
+    chat_id              INTEGER PRIMARY KEY,
+    title                TEXT,
+    type                 TEXT,
+    username             TEXT,
+    participants_count   INTEGER,
+    linked_chat_id       INTEGER,
+    has_comments         INTEGER DEFAULT 0,
+    is_linked_discussion INTEGER DEFAULT 0,
+    updated_at           TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 """
 
@@ -906,3 +919,112 @@ class DBManager:
         with self._cursor() as cur:
             cur.execute(sql, (chat_id, group_id))
             return cur.fetchall()
+
+    # ------------------------------------------------------------------
+    # Кэш списка диалогов
+    # ------------------------------------------------------------------
+
+    def save_dialogs_cache(self, dialogs: List[dict]) -> None:
+        """
+        Сохраняет список чатов в таблицу cached_dialogs.
+
+        Перезаписывает существующие записи (INSERT OR REPLACE),
+        обновляет updated_at — так кэш всегда актуален после
+        успешной загрузки с сервера.
+
+        Args:
+            dialogs: Список chat-dict (формат ChatsService.get_dialogs()).
+        """
+        rows = [
+            (
+                d["id"],
+                d.get("title"),
+                d.get("type"),
+                d.get("username"),
+                d.get("participants_count"),
+                d.get("linked_chat_id"),
+                int(bool(d.get("has_comments", False))),
+                int(bool(d.get("is_linked_discussion", False))),
+            )
+            for d in dialogs
+        ]
+        with self._cursor() as cur:
+            cur.executemany(
+                """
+                INSERT OR REPLACE INTO cached_dialogs
+                    (chat_id, title, type, username, participants_count,
+                     linked_chat_id, has_comments, is_linked_discussion,
+                     updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                """,
+                rows,
+            )
+        logger.info("DBManager: cached_dialogs saved %d rows", len(rows))
+
+    def load_dialogs_cache(self, max_age_hours: int = 24) -> List[dict]:
+        """
+        Читает кэш диалогов, если он не устарел.
+
+        Args:
+            max_age_hours: Максимальный возраст кэша в часах (default 24).
+
+        Returns:
+            Список chat-dict в том же формате что ChatsService.get_dialogs(),
+            или [] если кэш пуст / устарел.
+        """
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT chat_id, title, type, username, participants_count,
+                       linked_chat_id, has_comments, is_linked_discussion
+                FROM   cached_dialogs
+                WHERE  updated_at > datetime('now', ?)
+                ORDER BY
+                    CASE type
+                        WHEN 'channel' THEN 0
+                        WHEN 'forum'   THEN 1
+                        WHEN 'group'   THEN 2
+                        ELSE                3
+                    END
+                """,
+                (f"-{max_age_hours} hours",),
+            )
+            rows = cur.fetchall()
+
+        if not rows:
+            return []
+
+        return [
+            {
+                "id":                  r[0],
+                "title":               r[1] or "",
+                "type":                r[2] or "group",
+                "username":            r[3],
+                "participants_count":  r[4],
+                "linked_chat_id":      r[5],
+                "has_comments":        bool(r[6]),
+                "is_linked_discussion": bool(r[7]),
+                "is_forum":            r[2] == "forum",
+            }
+            for r in rows
+        ]
+
+    def dialogs_cache_age_minutes(self) -> Optional[int]:
+        """
+        Возвращает возраст кэша в минутах, или None если кэша нет.
+        Используется для отображения в UI ('обновлено 10 мин назад').
+        """
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT MIN(updated_at) FROM cached_dialogs"
+            )
+            row = cur.fetchone()
+        if not row or not row[0]:
+            return None
+        import datetime as _dt
+        try:
+            updated = _dt.datetime.fromisoformat(row[0])
+            now     = _dt.datetime.utcnow()
+            return max(0, int((now - updated).total_seconds() / 60))
+        except Exception:
+            return None

@@ -126,9 +126,11 @@ class ChatsWorker(QThread):
     character_state = Signal(str)
 
     def __init__(self, cfg: AppConfig,
+                 force_refresh: bool = False,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self._cfg = cfg
+        self._cfg           = cfg
+        self._force_refresh = force_refresh
 
     def run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -160,7 +162,15 @@ class ChatsWorker(QThread):
         await client.connect()
         try:
             service = ChatsService(client)
-            chats = await service.get_dialogs(limit=200, log=self.log_message.emit)
+            # cache_db_path — общая БД в output/ (не БД конкретного чата)
+            import os
+            cache_db = os.path.join(self._cfg.output_dir, "dialogs_cache.db")
+            chats = await service.get_dialogs(
+                limit          = 200,
+                log            = self.log_message.emit,
+                cache_db_path  = cache_db,
+                force_refresh  = self._force_refresh,
+            )
             self.character_state.emit("success")
             return chats
         finally:
