@@ -1,0 +1,1714 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Rozitta Parser</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        /* ===== RESET ===== */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg:            #2B2B2B;
+            --surface:       rgba(255,255,255,0.06);
+            --surface-hov:   rgba(255,255,255,0.10);
+            --border:        rgba(255,255,255,0.10);
+            --text:          #F0F0F0;
+            --text-sec:      #BBBBBB;
+            --orange:        #FF9500;
+            --orange-soft:   rgba(255,149,0,0.15);
+            --pink:          #FF6BC9;
+            --pink-soft:     rgba(255,107,201,0.15);
+            --success:       #00C853;
+            --error:         #FF4D4D;
+            --warning:       #FFAA00;
+            --shadow:        0 8px 32px rgba(0,0,0,0.45);
+            --r:             14px;
+            --rsm:           8px;
+            --t:             all 0.2s ease;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ===== LAYOUT SHELL ===== */
+        .app {
+            display: grid;
+            grid-template-rows: 52px 1fr;
+            height: 100vh;
+        }
+
+        /* ===== HEADER ===== */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            background: rgba(22,22,22,0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
+        }
+
+        .logo {
+            font-size: 1.15rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, var(--pink), var(--orange));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .logo-dot { opacity: 0.6; }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 0.8rem;
+            color: var(--text-sec);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 4px 12px;
+            backdrop-filter: blur(8px);
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--text-sec);
+            flex-shrink: 0;
+        }
+        .status-dot.online  { background: var(--success); box-shadow: 0 0 6px var(--success); }
+        .status-dot.busy    { background: var(--warning); animation: blink 1.2s infinite; }
+
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+        /* ===== WORKSPACE ===== */
+        .workspace {
+            display: grid;
+            grid-template-columns: 196px 1fr 308px;
+            overflow: hidden;
+        }
+
+        /* ===== SIDEBAR ===== */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            padding: 14px 10px;
+            background: rgba(18,18,18,0.5);
+            border-right: 1px solid var(--border);
+            gap: 3px;
+            overflow: hidden;
+        }
+
+        .sidebar-section-label {
+            font-size: 0.68rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+            color: rgba(255,255,255,0.3);
+            padding: 6px 10px 3px;
+        }
+
+        .nav-btn {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            width: 100%;
+            padding: 9px 10px;
+            border: 1px solid transparent;
+            border-radius: var(--rsm);
+            background: none;
+            color: var(--text-sec);
+            font-family: 'Inter', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--t);
+            text-align: left;
+        }
+
+        .nav-btn:hover { background: var(--surface-hov); color: var(--text); }
+
+        .nav-btn.active {
+            background: var(--orange-soft);
+            border-color: rgba(255,149,0,0.4);
+            color: var(--orange);
+        }
+
+        .nav-btn:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+
+        .step-num {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid var(--border);
+            font-size: 0.68rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: var(--t);
+        }
+
+        .nav-btn.active .step-num {
+            background: var(--orange);
+            border-color: var(--orange);
+            color: #fff;
+        }
+
+        .nav-btn.done .step-num {
+            background: var(--success);
+            border-color: var(--success);
+            color: #fff;
+        }
+        .nav-btn.done { color: rgba(0,200,83,0.8); }
+
+        .nav-icon { font-size: 0.85rem; width: 14px; text-align: center; }
+
+        .sidebar-spacer { flex: 1; }
+
+        .sidebar-info {
+            margin-top: 8px;
+            padding: 10px;
+            border: 1px dashed rgba(255,255,255,0.1);
+            border-radius: var(--rsm);
+            background: rgba(0,0,0,0.2);
+        }
+
+        .sidebar-info-label { font-size: 0.7rem; color: var(--text-sec); margin-bottom: 4px; }
+        .sidebar-info-value { font-size: 0.8rem; color: var(--orange); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        /* ===== MAIN CONTENT ===== */
+        .main-content {
+            padding: 18px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,149,0,0.5) transparent;
+        }
+        .main-content::-webkit-scrollbar { width: 5px; }
+        .main-content::-webkit-scrollbar-thumb { background: rgba(255,149,0,0.5); border-radius: 3px; }
+
+        .tab-panel { display: none; animation: fadeIn 0.18s ease; }
+        .tab-panel.active { display: block; }
+
+        @keyframes fadeIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+
+        /* ===== CARD ===== */
+        .card {
+            background: var(--surface);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            padding: 20px;
+            box-shadow: var(--shadow);
+        }
+
+        .card + .card { margin-top: 14px; }
+
+        .card-title {
+            font-size: 0.975rem;
+            font-weight: 600;
+            margin-bottom: 18px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .card-title i {
+            background: var(--orange-soft);
+            color: var(--orange);
+            padding: 5px 6px;
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+
+        /* ===== FORM ===== */
+        .field { margin-bottom: 13px; }
+
+        .field label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-sec);
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        .inp-wrap { position: relative; }
+
+        .inp-wrap input,
+        .inp-wrap select {
+            width: 100%;
+            padding: 9px 34px 9px 11px;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border);
+            border-radius: var(--rsm);
+            color: var(--text);
+            font-size: 0.875rem;
+            font-family: 'Inter', sans-serif;
+            transition: var(--t);
+        }
+
+        .inp-wrap input:focus,
+        .inp-wrap select:focus {
+            outline: none;
+            border-color: var(--orange);
+            box-shadow: 0 0 0 3px var(--orange-soft);
+        }
+
+        .inp-wrap input.invalid {
+            border-color: var(--error);
+            box-shadow: 0 0 0 3px rgba(255,77,77,0.12);
+        }
+
+        .inp-wrap .ico {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-sec);
+            font-size: 0.85rem;
+            pointer-events: none;
+        }
+
+        .inp-wrap .ico.clickable { pointer-events: auto; cursor: pointer; }
+
+        .toggle-pw {
+            position: absolute;
+            right: 9px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: var(--text-sec);
+            cursor: pointer;
+            font-size: 0.9rem;
+            padding: 2px;
+        }
+        .toggle-pw:focus-visible { outline: 2px solid var(--orange); border-radius: 3px; }
+
+        input[readonly] {
+            background: rgba(0,0,0,0.15) !important;
+            border-style: dashed !important;
+            color: var(--text-sec) !important;
+            cursor: default;
+        }
+
+        /* ===== BUTTONS ===== */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            padding: 8px 14px;
+            border: 1px solid var(--border);
+            border-radius: var(--rsm);
+            background: rgba(0,0,0,0.3);
+            color: var(--text);
+            font-size: 0.875rem;
+            font-weight: 500;
+            font-family: 'Inter', sans-serif;
+            cursor: pointer;
+            transition: var(--t);
+        }
+        .btn:hover  { background: var(--surface-hov); }
+        .btn:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-primary  { background: var(--orange); border-color: var(--orange); color: #fff; font-weight: 600; }
+        .btn-primary:hover  { background: #e08500; border-color: #e08500; }
+        .btn-secondary { background: var(--pink-soft); border-color: var(--pink); color: var(--pink); }
+        .btn-secondary:hover { background: rgba(255,107,201,0.25); }
+        .btn-block { width: 100%; }
+
+        /* ===== AUTH METHOD ===== */
+        .auth-method {
+            display: flex;
+            background: rgba(0,0,0,0.2);
+            border-radius: var(--rsm);
+            padding: 3px;
+            gap: 3px;
+            margin-bottom: 13px;
+        }
+        .method-opt {
+            flex: 1;
+            text-align: center;
+            padding: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            color: var(--text-sec);
+            transition: var(--t);
+        }
+        .method-opt.active { background: var(--orange-soft); color: var(--orange); }
+        .method-opt:focus-visible { outline: 2px solid var(--orange); }
+
+        /* ===== CHATS ===== */
+        .chat-search { margin-bottom: 12px; }
+        .chat-search input {
+            width: 100%;
+            padding: 9px 12px;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border);
+            border-radius: var(--rsm);
+            color: var(--text);
+            font-size: 0.875rem;
+            font-family: 'Inter', sans-serif;
+        }
+        .chat-search input:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
+
+        .chats-list {
+            max-height: calc(100vh - 280px);
+            overflow-y: auto;
+            background: rgba(0,0,0,0.1);
+            border-radius: var(--rsm);
+            padding: 4px;
+            margin-bottom: 12px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,149,0,.4) transparent;
+        }
+
+        .group-hdr {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 11px;
+            cursor: pointer;
+            border-radius: var(--rsm);
+            transition: var(--t);
+        }
+        .group-hdr:hover { background: var(--surface-hov); }
+
+        .group-title {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-sec);
+        }
+
+        .group-count {
+            font-size: 0.68rem;
+            background: rgba(255,255,255,0.1);
+            padding: 2px 6px;
+            border-radius: 20px;
+        }
+
+        .chevron { transition: transform 0.2s; color: var(--text-sec); font-size: 0.75rem; }
+        .group-hdr.open .chevron { transform: rotate(90deg); }
+
+        .group-body { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; }
+        .group-body.open { max-height: 600px; }
+
+        .chat-item {
+            display: flex;
+            align-items: center;
+            padding: 9px 11px;
+            cursor: pointer;
+            border-radius: var(--rsm);
+            transition: var(--t);
+            margin: 2px 0;
+        }
+        .chat-item:hover { background: var(--surface-hov); }
+        .chat-item.sel { background: var(--orange-soft); border-left: 3px solid var(--orange); }
+        .chat-item.nested {
+            margin-left: 26px;
+            border-left: 2px dashed var(--pink);
+            border-radius: 0 var(--rsm) var(--rsm) 0;
+            position: relative;
+        }
+        .chat-item.nested::before { content:'↳'; position:absolute; left:-17px; color:var(--pink); }
+
+        .chat-ico {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 9px;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+        }
+        .chat-ico.channel { background:rgba(255,149,0,.2); color:var(--orange); }
+        .chat-ico.group   { background:rgba(255,107,201,.2); color:var(--pink); }
+        .chat-ico.forum   { background:rgba(255,107,201,.2); color:var(--pink); }
+        .chat-ico.dm      { background:rgba(68,136,255,.2); color:#4488FF; }
+
+        .chat-info { flex:1; min-width:0; }
+        .chat-name { font-weight:500; font-size:.875rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .chat-meta { font-size:.75rem; color:var(--text-sec); display:flex; gap:5px; flex-wrap:wrap; margin-top:2px; }
+
+        .rel-badge {
+            background: var(--pink-soft);
+            color: var(--pink);
+            font-size: 0.68rem;
+            padding: 2px 6px;
+            border-radius: 20px;
+            cursor: pointer;
+        }
+        .rel-badge:hover { background: var(--pink); color:#2B2B2B; }
+
+        .topic-link {
+            background: none;
+            border: 1px solid var(--pink);
+            color: var(--pink);
+            font-size: 0.68rem;
+            padding: 2px 7px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            transition: var(--t);
+        }
+        .topic-link:hover { background: var(--pink); color:#2B2B2B; }
+
+        /* ===== PARSE SETTINGS ===== */
+        .s-section { margin-bottom: 22px; }
+
+        .s-title {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--orange);
+            margin-bottom: 11px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .s-desc { font-size:0.75rem; font-weight:normal; color:var(--text-sec); margin-left:4px; }
+
+        .media-grid {
+            display: grid;
+            grid-template-columns: repeat(5,1fr);
+            gap: 7px;
+            margin-bottom: 13px;
+        }
+
+        .media-btn {
+            background: rgba(0,0,0,.2);
+            border: 1px solid var(--border);
+            border-radius: var(--rsm);
+            padding: 9px 4px;
+            text-align: center;
+            cursor: pointer;
+            transition: var(--t);
+            color: var(--text-sec);
+        }
+        .media-btn i    { font-size:1.05rem; display:block; margin-bottom:3px; }
+        .media-btn span { font-size:0.72rem; }
+        .media-btn.on   { background: var(--orange-soft); border-color: var(--orange); color: var(--orange); }
+        .media-btn:focus-visible { outline: 2px solid var(--orange); }
+
+        .par-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.875rem;
+            color: var(--text-sec);
+            margin-bottom: 7px;
+        }
+        .par-val { color: var(--orange); font-weight: 600; }
+
+        .range-sl {
+            width: 100%;
+            -webkit-appearance: none;
+            height: 5px;
+            border-radius: 3px;
+            background: rgba(0,0,0,.3);
+            outline: none;
+            margin-bottom: 12px;
+            cursor: pointer;
+        }
+        .range-sl::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 17px;
+            height: 17px;
+            background: var(--orange);
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .range-sl:focus-visible { outline: 2px solid var(--orange); }
+
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 0;
+            font-size: 0.875rem;
+        }
+        .toggle-lbl { display:flex; align-items:center; gap:7px; }
+
+        .sw {
+            width: 36px; height: 19px;
+            background: rgba(0,0,0,.3);
+            border-radius: 19px;
+            position: relative;
+            cursor: pointer;
+            transition: var(--t);
+            flex-shrink: 0;
+        }
+        .sw::after {
+            content:'';
+            position:absolute;
+            width:15px; height:15px;
+            background: #ddd;
+            border-radius: 50%;
+            top:2px; left:2px;
+            transition: transform .2s;
+        }
+        .sw.on { background: var(--orange); }
+        .sw.on::after { transform: translateX(17px); }
+
+        .recognition-row { display:flex; gap:7px; flex-wrap:wrap; }
+
+        .chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(0,0,0,.2);
+            border: 1px solid var(--border);
+            border-radius: 30px;
+            padding: 6px 11px;
+            cursor: pointer;
+            font-size: 0.825rem;
+            transition: var(--t);
+        }
+        .chip.on { background: var(--orange-soft); border-color: var(--orange); }
+        .chip i:first-child { color: var(--orange); }
+        .chip .fa-check-circle { color: var(--success); font-size: 0.78rem; }
+        .chip:focus-visible { outline: 2px solid var(--orange); }
+
+        .date-box {
+            background: rgba(0,0,0,.2);
+            border-radius: var(--rsm);
+            padding: 11px;
+        }
+        .date-row { display:flex; gap:11px; }
+        .date-field { flex:1; }
+        .date-field label { font-size:.75rem; color:var(--text-sec); display:block; margin-bottom:4px; }
+        .date-hint { font-size:.75rem; color:var(--text-sec); margin-top:7px; }
+
+        .user-filter {
+            background: rgba(0,0,0,.2);
+            border-radius: var(--rsm);
+            padding: 12px;
+        }
+        .user-filter-hdr { margin-bottom:11px; }
+
+        .mode-sel { display:flex; gap:7px; margin-bottom:11px; }
+        .mode-opt {
+            flex:1;
+            display:flex; align-items:center; justify-content:center; gap:6px;
+            background: rgba(0,0,0,.2);
+            border: 1px solid var(--border);
+            border-radius: var(--rsm);
+            padding: 8px;
+            cursor: pointer;
+            font-size: 0.825rem;
+            color: var(--text-sec);
+            transition: var(--t);
+        }
+        .mode-opt:hover { background: var(--surface-hov); color:var(--text); }
+        .mode-opt.on { background: var(--pink-soft); border-color: var(--pink); color: var(--pink); }
+
+        .user-tags { display:flex; flex-wrap:wrap; gap:7px; min-height:34px; }
+        .utag {
+            background: rgba(255,107,201,.1);
+            border: 1px solid var(--pink);
+            border-radius: 20px;
+            padding: 4px 11px;
+            font-size: 0.825rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            transition: var(--t);
+        }
+        .utag i { color: var(--pink); font-size:.72rem; }
+        .utag.on { background: var(--pink); color:#2B2B2B; }
+        .utag.on i { color:#2B2B2B; }
+
+        .mode-hint { font-size:.75rem; color:var(--text-sec); margin-top:7px; }
+
+        /* advanced filters */
+        .adv-wrap { margin-top:12px; }
+        .adv-toggle {
+            display:flex; align-items:center; gap:7px;
+            font-size:0.825rem; color:var(--text-sec);
+            background:none; border:none; font-family:'Inter',sans-serif;
+            cursor:pointer; padding:5px 0; width:100%;
+        }
+        .adv-toggle:hover { color:var(--text); }
+        .adv-toggle .caret { transition:transform .2s; font-size:0.7rem; }
+        .adv-toggle.open .caret { transform:rotate(90deg); }
+        .adv-body { display:none; padding-top:10px; }
+        .adv-body.open { display:block; }
+
+        .split-grid {
+            display: grid;
+            grid-template-columns: repeat(4,1fr);
+            gap: 7px;
+            margin-bottom: 11px;
+        }
+        .split-btn {
+            background: rgba(0,0,0,.2);
+            border: 1px solid var(--border);
+            border-radius: var(--rsm);
+            padding: 9px 4px;
+            text-align: center;
+            cursor: pointer;
+            transition: var(--t);
+            color: var(--text-sec);
+        }
+        .split-btn i    { font-size:1rem; display:block; margin-bottom:3px; }
+        .split-btn .ttl { font-size:0.72rem; font-weight:500; }
+        .split-btn.on   { background: var(--orange-soft); border-color: var(--orange); color: var(--orange); }
+        .split-btn:focus-visible { outline: 2px solid var(--orange); }
+
+        .fmt-row { display:flex; gap:7px; }
+        .fmt-btn {
+            flex:1;
+            background: rgba(0,0,0,.2);
+            border: 1px solid var(--border);
+            border-radius: var(--rsm);
+            padding: 8px;
+            font-size: 0.875rem;
+            color: var(--text-sec);
+            cursor: pointer;
+            transition: var(--t);
+            font-family: 'Inter', sans-serif;
+        }
+        .fmt-btn.on { background: var(--orange-soft); border-color: var(--orange); color: var(--orange); }
+        .fmt-btn:focus-visible { outline: 2px solid var(--orange); }
+
+        /* ===== RIGHT PANEL ===== */
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid var(--border);
+            background: rgba(16,16,16,0.4);
+            overflow: hidden;
+        }
+
+        /* character */
+        .char-section {
+            padding: 16px 14px 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(0,0,0,0.12);
+        }
+
+        .char-avatar {
+            width: 88px;
+            height: 88px;
+            border-radius: 50%;
+            border: 2px solid var(--pink);
+            background: linear-gradient(135deg, rgba(255,107,201,.2), rgba(255,149,0,.1));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            cursor: pointer;
+            transition: var(--t);
+            box-shadow: 0 0 20px rgba(255,107,201,.2);
+        }
+        .char-avatar:hover { transform: scale(1.05); box-shadow: 0 0 28px rgba(255,107,201,.35); }
+        .char-avatar img { width:100%; height:100%; object-fit:cover; border-radius:50%; }
+
+        .char-name { font-size:.875rem; font-weight:600; color:var(--pink); }
+        .char-tip  { font-size:.78rem; color:var(--text-sec); text-align:center; max-width:210px; line-height:1.4; min-height:32px; }
+
+        /* log */
+        .log-section {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            padding: 12px 13px;
+            min-height: 0;
+        }
+
+        .log-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .log-heading {
+            font-size: .875rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text);
+        }
+        .log-heading i { color: var(--orange); }
+
+        .log-acts { display:flex; gap:4px; }
+        .log-acts .btn { padding:5px 8px; font-size:.78rem; }
+
+        .log-filters {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+
+        .fbtn {
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: var(--rsm);
+            padding: 3px 9px;
+            font-size: .72rem;
+            color: var(--text-sec);
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            transition: var(--t);
+        }
+        .fbtn.on { background: var(--orange-soft); color: var(--orange); border-color: var(--orange); }
+        .fbtn:focus-visible { outline: 2px solid var(--orange); }
+
+        .log-out {
+            flex: 1;
+            background: rgba(0,0,0,.25);
+            border-radius: var(--rsm);
+            padding: 9px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .72rem;
+            line-height: 1.65;
+            margin-bottom: 10px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,149,0,.4) transparent;
+        }
+
+        .log-entry {
+            margin-bottom: 3px;
+            padding-bottom: 3px;
+            border-bottom: 1px dashed rgba(255,255,255,.04);
+        }
+
+        .log-t   { color:var(--text-sec); }
+        .log-i   { color:var(--text); }
+        .log-s   { color:var(--success); }
+        .log-w   { color:var(--warning); }
+        .log-e   { color:var(--error); }
+
+        /* progress */
+        .prog-section { padding: 0 13px 9px; }
+        .prog-lbl { display:flex; justify-content:space-between; font-size:.78rem; color:var(--text-sec); margin-bottom:4px; }
+        .prog-bar {
+            height: 5px;
+            background: rgba(0,0,0,.3);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .prog-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--pink), var(--orange));
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        /* start */
+        .start-section { padding: 8px 13px 13px; }
+
+        /* ===== TOAST ===== */
+        .toast-wrap {
+            position: fixed;
+            top: 60px;
+            right: 18px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+            pointer-events: none;
+        }
+
+        .toast {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            background: rgba(28,28,28,0.96);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: var(--rsm);
+            padding: 9px 14px;
+            font-size: .875rem;
+            min-width: 230px;
+            max-width: 300px;
+            box-shadow: var(--shadow);
+            animation: tIn .22s ease, tOut .22s ease var(--d, 3s) forwards;
+            pointer-events: auto;
+        }
+        @keyframes tIn  { from { opacity:0; transform:translateX(18px); } to { opacity:1; transform:none; } }
+        @keyframes tOut { to   { opacity:0; transform:translateX(18px); } }
+
+        .toast.success { border-left: 3px solid var(--success); }
+        .toast.error   { border-left: 3px solid var(--error); }
+        .toast.warning { border-left: 3px solid var(--warning); }
+        .toast.info    { border-left: 3px solid var(--orange); }
+
+        .toast i { flex-shrink:0; }
+        .toast.success i { color:var(--success); }
+        .toast.error   i { color:var(--error); }
+        .toast.warning i { color:var(--warning); }
+        .toast.info    i { color:var(--orange); }
+
+        /* ===== SHAKE ANIMATION ===== */
+        @keyframes shake {
+            0%,100%{transform:translateX(0)} 20%{transform:translateX(-6px)} 40%{transform:translateX(6px)} 60%{transform:translateX(-4px)} 80%{transform:translateX(4px)}
+        }
+        .shake { animation: shake .35s ease; }
+    </style>
+</head>
+<body>
+<div class="app">
+
+    <!-- ═══════════════ HEADER ═══════════════ -->
+    <header class="header">
+        <div class="logo">✦ Rozitta<span class="logo-dot"> / </span>Parser</div>
+        <div class="header-right">
+            <div class="status-pill">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Не авторизован</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ═══════════════ WORKSPACE ═══════════════ -->
+    <div class="workspace">
+
+        <!-- ── SIDEBAR ── -->
+        <nav class="sidebar" aria-label="Навигация по шагам">
+            <div class="sidebar-section-label">Шаги</div>
+
+            <button class="nav-btn active" data-tab="auth" aria-controls="tab-auth" aria-selected="true">
+                <span class="step-num">1</span>
+                <i class="fas fa-key nav-icon" aria-hidden="true"></i>
+                <span>Авторизация</span>
+            </button>
+
+            <button class="nav-btn" data-tab="chats" aria-controls="tab-chats" aria-selected="false">
+                <span class="step-num">2</span>
+                <i class="fas fa-comments nav-icon" aria-hidden="true"></i>
+                <span>Чаты</span>
+            </button>
+
+            <button class="nav-btn" data-tab="settings" aria-controls="tab-settings" aria-selected="false">
+                <span class="step-num">3</span>
+                <i class="fas fa-sliders-h nav-icon" aria-hidden="true"></i>
+                <span>Настройки</span>
+            </button>
+
+            <div class="sidebar-spacer"></div>
+
+            <div class="sidebar-info">
+                <div class="sidebar-info-label">Выбранный чат</div>
+                <div class="sidebar-info-value" id="sidebarChatName">не выбран</div>
+            </div>
+        </nav>
+
+        <!-- ── MAIN CONTENT ── -->
+        <main class="main-content" role="main">
+
+            <!-- ─── TAB 1: AUTH ─── -->
+            <div class="tab-panel active" id="tab-auth" role="tabpanel" aria-label="Авторизация">
+                <div class="card">
+                    <h2 class="card-title"><i class="fas fa-key" aria-hidden="true"></i> API и вход</h2>
+
+                    <div class="field">
+                        <label for="apiId">API ID</label>
+                        <div class="inp-wrap">
+                            <input type="text" id="apiId" placeholder="123456" autocomplete="off" aria-required="true">
+                            <i class="fas fa-hashtag ico" aria-hidden="true"></i>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label for="apiHash">API Hash</label>
+                        <div class="inp-wrap">
+                            <input type="password" id="apiHash" placeholder="ваш hash" aria-required="true">
+                            <button class="toggle-pw" id="toggleHash" aria-label="Показать/скрыть хеш"><i class="far fa-eye"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label for="phone">Номер телефона</label>
+                        <div class="inp-wrap">
+                            <input type="tel" id="phone" placeholder="+79001234567" aria-required="true">
+                            <i class="fas fa-mobile-alt ico" aria-hidden="true"></i>
+                        </div>
+                    </div>
+
+                    <div class="auth-method" role="group" aria-label="Метод входа">
+                        <div class="method-opt active" tabindex="0" data-method="phone" role="radio" aria-checked="true">
+                            <i class="fas fa-mobile-alt"></i> Телефон
+                        </div>
+                        <div class="method-opt" tabindex="0" data-method="qr" role="radio" aria-checked="false">
+                            <i class="fas fa-qrcode"></i> QR-код
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:13px; text-align:right;">
+                        <button class="btn" id="importTdataBtn" aria-label="Импортировать сессию из файла">
+                            <i class="fas fa-folder-open" aria-hidden="true"></i> Импорт сессии
+                        </button>
+                    </div>
+
+                    <button class="btn btn-primary btn-block" id="authBtn" aria-label="Войти в аккаунт Telegram">
+                        <i class="fas fa-sign-in-alt" aria-hidden="true"></i> Войти
+                    </button>
+                </div>
+            </div>
+
+            <!-- ─── TAB 2: CHATS ─── -->
+            <div class="tab-panel" id="tab-chats" role="tabpanel" aria-label="Чаты">
+                <div class="card">
+                    <h2 class="card-title"><i class="fas fa-comments" aria-hidden="true"></i> Ваши чаты</h2>
+
+                    <div class="chat-search">
+                        <input type="search" id="chatSearch" placeholder="🔍 Поиск чата..." aria-label="Поиск чата">
+                    </div>
+
+                    <div class="chats-list" id="chatsList" role="list">
+
+                        <!-- Каналы -->
+                        <div class="chat-group">
+                            <div class="group-hdr open" tabindex="0" role="button" aria-expanded="true">
+                                <div class="group-title">
+                                    <i class="fas fa-bullhorn"></i>
+                                    <span>Каналы</span>
+                                    <span class="group-count">8</span>
+                                </div>
+                                <i class="fas fa-chevron-right chevron"></i>
+                            </div>
+                            <div class="group-body open">
+                                <div class="chat-item sel" data-id="-100123456" role="listitem" tabindex="0">
+                                    <div class="chat-ico channel"><i class="fas fa-bullhorn"></i></div>
+                                    <div class="chat-info">
+                                        <div class="chat-name">Тестовый канал</div>
+                                        <div class="chat-meta"><span>-100123456</span> • 1.2K</div>
+                                    </div>
+                                </div>
+                                <div class="chat-item" data-id="@news" role="listitem" tabindex="0">
+                                    <div class="chat-ico channel"><i class="fas fa-bullhorn"></i></div>
+                                    <div class="chat-info">
+                                        <div class="chat-name">Новости проекта</div>
+                                        <div class="chat-meta">
+                                            <span>@news</span> • 5.4K
+                                            <span class="rel-badge">есть обсуждение</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="chat-item nested" data-id="-100777888" data-parent="@news" role="listitem" tabindex="0">
+                                    <div class="chat-ico group"><i class="fas fa-comments"></i></div>
+                                    <div class="chat-info">
+                                        <div class="chat-name">Обсуждение новостей</div>
+                                        <div class="chat-meta"><span>-100777888</span> • 142 участника</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Группы -->
+                        <div class="chat-group">
+                            <div class="group-hdr open" tabindex="0" role="button" aria-expanded="true">
+                                <div class="group-title">
+                                    <i class="fas fa-users"></i>
+                                    <span>Группы</span>
+                                    <span class="group-count">12</span>
+                                </div>
+                                <i class="fas fa-chevron-right chevron"></i>
+                            </div>
+                            <div class="group-body open">
+                                <div class="chat-item" data-id="-100987654" role="listitem" tabindex="0">
+                                    <div class="chat-ico group"><i class="fas fa-users"></i></div>
+                                    <div class="chat-info">
+                                        <div class="chat-name">Рабочая группа</div>
+                                        <div class="chat-meta"><span>-100987654</span> • 48</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Форумы -->
+                        <div class="chat-group">
+                            <div class="group-hdr open" tabindex="0" role="button" aria-expanded="true">
+                                <div class="group-title">
+                                    <i class="fas fa-comments"></i>
+                                    <span>Форумы</span>
+                                    <span class="group-count">3</span>
+                                </div>
+                                <i class="fas fa-chevron-right chevron"></i>
+                            </div>
+                            <div class="group-body open">
+                                <div class="chat-item" data-id="-100555666" role="listitem" tabindex="0">
+                                    <div class="chat-ico forum"><i class="fas fa-comments"></i></div>
+                                    <div class="chat-info">
+                                        <div class="chat-name">Обсуждения</div>
+                                        <div class="chat-meta">
+                                            <span>-100555666</span> • 12 тем
+                                            <button class="topic-link" onclick="event.stopPropagation(); loadTopics()">ветки (загрузить)</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="chat-item" data-id="-100555777" role="listitem" tabindex="0">
+                                    <div class="chat-ico forum"><i class="fas fa-comments"></i></div>
+                                    <div class="chat-info">
+                                        <div class="chat-name">Техподдержка</div>
+                                        <div class="chat-meta">
+                                            <span>-100555777</span> • 5 тем
+                                            <button class="topic-link" onclick="event.stopPropagation(); loadTopics()">ветки (загрузить)</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Личные чаты -->
+                        <div class="chat-group">
+                            <div class="group-hdr open" tabindex="0" role="button" aria-expanded="true">
+                                <div class="group-title">
+                                    <i class="fas fa-user"></i>
+                                    <span>Личные чаты</span>
+                                    <span class="group-count">24</span>
+                                </div>
+                                <i class="fas fa-chevron-right chevron"></i>
+                            </div>
+                            <div class="group-body open">
+                                <div class="chat-item" data-id="123456789" role="listitem" tabindex="0">
+                                    <div class="chat-ico dm"><i class="fas fa-user"></i></div>
+                                    <div class="chat-info">
+                                        <div class="chat-name">Иван Петров</div>
+                                        <div class="chat-meta"><span>123456789</span> • был(а) недавно</div>
+                                    </div>
+                                </div>
+                                <div class="chat-item" data-id="987654321" role="listitem" tabindex="0">
+                                    <div class="chat-ico dm"><i class="fas fa-user"></i></div>
+                                    <div class="chat-info">
+                                        <div class="chat-name">Анна Сидорова</div>
+                                        <div class="chat-meta"><span>987654321</span> • онлайн</div>
+                                    </div>
+                                </div>
+                                <div class="chat-item" data-id="555666777" role="listitem" tabindex="0">
+                                    <div class="chat-ico dm"><i class="fas fa-user"></i></div>
+                                    <div class="chat-info">
+                                        <div class="chat-name">Алексей К.</div>
+                                        <div class="chat-meta"><span>555666777</span> • 2 часа назад</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div><!-- /chats-list -->
+
+                    <button class="btn btn-block" id="refreshChatsBtn" aria-label="Обновить список чатов">
+                        <i class="fas fa-sync-alt" aria-hidden="true"></i> Обновить чаты
+                    </button>
+                </div>
+            </div>
+
+            <!-- ─── TAB 3: SETTINGS ─── -->
+            <div class="tab-panel" id="tab-settings" role="tabpanel" aria-label="Настройки парсинга">
+                <div class="card">
+                    <h2 class="card-title"><i class="fas fa-sliders-h" aria-hidden="true"></i> Настройки парсинга</h2>
+
+                    <div class="field">
+                        <label for="chatInput">Выбранный чат</label>
+                        <input type="text" id="chatInput" readonly placeholder="Выберите чат из списка (шаг 2)" aria-label="Выбранный чат для парсинга">
+                    </div>
+
+                    <!-- Медиафайлы -->
+                    <div class="s-section">
+                        <div class="s-title"><i class="fas fa-download"></i> Скачивание медиафайлов</div>
+                        <div class="media-grid" role="group" aria-label="Типы медиа для скачивания">
+                            <div class="media-btn on" data-type="photo" tabindex="0" role="checkbox" aria-checked="true"><i class="fas fa-image"></i><span>Фото</span></div>
+                            <div class="media-btn on" data-type="video" tabindex="0" role="checkbox" aria-checked="true"><i class="fas fa-video"></i><span>Видео</span></div>
+                            <div class="media-btn on" data-type="videomessage" tabindex="0" role="checkbox" aria-checked="true"><i class="fas fa-circle"></i><span>Кружки</span></div>
+                            <div class="media-btn on" data-type="voice" tabindex="0" role="checkbox" aria-checked="true"><i class="fas fa-microphone"></i><span>Голос</span></div>
+                            <div class="media-btn on" data-type="file" tabindex="0" role="checkbox" aria-checked="true"><i class="fas fa-file"></i><span>Файлы</span></div>
+                        </div>
+
+                        <div class="par-row">
+                            <span><i class="fas fa-tachometer-alt"></i> Параллельных загрузок</span>
+                            <span class="par-val" id="parallelValue">3</span>
+                        </div>
+                        <input type="range" min="1" max="8" value="3" class="range-sl" id="parallelSlider"
+                               aria-label="Количество параллельных загрузок" aria-valuemin="1" aria-valuemax="8" aria-valuenow="3">
+
+                        <div class="toggle-row">
+                            <div class="toggle-lbl">
+                                <i class="fas fa-sync-alt" style="color:var(--orange)"></i>
+                                <span>Пропускать скачанные файлы</span>
+                            </div>
+                            <div class="sw on" id="incrementalSwitch" role="switch" aria-checked="true" tabindex="0"></div>
+                        </div>
+                    </div>
+
+                    <!-- Распознавание речи -->
+                    <div class="s-section">
+                        <div class="s-title"><i class="fas fa-microphone-alt"></i> Распознавание речи</div>
+                        <div class="recognition-row" id="recognitionRow" role="group" aria-label="Типы медиа для распознавания речи">
+                            <div class="chip on" data-media="video" tabindex="0"><i class="fas fa-video"></i><span>Видео</span><i class="fas fa-check-circle"></i></div>
+                            <div class="chip on" data-media="voice" tabindex="0"><i class="fas fa-microphone"></i><span>Аудио</span><i class="fas fa-check-circle"></i></div>
+                            <div class="chip on" data-media="videomessage" tabindex="0"><i class="fas fa-circle"></i><span>Кружки</span><i class="fas fa-check-circle"></i></div>
+                        </div>
+                    </div>
+
+                    <!-- Диапазон дат -->
+                    <div class="s-section">
+                        <div class="s-title"><i class="fas fa-calendar-alt"></i> Диапазон скачивания</div>
+                        <div class="date-box">
+                            <div class="date-row">
+                                <div class="date-field">
+                                    <label for="dateFrom">С</label>
+                                    <div class="inp-wrap">
+                                        <input type="text" id="dateFrom" placeholder="первое сообщение">
+                                        <i class="far fa-calendar ico"></i>
+                                    </div>
+                                </div>
+                                <div class="date-field">
+                                    <label for="dateTo">По</label>
+                                    <div class="inp-wrap">
+                                        <input type="text" id="dateTo" placeholder="ГГГГ-ММ-ДД">
+                                        <i class="far fa-calendar ico"></i>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="date-hint"><i class="fas fa-info-circle"></i> По умолчанию: с первого до текущей даты</div>
+                        </div>
+                    </div>
+
+                    <!-- Фильтр по пользователям -->
+                    <div class="s-section">
+                        <div class="s-title">
+                            <i class="fas fa-user-circle"></i> Фильтр по пользователям
+                            <span class="s-desc">сообщения выбранного пользователя</span>
+                        </div>
+                        <div class="user-filter">
+                            <div class="user-filter-hdr">
+                                <button class="btn btn-secondary" id="loadMembersBtn" disabled aria-label="Загрузить участников чата">
+                                    <i class="fas fa-users"></i> Загрузить участников
+                                </button>
+                            </div>
+                            <div class="mode-sel" role="group" aria-label="Режим фильтрации">
+                                <div class="mode-opt on" data-mode="messages-only" tabindex="0">
+                                    <i class="fas fa-comment"></i> Только сообщения
+                                </div>
+                                <div class="mode-opt" data-mode="all-threads" tabindex="0">
+                                    <i class="fas fa-comments"></i> Все ветки
+                                </div>
+                            </div>
+                            <div class="user-tags" id="userTagsContainer" role="group" aria-label="Список участников">
+                                <span class="utag on"><i class="fas fa-check"></i> Все</span>
+                            </div>
+                            <div class="mode-hint"><i class="fas fa-info-circle"></i> Выберите пользователя для фильтрации</div>
+
+                            <!-- Дополнительные фильтры -->
+                            <div class="adv-wrap">
+                                <button class="adv-toggle" id="advToggle" aria-expanded="false" aria-controls="advBody">
+                                    <i class="fas fa-chevron-right caret" aria-hidden="true"></i>
+                                    <i class="fas fa-filter" aria-hidden="true"></i>
+                                    Дополнительные фильтры
+                                </button>
+                                <div class="adv-body" id="advBody">
+                                    <div class="field" style="margin-bottom:9px;">
+                                        <label for="keywords">Ключевые слова (через запятую)</label>
+                                        <div class="inp-wrap">
+                                            <input type="text" id="keywords" placeholder="например: важно, срочно">
+                                        </div>
+                                    </div>
+                                    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:9px;font-size:.875rem;">
+                                        <label style="display:flex;align-items:center;gap:6px;">
+                                            <input type="checkbox" style="accent-color:var(--orange);"> Только с медиа
+                                        </label>
+                                        <label style="display:flex;align-items:center;gap:6px;">
+                                            <input type="checkbox" style="accent-color:var(--orange);"> Только с видео
+                                        </label>
+                                    </div>
+                                    <div class="field" style="margin-bottom:0;">
+                                        <label for="minViews">Мин. просмотров</label>
+                                        <div class="inp-wrap">
+                                            <input type="number" id="minViews" min="0" placeholder="0">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Параметры разделения -->
+                    <div class="s-section">
+                        <div class="s-title"><i class="fas fa-file-alt"></i> Параметры разделения</div>
+                        <div class="split-grid" id="splitButtons" role="group" aria-label="Режим разделения файлов">
+                            <div class="split-btn on" data-mode="none" tabindex="0"><i class="fas fa-file"></i><div class="ttl">Единый</div></div>
+                            <div class="split-btn" data-mode="day" tabindex="0"><i class="fas fa-calendar-day"></i><div class="ttl">Дни</div></div>
+                            <div class="split-btn" data-mode="month" tabindex="0"><i class="fas fa-calendar-alt"></i><div class="ttl">Месяцы</div></div>
+                            <div class="split-btn" data-mode="post" tabindex="0"><i class="fas fa-comments"></i><div class="ttl">Посты</div></div>
+                        </div>
+                        <div class="toggle-row" id="commentsToggleContainer" style="display:none;">
+                            <div class="toggle-lbl">
+                                <i class="fas fa-comment-dots" style="color:var(--orange)"></i>
+                                <span>Скачивать комментарии к постам</span>
+                            </div>
+                            <div class="sw" id="commentsSwitch" role="switch" aria-checked="false" tabindex="0"></div>
+                        </div>
+                    </div>
+
+                    <!-- Экспорт -->
+                    <div class="s-section">
+                        <div class="s-title"><i class="fas fa-file-export"></i> Экспорт</div>
+                        <div style="margin-bottom:13px;">
+                            <label style="display:block;margin-bottom:7px;font-size:.8rem;color:var(--text-sec);">Формат файла</label>
+                            <div class="fmt-row" role="group" aria-label="Формат экспорта">
+                                <button class="fmt-btn on" data-format="docx">DOCX</button>
+                                <button class="fmt-btn" data-format="json">JSON</button>
+                                <button class="fmt-btn" data-format="html">HTML</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="exportPath" style="display:block;margin-bottom:7px;font-size:.8rem;color:var(--text-sec);">Папка для сохранения</label>
+                            <div class="inp-wrap">
+                                <input type="text" id="exportPath" value="Downloads\Telegram Export" placeholder="выберите папку">
+                                <i class="fas fa-folder-open ico clickable" onclick="alert('Выбор папки (демо)')"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </main><!-- /main-content -->
+
+        <!-- ── RIGHT PANEL ── -->
+        <aside class="right-panel" aria-label="Ассистент и журнал">
+
+            <!-- Character -->
+            <div class="char-section">
+                <div class="char-avatar" id="characterAvatar" role="button" tabindex="0" aria-label="Розитта — кликните для приветствия">
+                    <img src="rozitta_static.png" alt="Аватар Розитты">
+                </div>
+                <div class="char-name">Розитта</div>
+                <div class="char-tip" id="characterTip">Начните с авторизации</div>
+            </div>
+
+            <!-- Log -->
+            <div class="log-section">
+                <div class="log-top">
+                    <div class="log-heading">
+                        <i class="fas fa-terminal" aria-hidden="true"></i> Журнал
+                    </div>
+                    <div class="log-acts">
+                        <button class="btn" id="clearLogBtn" aria-label="Очистить журнал"><i class="fas fa-broom"></i></button>
+                        <button class="btn" id="copyLogBtn" aria-label="Скопировать журнал"><i class="far fa-copy"></i></button>
+                    </div>
+                </div>
+                <div class="log-filters" role="group" aria-label="Фильтры журнала">
+                    <button class="fbtn on" data-filter="all">Все</button>
+                    <button class="fbtn" data-filter="info">Инфо</button>
+                    <button class="fbtn" data-filter="success">Успех</button>
+                    <button class="fbtn" data-filter="warning">Предупр.</button>
+                    <button class="fbtn" data-filter="error">Ошибки</button>
+                </div>
+                <div class="log-out" id="logOutput" role="log" aria-live="polite" aria-label="Журнал выполнения">
+                    <div class="log-entry" data-type="info"><span class="log-t">[10:15:23]</span> <span class="log-i">Rozitta инициализирована</span></div>
+                    <div class="log-entry" data-type="success"><span class="log-t">[10:15:25]</span> <span class="log-s">Конфигурация загружена</span></div>
+                </div>
+            </div>
+
+            <!-- Progress -->
+            <div class="prog-section">
+                <div class="prog-lbl">
+                    <span>Прогресс</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="prog-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                    <div class="prog-fill" id="progressFill" style="width:0%"></div>
+                </div>
+            </div>
+
+            <!-- Start -->
+            <div class="start-section">
+                <button class="btn btn-primary btn-block" id="startBtn" aria-label="Начать парсинг данных">
+                    <i class="fas fa-play" aria-hidden="true"></i> НАЧАТЬ ПАРСИНГ
+                </button>
+            </div>
+
+        </aside><!-- /right-panel -->
+
+    </div><!-- /workspace -->
+</div><!-- /app -->
+
+<!-- Toast container -->
+<div class="toast-wrap" id="toastWrap" aria-live="polite" aria-atomic="true"></div>
+
+<script>
+// ═══════════ TOAST ═══════════
+function toast(msg, type = 'info', dur = 3200) {
+    const icons = { success:'fa-check-circle', error:'fa-exclamation-circle', warning:'fa-exclamation-triangle', info:'fa-info-circle' };
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.style.setProperty('--d', `${dur}ms`);
+    el.innerHTML = `<i class="fas ${icons[type]}"></i><span>${msg}</span>`;
+    document.getElementById('toastWrap').appendChild(el);
+    setTimeout(() => el.remove(), dur + 260);
+}
+
+// ═══════════ TABS ═══════════
+const navBtns   = document.querySelectorAll('.nav-btn');
+const tabPanels = document.querySelectorAll('.tab-panel');
+
+navBtns.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+
+function switchTab(id) {
+    navBtns.forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+    tabPanels.forEach(p => p.classList.remove('active'));
+    const btn   = document.querySelector(`.nav-btn[data-tab="${id}"]`);
+    const panel = document.getElementById(`tab-${id}`);
+    if (btn)   { btn.classList.add('active');   btn.setAttribute('aria-selected', 'true'); }
+    if (panel) panel.classList.add('active');
+}
+
+// ═══════════ CHARACTER ═══════════
+function setTip(text) {
+    document.getElementById('characterTip').textContent = text;
+    const av = document.getElementById('characterAvatar');
+    av.style.transform = 'scale(1.07)';
+    setTimeout(() => av.style.transform = '', 200);
+}
+
+document.getElementById('characterAvatar').addEventListener('click', () => setTip('Привет! Я Розитта 👋'));
+document.getElementById('characterAvatar').addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setTip('Привет! Я Розитта 👋'); }
+});
+
+// ═══════════ PASSWORD TOGGLE ═══════════
+document.getElementById('toggleHash').addEventListener('click', () => {
+    const inp = document.getElementById('apiHash');
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    document.querySelector('#toggleHash i').className = show ? 'far fa-eye-slash' : 'far fa-eye';
+});
+
+// ═══════════ AUTH ═══════════
+document.getElementById('authBtn').addEventListener('click', function() {
+    const fields = [
+        { el: document.getElementById('apiId'),    val: document.getElementById('apiId').value.trim() },
+        { el: document.getElementById('apiHash'),  val: document.getElementById('apiHash').value.trim() },
+        { el: document.getElementById('phone'),    val: document.getElementById('phone').value.trim() }
+    ];
+    let ok = true;
+    fields.forEach(({ el, val }) => {
+        if (!val) {
+            el.classList.add('invalid');
+            const wrap = el.closest('.inp-wrap') || el.parentElement;
+            wrap.classList.add('shake');
+            setTimeout(() => wrap.classList.remove('shake'), 400);
+            ok = false;
+        } else { el.classList.remove('invalid'); }
+    });
+
+    if (!ok) { toast('Заполните все обязательные поля', 'error'); return; }
+
+    this.disabled = true;
+    this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Подключение...';
+    setTip('Подключаюсь к Telegram...');
+    const dot  = document.getElementById('statusDot');
+    const stxt = document.getElementById('statusText');
+    dot.className = 'status-dot busy';
+    stxt.textContent = 'Подключение...';
+
+    setTimeout(() => {
+        this.disabled = false;
+        this.innerHTML = '<i class="fas fa-check"></i> Авторизован';
+        this.className = 'btn btn-secondary btn-block';
+        dot.className  = 'status-dot online';
+        stxt.textContent = 'Авторизован';
+        setTip('Авторизация успешна! Перейдите к чатам →');
+        toast('Авторизация прошла успешно!', 'success');
+        document.querySelector('.nav-btn[data-tab="auth"]').classList.add('done');
+        addLog('Авторизация выполнена успешно', 'success');
+        setTimeout(() => switchTab('chats'), 700);
+    }, 2000);
+});
+
+// ═══════════ AUTH METHOD ═══════════
+document.querySelectorAll('.method-opt').forEach(opt => {
+    opt.addEventListener('click', function() {
+        document.querySelectorAll('.method-opt').forEach(o => { o.classList.remove('active'); o.setAttribute('aria-checked','false'); });
+        this.classList.add('active'); this.setAttribute('aria-checked','true');
+    });
+});
+
+// ═══════════ CHAT SELECTION ═══════════
+const chatItems = document.querySelectorAll('.chat-item');
+chatItems.forEach(item => {
+    const activate = function(e) {
+        if (e.target.classList.contains('topic-link') || e.target.closest('.topic-link')) return;
+        chatItems.forEach(c => c.classList.remove('sel'));
+        this.classList.add('sel');
+        const name = this.querySelector('.chat-name').textContent;
+        const id   = this.getAttribute('data-id');
+        document.getElementById('chatInput').value = `${name} (${id})`;
+        document.getElementById('loadMembersBtn').disabled = false;
+        document.getElementById('sidebarChatName').textContent = name;
+        setTip(`Выбран: ${name}`);
+        toast(`Чат "${name}" выбран`, 'info', 2000);
+    };
+    item.addEventListener('click', activate);
+    item.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate.call(this, e); }
+    });
+});
+
+// ═══════════ GROUP HEADERS ═══════════
+document.querySelectorAll('.group-hdr').forEach(hdr => {
+    hdr.addEventListener('click', function() {
+        const body = this.nextElementSibling;
+        const isOpen = body.classList.toggle('open');
+        this.classList.toggle('open', isOpen);
+        this.setAttribute('aria-expanded', String(isOpen));
+    });
+    hdr.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hdr.click(); } });
+});
+
+// ═══════════ REFRESH CHATS ═══════════
+document.getElementById('refreshChatsBtn').addEventListener('click', function() {
+    this.disabled = true;
+    this.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i> Обновление...';
+    setTip('Обновляю список чатов...');
+    setTimeout(() => {
+        this.disabled = false;
+        this.innerHTML = '<i class="fas fa-sync-alt"></i> Обновить чаты';
+        setTip('Список чатов обновлён');
+        toast('Список чатов обновлён', 'success', 2000);
+        addLog('Список чатов обновлён', 'success');
+    }, 1500);
+});
+
+// ═══════════ TOPIC LINKS ═══════════
+function loadTopics() {
+    setTip('Загрузка тем форума...');
+    addLog('Загрузка тем форума...', 'info');
+    toast('Темы форума загружаются', 'info', 2000);
+}
+
+// ═══════════ MEDIA BUTTONS ═══════════
+document.querySelectorAll('.media-btn').forEach(btn => {
+    const toggle = function() {
+        const on = btn.classList.toggle('on');
+        btn.setAttribute('aria-checked', String(on));
+    };
+    btn.addEventListener('click', toggle);
+    btn.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+});
+
+// ═══════════ RECOGNITION CHIPS ═══════════
+document.querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => chip.classList.toggle('on'));
+    chip.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); chip.click(); } });
+});
+
+// ═══════════ PARALLEL SLIDER ═══════════
+document.getElementById('parallelSlider').addEventListener('input', function() {
+    document.getElementById('parallelValue').textContent = this.value;
+    this.setAttribute('aria-valuenow', this.value);
+});
+
+// ═══════════ INCREMENTAL SWITCH ═══════════
+const incSw = document.getElementById('incrementalSwitch');
+incSw.addEventListener('click', () => {
+    const on = incSw.classList.toggle('on');
+    incSw.setAttribute('aria-checked', String(on));
+});
+incSw.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); incSw.click(); } });
+
+// ═══════════ LOAD MEMBERS ═══════════
+document.getElementById('loadMembersBtn').addEventListener('click', function() {
+    this.disabled = true;
+    this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Загрузка...';
+    setTip('Загружаю участников...');
+    setTimeout(() => {
+        this.disabled = false;
+        this.innerHTML = '<i class="fas fa-users"></i> Загрузить участников';
+        const cont = document.getElementById('userTagsContainer');
+        cont.innerHTML = '';
+        const allTag = document.createElement('span');
+        allTag.className = 'utag on';
+        allTag.innerHTML = '<i class="fas fa-check"></i> Все';
+        cont.appendChild(allTag);
+        ['@john_doe', '@anna_s', '@peter_p', '@maria_k'].forEach(u => {
+            const tag = document.createElement('span');
+            tag.className = 'utag';
+            tag.innerHTML = `<i class="fas fa-user"></i> ${u}`;
+            cont.appendChild(tag);
+        });
+        setTip('Участники загружены');
+        toast('Загружено 4 участника', 'success', 2000);
+        addLog('Участники загружены: 4', 'success');
+    }, 1400);
+});
+
+// ═══════════ USER TAGS ═══════════
+document.getElementById('userTagsContainer').addEventListener('click', e => {
+    const tag = e.target.closest('.utag');
+    if (tag) tag.classList.toggle('on');
+});
+
+// ═══════════ USER MODE ═══════════
+document.querySelectorAll('.mode-opt').forEach(opt => {
+    opt.addEventListener('click', function() {
+        document.querySelectorAll('.mode-opt').forEach(o => o.classList.remove('on'));
+        this.classList.add('on');
+    });
+});
+
+// ═══════════ ADVANCED TOGGLE ═══════════
+document.getElementById('advToggle').addEventListener('click', function() {
+    const body = document.getElementById('advBody');
+    const open = body.classList.toggle('open');
+    this.classList.toggle('open', open);
+    this.setAttribute('aria-expanded', String(open));
+});
+
+// ═══════════ SPLIT BUTTONS ═══════════
+document.querySelectorAll('.split-btn').forEach(btn => {
+    const activate = function() {
+        document.querySelectorAll('.split-btn').forEach(b => b.classList.remove('on'));
+        this.classList.add('on');
+        document.getElementById('commentsToggleContainer').style.display =
+            this.dataset.mode === 'post' ? 'flex' : 'none';
+    };
+    btn.addEventListener('click', activate);
+    btn.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate.call(btn); } });
+});
+
+// ═══════════ COMMENTS SWITCH ═══════════
+const commentSw = document.getElementById('commentsSwitch');
+commentSw.addEventListener('click', () => {
+    const on = commentSw.classList.toggle('on');
+    commentSw.setAttribute('aria-checked', String(on));
+});
+commentSw.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); commentSw.click(); } });
+
+// ═══════════ FORMAT BUTTONS ═══════════
+document.querySelectorAll('.fmt-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.fmt-btn').forEach(b => b.classList.remove('on'));
+        this.classList.add('on');
+    });
+});
+
+// ═══════════ IMPORT ═══════════
+document.getElementById('importTdataBtn').addEventListener('click', () => {
+    toast('Выбор файла сессии (демо)', 'info', 2000);
+});
+
+// ═══════════ LOG ═══════════
+function addLog(msg, type = 'info') {
+    const out  = document.getElementById('logOutput');
+    const time = new Date().toTimeString().split(' ')[0];
+    const cls  = { info:'log-i', success:'log-s', warning:'log-w', error:'log-e' }[type] || 'log-i';
+    const el   = document.createElement('div');
+    el.className    = 'log-entry';
+    el.dataset.type = type;
+    el.innerHTML    = `<span class="log-t">[${time}]</span> <span class="${cls}">${msg}</span>`;
+    out.appendChild(el);
+    out.scrollTop = out.scrollHeight;
+}
+
+document.getElementById('clearLogBtn').addEventListener('click', () => {
+    document.getElementById('logOutput').innerHTML = '';
+    toast('Журнал очищен', 'info', 1500);
+});
+
+document.getElementById('copyLogBtn').addEventListener('click', () => {
+    navigator.clipboard.writeText(document.getElementById('logOutput').innerText)
+        .then(() => toast('Журнал скопирован', 'success', 1500));
+});
+
+document.querySelectorAll('.fbtn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.fbtn').forEach(b => b.classList.remove('on'));
+        this.classList.add('on');
+        const filter = this.dataset.filter;
+        document.querySelectorAll('.log-entry').forEach(entry => {
+            entry.style.display = (filter === 'all' || entry.dataset.type === filter) ? '' : 'none';
+        });
+    });
+});
+
+// ═══════════ START BUTTON ═══════════
+document.getElementById('startBtn').addEventListener('click', function() {
+    if (!document.getElementById('chatInput').value) {
+        toast('Выберите чат перед запуском', 'error');
+        switchTab('chats');
+        return;
+    }
+
+    this.disabled = true;
+    this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ВЫПОЛНЯЕТСЯ...';
+    setTip('Парсю данные... 🚀');
+    addLog('Начало парсинга', 'info');
+
+    let progress = 0;
+    const iv = setInterval(() => {
+        progress += Math.random() * 14;
+        if (progress > 100) progress = 100;
+        const pct = Math.round(progress);
+        document.getElementById('progressFill').style.width = `${pct}%`;
+        document.getElementById('progressPercent').textContent = `${pct}%`;
+        document.querySelector('.prog-bar').setAttribute('aria-valuenow', pct);
+
+        if (progress >= 100) {
+            clearInterval(iv);
+            addLog('Парсинг завершён успешно', 'success');
+            toast('Парсинг завершён!', 'success');
+            setTip('Готово! 🎉');
+            this.disabled = false;
+            this.innerHTML = '<i class="fas fa-check"></i> ГОТОВО';
+            document.querySelector('.nav-btn[data-tab="settings"]').classList.add('done');
+            setTimeout(() => {
+                this.innerHTML = '<i class="fas fa-play"></i> НАЧАТЬ ПАРСИНГ';
+                document.getElementById('progressFill').style.width = '0%';
+                document.getElementById('progressPercent').textContent = '0%';
+                setTip('Готова к следующему запуску');
+            }, 3000);
+        }
+    }, 280);
+});
+
+// ═══════════ INIT ═══════════
+document.getElementById('dateTo').value = new Date().toISOString().split('T')[0];
+</script>
+</body>
+</html>

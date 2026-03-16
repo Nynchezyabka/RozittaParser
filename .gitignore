@@ -1,0 +1,36 @@
+# --- СЕКРЕТЫ И ЛИЧНЫЕ ДАННЫЕ (КРИТИЧНО) ---
+*.session
+*.session-journal
+config.json
+config_modern.json
+*.db
+*.db-journal
+*.db-wal
+
+# --- ПЕРСОНАЛЬНЫЕ ЛОГИ И ВЫВОД ---
+*.log
+output/
+downloads/
+
+# --- ИНСТРУМЕНТЫ (AIDER & CLAUDE) ---
+.aider*
+.claude/
+
+# --- PYTHON И СБОРКА ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+dist/
+build/
+*.spec
+
+# --- СТОРОННИЙ КОД И IDE ---
+third-party-app/
+.vscode/
+.idea/
+.DS_Store
