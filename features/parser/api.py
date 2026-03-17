@@ -93,6 +93,10 @@ _FLOOD_BUFFER = 3
 _MEDIA_PARALLELISM = 3
 # Число сообщений в одном gather()-пакете задач (только для задач скачивания медиа)
 _TASK_BATCH_SIZE = 20
+# Число строк в одном SQLite batch-flush во время парсинга текстовых сообщений.
+# Защищает от потери всего прогресса при падении — пишем каждые 200 сообщений,
+# а не только в конце всего чата.
+_DB_BATCH_SIZE = 200
 # Подпапки для каждого типа медиа внутри MEDIA_FOLDER_NAME
 _MEDIA_SUBFOLDERS: dict[str, str] = {
     "photo":      "photos",
@@ -614,6 +618,13 @@ class ParserService:
                             if total_est:
                                 pct = 5 + int(self._msg_count / total_est * 85)
                                 self._progress_cb(min(pct, 90))
+
+                        # Периодический flush в БД — каждые _DB_BATCH_SIZE сообщений.
+                        # Без этого при падении теряется весь прогресс парсинга:
+                        # batch копится в памяти и пишется только в самом конце.
+                        if len(batch) >= _DB_BATCH_SIZE:
+                            insert_fn(batch)
+                            batch.clear()
 
                 # Flush оставшихся медиа-задач после завершения итератора
                 if _pending:
