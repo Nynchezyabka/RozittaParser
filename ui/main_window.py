@@ -472,7 +472,7 @@ class SettingsPanel(QWidget):
 
     def _build_stt_section(self) -> ModernCard:
         card, layout = self._card()
-        layout.addWidget(SectionTitle("🎙", "Распознавание речи"))
+        layout.addWidget(SectionTitle("🎙️", "Распознавание речи"))
 
         chips_row = QHBoxLayout()
         chips_row.setSpacing(8)
@@ -709,13 +709,13 @@ class SettingsPanel(QWidget):
 
     def _build_options_section(self) -> ModernCard:
         card, layout = self._card()
-        layout.addWidget(SectionTitle("⚙", "Параметры"))
+        layout.addWidget(SectionTitle("⚙️", "Параметры"))
 
         self._toggle_comments   = ToggleSwitch(checked=False)
         self._toggle_redownload = ToggleSwitch(checked=False)
 
         layout.addLayout(self._option_row("Включить комментарии", self._toggle_comments))
-        layout.addLayout(self._option_row("Перескачать медиа",    self._toggle_redownload))
+        layout.addLayout(self._option_row("Перекачать медиа",    self._toggle_redownload))
         return card
 
     # ──────────────────────────────────────────────────────────────────────
@@ -1528,10 +1528,27 @@ class MainWindow(QMainWindow):
         self._set_step(2)
         title = chat.get("title", "")
         self._rozetta.set_tip(f"Выбран: {title}")
-        # Sidebar info
         short = title[:22] + "…" if len(title) > 22 else title
         self._sidebar_chat_name.setText(short)
         self._show_toast(f'Чат "{title}" выбран', "info", 2000)
+
+        # Для каналов — лениво проверяем linked_chat_id при выборе,
+        # а не при загрузке всего списка (экономит 3+ минуты)
+        if chat.get("type") == "channel" and not chat.get("linked_chat_id"):
+            from features.chats.ui import LinkedGroupWorker
+            lw = LinkedGroupWorker(chat, self._cfg)
+            lw.linked_found.connect(self._on_linked_group_found, Qt.UniqueConnection)
+            lw.log_message.connect(self._log.append_info,        Qt.UniqueConnection)
+            self._start_worker(lw)
+
+    def _on_linked_group_found(self, updated_chat: dict) -> None:
+        """Получен linked_chat_id — обновляем настройки парсера."""
+        self._settings_screen.set_chat(updated_chat)
+        title = updated_chat.get("title", "")
+        linked = updated_chat.get("linked_chat_id")
+        self._log.append_info(
+            f"💬 {title}: найдена группа комментариев (id={linked})"
+        )
 
     def _on_request_topics(self, chat_id) -> None:
         chat_id = int(chat_id)
@@ -1618,10 +1635,18 @@ class MainWindow(QMainWindow):
         self._update_progress(100)
         count = getattr(result, "messages_count", "?")
         self._log.append_success(f"✅ Парсинг завершён: {count} сообщений")
-        self._set_status("busy", "Распознавание речи...")
-        self._rozetta.set_tip("Распознаю голосовые...")
-        self._last_parse_result = result
-        self._run_stt(result)
+
+        # Запускаем STT только если хотя бы один чип активен
+        params = self._settings_screen.get_params()
+        stt_enabled = params and (params.stt_voice or params.stt_videomessage or params.stt_video)
+        if stt_enabled:
+            self._set_status("busy", "Распознавание речи...")
+            self._rozetta.set_tip("Распознаю голосовые...")
+            self._last_parse_result = result
+            self._run_stt(result)
+        else:
+            self._last_collect_result = result
+            self._on_stt_finished(result)
 
     def _on_parse_error(self, message: str) -> None:
         self._update_progress(0)
@@ -1675,12 +1700,25 @@ class MainWindow(QMainWindow):
         self._on_stt_finished(self._last_collect_result)
 
     def _on_stt_finished(self, collect_result) -> None:
-        self._set_status("busy", "Генерация DOCX...")
+        fmts = self._settings_screen.get_export_formats()
+        label = " + ".join(f.upper() for f in fmts)
+        self._set_status("busy", f"Генерация {label}...")
         self._rozetta.set_tip("Создаю документ...")
         self._run_export(collect_result)
 
     def _on_stt_error(self, message: str) -> None:
         self._log.append_error(f"⚠️ STT ошибка (экспорт продолжается): {message}")
+        # Если проблема в отсутствии faster-whisper — показываем диалог с командой
+        if "faster-whisper" in message.lower() or "faster_whisper" in message.lower():
+            self._auth_screen._show_install_dialog(
+                title   = "Требуется библиотека faster-whisper",
+                text    = (
+                    "Для распознавания голосовых сообщений нужна библиотека "
+                    "<b>faster-whisper</b>.<br><br>"
+                    "Установите её командой и перезапустите приложение:"
+                ),
+                command = "pip install faster-whisper",
+            )
 
     # ──────────────────────────────────────────────────────────────────────
     # ЭКСПОРТ

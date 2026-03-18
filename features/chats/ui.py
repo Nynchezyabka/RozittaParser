@@ -166,7 +166,7 @@ class ChatsWorker(QThread):
             import os
             cache_db = os.path.join(self._cfg.output_dir, "dialogs_cache.db")
             chats = await service.get_dialogs(
-                limit          = 200,
+                limit          = 500,
                 log            = self.log_message.emit,
                 cache_db_path  = cache_db,
                 force_refresh  = self._force_refresh,
@@ -235,7 +235,68 @@ class TopicsWorker(QThread):
             await client.disconnect()
 
 
+class LinkedGroupWorker(QThread):
+    """
+    Проверяет linked_chat_id для одного канала при его выборе.
+
+    Заменяет массовую проверку всех каналов при загрузке списка.
+    Запускается только когда пользователь кликает на конкретный канал.
+
+    Сигналы:
+        linked_found(object)   — обновлённый chat dict с linked_chat_id
+        log_message(str)
+    """
+
+    linked_found = Signal(object)   # chat dict с заполненным linked_chat_id
+    log_message  = Signal(str)
+
+    def __init__(self, chat: dict, cfg: AppConfig,
+                 parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._chat = chat
+        self._cfg  = cfg
+
+    def run(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._check())
+        except Exception as exc:
+            logger.warning("LinkedGroupWorker error: %s", exc)
+        finally:
+            loop.close()
+
+    async def _check(self) -> None:
+        from telethon import TelegramClient
+        from features.chats.api import ChatsService
+
+        client = TelegramClient(
+            str(self._cfg.session_path),
+            self._cfg.api_id_int,
+            self._cfg.api_hash,
+            timeout=30,
+            connection_retries=3,
+        )
+        await client.connect()
+        try:
+            service = ChatsService(client)
+            linked_id = await service.get_linked_group(
+                self._chat["id"],
+                log=self.log_message.emit,
+            )
+            if linked_id:
+                updated = dict(self._chat)
+                updated["linked_chat_id"] = linked_id
+                updated["has_comments"]   = True
+                self.linked_found.emit(updated)
+                logger.debug("LinkedGroupWorker: %s → linked=%s",
+                             self._chat.get("title"), linked_id)
+        finally:
+            await client.disconnect()
+
+
 class MembersWorker(QThread):
+
     """
     Загружает список участников чата через ChatsService.get_user_stats().
 

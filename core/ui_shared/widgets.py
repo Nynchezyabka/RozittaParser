@@ -268,17 +268,10 @@ class SectionTitle(QWidget):
 
         layout.addStretch()
 
-        # Разделитель снизу
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"QFrame {{ color: {BORDER_HEX}; }}")
-
-        outer = QVBoxLayout()
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(4)
-        outer.addLayout(layout)
-        outer.addWidget(sep)
-        self.setLayout(outer)
+        # Отступ снизу вместо HLine-разделителя:
+        # QFrame.HLine рендерится поверх содержимого при вложенных layout,
+        # создавая визуальный артефакт (перечёркивающую линию).
+        self.setContentsMargins(0, 0, 0, 6)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
