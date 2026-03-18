@@ -7,6 +7,8 @@ English | [Русский](#-rozitta-parser-v40)
 and voice notes from any Telegram chat you're a member of — 
 groups, channels, forums with topics, and private conversations.
 
+![Screenshot_17](https://github.com/user-attachments/assets/09fd78d7-c6ee-4f31-affc-140aea1e3c8d)
+
 ### ✨ Features
 
 - 📁 **Full backup** — messages from groups, channels, forums with topics
