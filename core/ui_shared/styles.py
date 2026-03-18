@@ -551,10 +551,11 @@ QSS_FILTER_BUTTON = f"""
         background-color: transparent;
         border: 1px solid {BORDER_HEX};
         border-radius: {RADIUS_MD}px;
-        padding: 3px 6px;
+        padding: 3px 3px;
         color: {TEXT_SECONDARY};
         font-size: {FONT_SIZE_XS}px;
-        min-width: 0px;
+        min-width: 32px;
+        text-align: justify;
     }}
     QPushButton:hover {{
         color: {TEXT_PRIMARY};
