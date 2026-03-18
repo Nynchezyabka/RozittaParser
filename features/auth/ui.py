@@ -35,8 +35,8 @@ import asyncio
 import logging
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal, Slot, QThread
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, Signal, Slot, QThread, QUrl
+from PySide6.QtGui import QFont, QDesktopServices
 from PySide6.QtWidgets import (
     QFrame, QFileDialog, QInputDialog, QLabel, QLineEdit,
     QMessageBox, QPushButton, QVBoxLayout, QWidget,
@@ -413,8 +413,18 @@ class AuthScreen(QWidget):
         hdr.setStyleSheet(f"color: {ACCENT_ORANGE};")
         fl.addWidget(hdr)
 
+        # Ссылка my.telegram.org — кликабельная
+        link = QLabel(
+            '<a href="https://my.telegram.org" style="color: #FF9500;">'
+            'my.telegram.org</a> → API development tools.'
+        )
+        link.setFont(QFont(FONT_FAMILY, FONT_SIZE_XS))
+        link.setOpenExternalLinks(True)
+        link.setTextFormat(Qt.TextFormat.RichText)
+        link.setToolTip("Открыть my.telegram.org в браузере")
+        fl.addWidget(link)
+
         body = QLabel(
-            "Зайдите на my.telegram.org → API development tools.\n"
             "При первом входе придёт код подтверждения в Telegram.\n"
             "Если включена 2FA — потребуется облачный пароль."
         )
@@ -501,6 +511,102 @@ class AuthScreen(QWidget):
         self.auth_complete.emit(None, user)
 
     @Slot(str)
+    def _show_install_dialog(self, title: str, text: str, command: str) -> None:
+        """
+        Диалог с командой установки библиотеки и кнопкой «Скопировать».
+
+        Args:
+            title:   Заголовок окна.
+            text:    HTML-текст пояснения (над командой).
+            command: Команда pip install ... для копирования.
+        """
+        from PySide6.QtWidgets import QDialog, QHBoxLayout
+        from PySide6.QtGui import QClipboard
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(420)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background: #1a1d26;
+            }}
+            QLabel {{ color: #e0e0e0; font-family: {FONT_FAMILY}; background: transparent; }}
+            QPushButton {{
+                border-radius: {RADIUS_MD}px;
+                font-family: {FONT_FAMILY};
+                font-size: 12px;
+                padding: 6px 16px;
+            }}
+        """)
+
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(12)
+        lay.setContentsMargins(20, 20, 20, 20)
+
+        # Пояснительный текст
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(lbl)
+
+        # Блок с командой
+        cmd_frame = QFrame()
+        cmd_frame.setStyleSheet(f"""
+            QFrame {{
+                background: #0d0f14;
+                border: 1px solid {BORDER_HEX};
+                border-radius: {RADIUS_MD}px;
+            }}
+            QFrame QLabel {{ color: {ACCENT_ORANGE}; font-size: 13px;
+                             font-family: 'Consolas', monospace; background: transparent; }}
+        """)
+        cmd_lay = QHBoxLayout(cmd_frame)
+        cmd_lay.setContentsMargins(12, 8, 8, 8)
+        cmd_lay.setSpacing(8)
+
+        cmd_lbl = QLabel(command)
+        cmd_lbl.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        cmd_lay.addWidget(cmd_lbl, 1)
+
+        copy_btn = QPushButton("📋 Скопировать")
+        copy_btn.setFixedHeight(30)
+        copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {ACCENT_SOFT_ORANGE};
+                border: 1px solid {ACCENT_ORANGE};
+                color: {ACCENT_ORANGE};
+                font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {ACCENT_ORANGE}; color: #000; }}
+        """)
+
+        def _copy():
+            QApplication.clipboard().setText(command)
+            copy_btn.setText("✅ Скопировано!")
+            copy_btn.setEnabled(False)
+
+        copy_btn.clicked.connect(_copy)
+        cmd_lay.addWidget(copy_btn)
+        lay.addWidget(cmd_frame)
+
+        # Примечание
+        note = QLabel("После установки перезапустите приложение.")
+        note.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        lay.addWidget(note)
+
+        # Кнопка закрыть
+        close_btn = QPushButton("Закрыть")
+        close_btn.setFixedHeight(34)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(QSS_BUTTON_PRIMARY)
+        close_btn.clicked.connect(dlg.accept)
+        lay.addWidget(close_btn)
+
+        dlg.exec()
+
     def _on_tdata_error(self, error_msg: str) -> None:
         self._set_controls_enabled(True)
         self._set_status("error", "Ошибка импорта")
@@ -510,13 +616,13 @@ class AuthScreen(QWidget):
 
         # Проверяем нужна ли установка opentele
         if "opentele" in error_msg.lower() or "pip install" in error_msg:
-            QMessageBox.information(
-                self,
-                "Требуется дополнительная библиотека",
-                "Для импорта из Telegram Desktop нужна библиотека opentele.\n\n"
-                "Установите её командой:\n"
-                "pip install opentele\n\n"
-                "После установки перезапустите приложение.",
+            self._show_install_dialog(
+                title   = "Требуется библиотека opentele",
+                text    = (
+                    "Для импорта из Telegram Desktop нужна библиотека <b>opentele</b>.<br><br>"
+                    "Установите её командой и перезапустите приложение:"
+                ),
+                command = "pip install opentele",
             )
         else:
             QMessageBox.warning(

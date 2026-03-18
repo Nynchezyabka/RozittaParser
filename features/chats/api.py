@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from telethon import TelegramClient, functions
 from telethon.tl.functions.channels import GetFullChannelRequest
@@ -185,9 +185,9 @@ class ChatsService:
             logger.error("chats: get_dialogs failed: %s", exc)
             raise TelegramError(f"Не удалось получить список диалогов: {exc}") from exc
 
+        _log(f"📊 Получено с сервера: {len(all_dialogs)} диалогов (запрошено: {limit})")
+
         dialogs: List[ChatInfo] = []
-        # Индексы каналов в dialogs + entity для параллельного GetFullChannelRequest
-        _channel_indices: List[Tuple[int, object]] = []
 
         for dialog in all_dialogs:
             entity = dialog.entity
@@ -221,55 +221,7 @@ class ChatsService:
                 "is_linked_discussion": False,
             }
 
-            if chat_type == "channel":
-                _channel_indices.append((len(dialogs), entity))
-
             dialogs.append(chat_info)
-
-        # --- Параллельные запросы linked group для всех каналов ---
-        if _channel_indices:
-            _log(f"🔗 Проверяю linked group для {len(_channel_indices)} каналов...")
-            # Semaphore(3) — не более 3 одновременных запросов:
-            # Telegram DC допускает ~3–4 параллельных MTProto-запроса;
-            # при 5+ часть получает «Server resent» и ждёт retry, суммарно медленнее.
-            _sem = asyncio.Semaphore(3)
-
-            async def _fetch_linked(ent) -> Optional[int]:
-                async with _sem:
-                    try:
-                        full = await asyncio.wait_for(
-                            self._client(GetFullChannelRequest(channel=ent)),
-                            timeout=8.0,
-                        )
-                        # yield event loop — даём MTProto-слою обработать ACK-очередь
-                        await asyncio.sleep(0)
-                        return getattr(full.full_chat, "linked_chat_id", None)
-                    except asyncio.TimeoutError:
-                        logger.warning("chats: GetFullChannelRequest timeout for %s", ent)
-                        return None
-                    except Exception as exc:
-                        logger.warning("chats: GetFullChannelRequest failed for %s: %s", ent, exc)
-                        return None
-
-            import time
-            _t = time.perf_counter()
-            linked_results = await asyncio.gather(
-                *[_fetch_linked(ent) for _, ent in _channel_indices],
-                return_exceptions=False,
-            )
-            logger.info(
-                "✅ linked group: %d за %.1fs",
-                sum(1 for r in linked_results if r),
-                time.perf_counter() - _t,
-            )
-            for (idx, _), linked_id in zip(_channel_indices, linked_results):
-                if linked_id:
-                    dialogs[idx]["has_comments"] = True
-                    dialogs[idx]["linked_chat_id"] = linked_id
-                    logger.debug(
-                        "chats: channel %s has linked_chat_id=%s",
-                        dialogs[idx]["id"], linked_id
-                    )
 
         # --- Сортировка: каналы → форумы → группы → личные ---
         _type_order = {"channel": 0, "forum": 1, "group": 2, "private": 3}
