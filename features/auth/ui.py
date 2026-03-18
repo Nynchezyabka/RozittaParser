@@ -37,7 +37,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, Signal, Slot, QThread, QUrl
 from PySide6.QtGui import QFont, QDesktopServices
-from PySide6.QtWidgets import (
+from PySide6.QtWidgets import (QApplication,
     QFrame, QFileDialog, QInputDialog, QLabel, QLineEdit,
     QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
