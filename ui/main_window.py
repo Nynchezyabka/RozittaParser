@@ -335,8 +335,9 @@ class SettingsPanel(QWidget):
     load_members_requested  = Signal(object)
     log_message             = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, cfg: "AppConfig | None" = None, parent=None):
         super().__init__(parent)
+        self._cfg           = cfg
         self._current_chat: Optional[dict] = None
         self._user_tags:    list[UserTag]   = []
         self._user_mode:    str             = "messages-only"
@@ -344,6 +345,32 @@ class SettingsPanel(QWidget):
         self._split_buttons: list[SplitModeButton] = []
         self._parsing:      bool            = False
         self._build()
+        if cfg:
+            self._restore_from_cfg(cfg)
+
+    def _restore_from_cfg(self, cfg) -> None:
+        """Восстанавливает последние настройки из AppConfig после сборки UI."""
+        # Режим разбивки
+        if cfg.split_mode and cfg.split_mode != "none":
+            for btn in self._split_buttons:
+                if btn.mode == cfg.split_mode:
+                    btn.setChecked(True)
+                    self._split_mode = cfg.split_mode
+                    break
+
+        # Медиафильтр — восстанавливаем активные чипы
+        active = set(cfg.media_filter or [])
+        for chip in getattr(self, "_media_chips", []):
+            if hasattr(chip, "_media_key"):
+                chip.setActive(chip._media_key in active or not active)
+
+        # STT модель
+        stt_model = getattr(cfg, "stt_model", "base")
+        for btn in getattr(self, "_stt_model_btns", {}).values():
+            btn.setChecked(False)
+        target = getattr(self, "_stt_model_btns", {}).get(stt_model)
+        if target:
+            target.setChecked(True)
 
     # ──────────────────────────────────────────────────────────────────────
     # ПОСТРОЕНИЕ UI
@@ -713,9 +740,11 @@ class SettingsPanel(QWidget):
 
         self._toggle_comments   = ToggleSwitch(checked=False)
         self._toggle_redownload = ToggleSwitch(checked=False)
+        self._toggle_takeout    = ToggleSwitch(checked=False)
 
         layout.addLayout(self._option_row("Включить комментарии", self._toggle_comments))
         layout.addLayout(self._option_row("Перекачать медиа",    self._toggle_redownload))
+        layout.addLayout(self._option_row("⚡ Takeout API (быстрее при VPN)", self._toggle_takeout))
         return card
 
     # ──────────────────────────────────────────────────────────────────────
@@ -817,6 +846,7 @@ class SettingsPanel(QWidget):
             split_mode           = self._split_mode,
             include_comments     = self._toggle_comments.isChecked(),
             re_download          = self._toggle_redownload.isChecked(),
+            use_takeout          = self._toggle_takeout.isChecked(),
         )
 
     def set_parsing(self, active: bool) -> None:
@@ -1149,7 +1179,7 @@ class MainWindow(QMainWindow):
         tab2.setStyleSheet("background: transparent;")
         lay2 = QVBoxLayout(tab2)
         lay2.setContentsMargins(0, 0, 0, 0)
-        self._settings_screen = SettingsPanel()
+        self._settings_screen = SettingsPanel(cfg=self._cfg)
         lay2.addWidget(self._settings_screen)
         stack.addWidget(tab2)
 
@@ -1600,6 +1630,15 @@ class MainWindow(QMainWindow):
             self._log.append_error("❌ Нет активной сессии Telegram")
             self._show_toast("Нет активной сессии Telegram", "error")
             return
+
+        # Сохраняем настройки парсинга в cfg → config.json
+        try:
+            from config import save_config
+            self._cfg.split_mode   = params.split_mode
+            self._cfg.media_filter = params.media_filter or []
+            save_config(self._cfg)
+        except Exception as exc:
+            logger.warning("_on_parse_requested: save_config failed: %s", exc)
 
         # Проверяем: ChatsWorker / TopicsWorker могли ещё не закрыть соединение с SQLite-сессией.
         # Ждём завершения всех Telethon-воркеров перед стартом ParseWorker.

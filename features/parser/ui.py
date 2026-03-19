@@ -97,6 +97,9 @@ class ParseParams:
     # Режим перезагрузки
     re_download:        bool = False    # True = игнорировать downloaded.txt, скачать заново
 
+    # Takeout API
+    use_takeout:        bool = False    # True = Takeout API (отдельные лимиты, быстрее при VPN)
+
     # Фильтр выражений (simpleeval, опционально)
     filter_expression:  Optional[str] = None  # напр. "has_media and media_type=='photo'"
 
@@ -965,6 +968,7 @@ class ParseWorker(QThread):
             output_dir        = chat_dir,   # папка чата, не корневая
             re_download       = p.re_download,
             filter_expression = p.filter_expression,
+            use_takeout       = p.use_takeout,
         )
 
     def _on_log(self, message: str) -> None:

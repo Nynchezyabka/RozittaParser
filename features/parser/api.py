@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
@@ -140,6 +141,7 @@ class CollectParams:
     output_dir:        str                 = "output"
     re_download:       bool                = False   # True = игнорировать downloaded.txt и перекачать заново
     filter_expression: Optional[str]      = None    # выражение-фильтр сообщений (simpleeval)
+    use_takeout:       bool                = False   # True = использовать Takeout API (отдельные лимиты)
 
 
 # ==============================================================================
@@ -390,32 +392,67 @@ class ParserService:
         posts_with_comments: Dict[int, int] = {}  # {post_id: replies_count}
         _batch: List[dict] = []
 
-        for _topic_id in _topics_to_parse:
-            if len(_topics_to_parse) > 1:
-                _topic_title = _topics_map.get(_topic_id, f"#{_topic_id}")
-                self._log(f"📁 Топик: «{_topic_title}» (id={_topic_id})")
+        async def _run_topics() -> None:
+            for _topic_id in _topics_to_parse:
+                if len(_topics_to_parse) > 1:
+                    _topic_title = _topics_map.get(_topic_id, f"#{_topic_id}")
+                    self._log(f"📁 Топик: «{_topic_title}» (id={_topic_id})")
 
-            self._log(f"🔍 Начинаем сбор из: {chat_title}")
-            logger.debug("[DIAG] _iter_one_topic start: topic_id=%s", _topic_id)
-            self._log(f"[DIAG] iter_one_topic → topic_id={_topic_id}")
-            await self._iter_one_topic(
-                entity              = entity,
-                topic_id            = _topic_id,
-                params              = params,
-                normalized_id       = normalized_id,
-                cutoff_date         = cutoff_date,
-                upper_date          = upper_date,
-                total_est           = total_est,
-                insert_fn           = insert_fn,
-                tracker             = tracker,
-                errors              = errors,
-                posts_with_comments = posts_with_comments,
-                linked_chat_id      = linked_chat_id,
-                chat_type           = chat_type,
-                batch               = _batch,
-            )
-            logger.debug("[DIAG] _iter_one_topic done: topic_id=%s msgs_so_far=%d", _topic_id, self._msg_count)
-            self._log(f"[DIAG] iter_one_topic done: topic_id={_topic_id} msgs={self._msg_count}")
+                self._log(f"🔍 Начинаем сбор из: {chat_title}")
+                logger.debug("[DIAG] _iter_one_topic start: topic_id=%s", _topic_id)
+                self._log(f"[DIAG] iter_one_topic → topic_id={_topic_id}")
+                await self._iter_one_topic(
+                    entity              = entity,
+                    topic_id            = _topic_id,
+                    params              = params,
+                    normalized_id       = normalized_id,
+                    cutoff_date         = cutoff_date,
+                    upper_date          = upper_date,
+                    total_est           = total_est,
+                    insert_fn           = insert_fn,
+                    tracker             = tracker,
+                    errors              = errors,
+                    posts_with_comments = posts_with_comments,
+                    linked_chat_id      = linked_chat_id,
+                    chat_type           = chat_type,
+                    batch               = _batch,
+                )
+                logger.debug("[DIAG] _iter_one_topic done: topic_id=%s msgs_so_far=%d", _topic_id, self._msg_count)
+                self._log(f"[DIAG] iter_one_topic done: topic_id={_topic_id} msgs={self._msg_count}")
+
+        if params.use_takeout:
+            self._log("📦 Режим Takeout API (отдельные лимиты Telegram)...")
+            # Завершаем висящую takeout-сессию если она осталась от предыдущего запуска
+            try:
+                from telethon.tl.functions.account import FinishTakeoutSessionRequest
+                await self._client(FinishTakeoutSessionRequest(success=False))
+                logger.debug("parser: старая takeout-сессия завершена")
+            except Exception:
+                pass  # нет висящей сессии — нормально
+            try:
+                async with self._client.takeout(
+                    contacts=False,
+                    users=False,
+                    chats=False,
+                    megagroups=True,
+                    channels=True,
+                    files=bool(params.media_filter),
+                    max_file_size=None,
+                ) as takeout_client:
+                    # В режиме takeout подменяем клиент только для итерации
+                    _original_client = self._client
+                    self._client = takeout_client
+                    try:
+                        await _run_topics()
+                    finally:
+                        self._client = _original_client
+                self._log("✅ Takeout сессия завершена")
+            except Exception as exc:
+                self._log(f"⚠️ Takeout недоступен: {exc} — переключаюсь на обычный режим")
+                logger.warning("parser: takeout failed, falling back: %s", exc)
+                await _run_topics()
+        else:
+            await _run_topics()
 
         # Финальный flush остатка батча в БД
         if _batch:
@@ -531,7 +568,6 @@ class ParserService:
                     f"[DIAG] iter_messages → entity={getattr(entity, 'id', '?')} "
                     f"topic_id={topic_id} max_id={_max_id_arg} attempt={attempts}"
                 )
-                 # добавили limit и wait_time:
                 async for message in self._client.iter_messages(
                     entity,
                     reply_to=topic_id,
@@ -539,9 +575,12 @@ class ParserService:
                     # Продолжаем с последнего известного ID при рестарте после FloodWait
                     max_id=_max_id_arg,
                     reverse=False,
-                    limit=100,    # Берем по максимуму за один запрос
-                    wait_time=0,  # Убираем искусственную паузу Telethon
+                    
                 ):
+                    # Замер времени начала обработки сообщения
+                    start_time = time.perf_counter()
+                    task_created = False
+
                     last_message_id = message.id
                     _iter_msg_count += 1
                     if _iter_msg_count == 1:
@@ -553,6 +592,9 @@ class ParserService:
 
                     # Фильтр верхней даты (пропускаем слишком новые)
                     if upper_date and msg_date and msg_date > upper_date:
+                        elapsed = time.perf_counter() - start_time
+                        if elapsed < 0.1:
+                            await asyncio.sleep(0.05)
                         continue
 
                     # Фильтр нижней даты (iter_messages идёт от новых к старым)
@@ -567,15 +609,24 @@ class ParserService:
 
                     # Фильтр по пользователю
                     if params.user_ids and message.sender_id not in params.user_ids:
+                        elapsed = time.perf_counter() - start_time
+                        if elapsed < 0.1:
+                            await asyncio.sleep(0.05)
                         continue
 
                     # Инкрементальный режим: пропускаем уже скачанные
                     if not params.re_download and tracker.is_downloaded(message.id):
+                        elapsed = time.perf_counter() - start_time
+                        if elapsed < 0.1:
+                            await asyncio.sleep(0.05)
                         continue
 
                     # Фильтр выражений (simpleeval) — до создания задачи
                     if (params.filter_expression and _SIMPLEEVAL_OK
                             and not self._eval_filter(message, params.filter_expression)):
+                        elapsed = time.perf_counter() - start_time
+                        if elapsed < 0.1:
+                            await asyncio.sleep(0.05)
                         continue
 
                     # Запоминаем посты с комментариями (sync — читаем атрибуты до task)
@@ -594,6 +645,7 @@ class ParserService:
 
                     if needs_download:
                         # Медиа-сообщение: асинхронная задача (download + извлечение полей)
+                        task_created = True
                         task = asyncio.create_task(
                             self._process_message(
                                 message      = message,
@@ -628,6 +680,14 @@ class ParserService:
                         if len(batch) >= _DB_BATCH_SIZE:
                             insert_fn(batch)
                             batch.clear()
+                            tracker.save()   # ← сохраняем downloaded.txt тоже
+
+                    # Адаптивная пауза, если сообщение было обработано очень быстро
+                    # и не создавало задачу на скачивание (чтобы не флудить Telegram)
+                    if not task_created:
+                        elapsed = time.perf_counter() - start_time
+                        if elapsed < 0.1:
+                            await asyncio.sleep(0.05)
 
                 # Flush оставшихся медиа-задач после завершения итератора
                 if _pending:
