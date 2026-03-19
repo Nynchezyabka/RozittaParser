@@ -141,13 +141,17 @@ python main.py
 [Issue](https://github.com/Nynchezyabka/RozittaParser/issues) 
 или Pull Request.
 
-Разработано с ❤️ для тех, кто ценит свои данные.
 
 ## ⚠️ Важно: Для чего этот инструмент
 
 Rozitta Parser создана для личного использования — 
 чтобы сохранить и изучить данные из чатов, 
 в которых вы сами состоите.
+
+### ☕ Поддержать проект / Support
+
+[![CloudTips](https://img.shields.io/badge/CloudTips-QR--код-blue?style=for-the-badge&logo=visa&logoColor=white)](https://pay.cloudtips.ru/p/c77c3d90)
+[![Boosty](https://img.shields.io/badge/Boosty-Поддержать-orange?style=for-the-badge&logo=boosty&logoColor=white)](https://boosty.to/nynchezyabka/donate)
 
 Не используйте для сбора данных без ведома участников, 
 массового скрейпинга или любых целей, 
