@@ -343,12 +343,13 @@ class ChatsService:
         return topics
 
     async def _fetch_topics_via_api(
-        self,
-        entity,
-        log,
+            self,
+            entity,
+            log,
     ) -> Dict[int, str]:
         """
         Получает топики через official GetForumTopicsRequest API.
+        Важно: entity должен быть InputChannel, полученный через get_input_entity()
 
         Делает пагинированные запросы пока result.count > len(накоплено).
 
@@ -363,45 +364,73 @@ class ChatsService:
             Словарь {topic_id: title}.
         """
         topics: Dict[int, str] = {}
-        offset_date = 0
+        offset_date = None
         offset_id = 0
         offset_topic = 0
 
-        while True:
-            result = await self._client(
-                functions.messages.GetForumTopicsRequest(
-                    entity,             # peer — позиционно
-                    None,               # q
-                    offset_date,        # offset_date
-                    offset_id,          # offset_id
-                    offset_topic,       # offset_topic
-                    FORUM_TOPICS_PAGE_SIZE,  # limit
+        try:
+            # КРИТИЧНО: получаем InputChannel из entity
+            input_entity = await self._client.get_input_entity(entity)
+            logger.debug(f"Input entity type: {type(input_entity)}")
+
+            if hasattr(input_entity, 'channel_id'):
+                logger.debug(f"Channel ID in input_entity: {input_entity.channel_id}")
+
+            while True:
+                # Создаем запрос с явным указанием типов
+                # q должен быть строкой или None, НИКОГДА не числом!
+                request = functions.messages.GetForumTopicsRequest(
+                    peer=input_entity,
+                    q=None,  # Явно указываем None, а не число
+                    offset_date=offset_date,
+                    offset_id=offset_id,
+                    offset_topic=offset_topic,
+                    limit=FORUM_TOPICS_PAGE_SIZE
                 )
-            )
 
-            if not hasattr(result, "topics") or not result.topics:
-                break
+                # Отправляем запрос
+                result = await self._client(request)
 
-            batch = result.topics
-            total = getattr(result, "count", len(batch))
+                if not hasattr(result, "topics") or not result.topics:
+                    break
 
-            log(f"📊 Загружено {len(topics) + len(batch)}/{total} топиков")
+                batch = result.topics
+                total = getattr(result, "count", len(batch))
 
-            for topic in batch:
-                topic_id = getattr(topic, "id", None)
-                if topic_id is not None:
-                    title = getattr(topic, "title", None) or f"Топик #{topic_id}"
-                    topics[topic_id] = title
+                log(f"📊 Загружено {len(topics) + len(batch)}/{total} топиков")
 
-            # Условие выхода: получили всё или страница неполная
-            if len(topics) >= total or len(batch) < FORUM_TOPICS_PAGE_SIZE:
-                break
+                for topic in batch:
+                    # Получаем ID топика
+                    topic_id = None
+                    if hasattr(topic, 'id'):
+                        topic_id = topic.id
 
-            # Смещение для следующей страницы
-            last = batch[-1]
-            offset_date  = getattr(last, "date", 0) or 0
-            offset_id    = getattr(last, "id", 0) or 0
-            offset_topic = getattr(last, "id", 0) or 0
+                    if topic_id is not None:
+                        # Получаем название топика
+                        title = None
+                        if hasattr(topic, 'title'):
+                            title = topic.title
+
+                        if not title:
+                            title = f"Topic {topic_id}"
+
+                        topics[topic_id] = title
+                        logger.debug(f"Found topic: {topic_id} - {title}")
+
+                # Условие выхода: получили всё или страница неполная
+                if len(topics) >= total or len(batch) < FORUM_TOPICS_PAGE_SIZE:
+                    break
+
+                # Смещение для следующей страницы
+                last = batch[-1]
+                if hasattr(last, 'date'):
+                    offset_date = last.date
+                if hasattr(last, 'id'):
+                    offset_id = last.id
+                    offset_topic = last.id
+
+        except Exception as e:
+            logger.error(f"Error in _fetch_topics_via_api: {e}", exc_info=True)
 
         log(f"📋 Загружено {len(topics)} веток")
         return topics
