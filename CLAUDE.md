@@ -1,4 +1,4 @@
-# claud.md — Карта проекта Rozitta Parser
+# CLAUDE.md — Карта проекта Rozitta Parser
 
 ## 📋 О проекте
 
