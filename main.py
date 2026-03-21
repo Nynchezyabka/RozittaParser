@@ -26,18 +26,6 @@ import socket  # Добавили для патча
 
 import socket
 
-# ── ПАТЧ: Отключение IPv6 ──────────────────────────────────────────
-# Ускоряет подключение к Telegram на 10-30 секунд, если IPv6 не работает
-# через VPN. Без патча Python пытается подключиться через IPv6, висит до
-# таймаута, и только потом fallback на IPv4.
-# Источник: telethon_2026_report.md, раздел 2.3
-_orig_getaddrinfo = socket.getaddrinfo
-
-def _getaddrinfo_ipv4_only(host, port, family=0, type=0, proto=0, flags=0):
-    return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-
-socket.getaddrinfo = _getaddrinfo_ipv4_only
-
 # Заглушить DirectWrite-предупреждения о шрифтах — должно быть ДО QApplication
 os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts=false"
 

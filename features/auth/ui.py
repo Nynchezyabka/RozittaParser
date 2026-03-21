@@ -38,10 +38,9 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal, Slot, QThread, QUrl
 from PySide6.QtGui import QFont, QDesktopServices
 from PySide6.QtWidgets import (
-    QFrame, QFileDialog, QInputDialog, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QVBoxLayout, QWidget, QApplication 
+    QFrame, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
-
 from config import AppConfig
 from core.ui_shared.styles import (
     ACCENT_ORANGE, ACCENT_SOFT_ORANGE,
@@ -52,7 +51,7 @@ from core.ui_shared.styles import (
     FONT_FAMILY, FONT_SIZE_SMALL, FONT_SIZE_XS,
     QSS_INPUT, QSS_BUTTON_PRIMARY,
 )
-from core.ui_shared.widgets import PasswordLineEdit
+from core.ui_shared.widgets import PasswordLineEdit, ToggleSwitch
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +183,14 @@ class AuthWorker(QThread):
         self.log_message.emit("🔑 Подключение к Telegram...")
 
         # build_client — синхронный @staticmethod
-        self._client = AuthService.build_client(self._cfg)
+        # Может бросить ConnectionError если прокси включён но недоступен
+        try:
+            self._client = AuthService.build_client(self._cfg)
+        except ConnectionError as exc:
+            self.log_message.emit(f"❌ {exc}")
+            self.error.emit(str(exc))
+            self.character_state.emit("error")
+            return
 
         # sign_in — async @staticmethod, возвращает User | None
         user = await AuthService.sign_in(
@@ -333,6 +339,65 @@ class AuthScreen(QWidget):
         self._phone.setFixedHeight(36)
         self._phone.setText(getattr(self._cfg, "phone", "") or "")
         layout.addWidget(self._phone)
+
+        # ── Прокси SOCKS5 (Tor) ───────────────────────────────────────────
+        proxy_frame = QFrame()
+        proxy_frame.setStyleSheet(f"""
+            QFrame {{
+                background: {OVERLAY2_HEX};
+                border: 1px solid {BORDER_HEX};
+                border-radius: {RADIUS_MD}px;
+            }}
+            QFrame QLabel {{ background: transparent; color: {TEXT_SECONDARY}; }}
+        """)
+        pfl = QVBoxLayout(proxy_frame)
+        pfl.setContentsMargins(10, 8, 10, 8)
+        pfl.setSpacing(6)
+
+        proxy_row = QHBoxLayout()
+        proxy_lbl = QLabel("🔌  SOCKS5 прокси (Tor)")
+        proxy_lbl.setFont(QFont(FONT_FAMILY, FONT_SIZE_XS))
+        proxy_row.addWidget(proxy_lbl)
+        proxy_row.addStretch()
+        self._proxy_toggle = ToggleSwitch(
+            checked=getattr(self._cfg, "proxy_enabled", False)
+        )
+        proxy_row.addWidget(self._proxy_toggle)
+        pfl.addLayout(proxy_row)
+
+        host_row = QHBoxLayout()
+        host_row.setSpacing(6)
+        self._proxy_host_auth = QLineEdit(
+            getattr(self._cfg, "proxy_host", "127.0.0.1")
+        )
+        self._proxy_host_auth.setPlaceholderText("127.0.0.1")
+        self._proxy_host_auth.setFixedHeight(28)
+        self._proxy_host_auth.setStyleSheet(QSS_INPUT)
+        self._proxy_port_auth = QSpinBox()
+        self._proxy_port_auth.setRange(1, 65535)
+        self._proxy_port_auth.setValue(getattr(self._cfg, "proxy_port", 9050))
+        self._proxy_port_auth.setFixedHeight(28)
+        self._proxy_port_auth.setFixedWidth(80)
+        self._proxy_port_auth.setStyleSheet(QSS_INPUT)
+        host_row.addWidget(self._proxy_host_auth, 1)
+        host_row.addWidget(self._proxy_port_auth)
+        pfl.addLayout(host_row)
+
+        def _save_proxy_auth():
+            self._cfg.proxy_enabled = self._proxy_toggle.isChecked()
+            self._cfg.proxy_host    = self._proxy_host_auth.text().strip() or "127.0.0.1"
+            self._cfg.proxy_port    = self._proxy_port_auth.value()
+            try:
+                from config import save_config
+                save_config(self._cfg)
+            except Exception:
+                pass
+
+        self._proxy_toggle.toggled.connect(_save_proxy_auth)
+        self._proxy_host_auth.editingFinished.connect(_save_proxy_auth)
+        self._proxy_port_auth.valueChanged.connect(_save_proxy_auth)
+
+        layout.addWidget(proxy_frame)
 
         # Кнопка входа
         self._login_btn = QPushButton("🔐  Войти")
@@ -520,7 +585,7 @@ class AuthScreen(QWidget):
             text:    HTML-текст пояснения (над командой).
             command: Команда pip install ... для копирования.
         """
-        from PySide6.QtWidgets import QDialog, QHBoxLayout 
+        from PySide6.QtWidgets import QDialog, QHBoxLayout
         from PySide6.QtGui import QClipboard
 
         dlg = QDialog(self)

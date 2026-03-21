@@ -55,7 +55,7 @@ from core.ui_shared.styles import (
     RADIUS_LG, RADIUS_MD,
     FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_SMALL,
     COLOR_SUCCESS, COLOR_ERROR, COLOR_WARNING,
-    QSS_PROGRESS,
+    QSS_PROGRESS, QSS_INPUT,
 )
 from core.ui_shared.widgets import (
     RozittaWidget, LogWidget,
@@ -358,19 +358,21 @@ class SettingsPanel(QWidget):
                     self._split_mode = cfg.split_mode
                     break
 
-        # Медиафильтр — восстанавливаем активные чипы
-        active = set(cfg.media_filter or [])
-        for chip in getattr(self, "_media_chips", []):
-            if hasattr(chip, "_media_key"):
-                chip.setActive(chip._media_key in active or not active)
-
-        # STT модель
-        stt_model = getattr(cfg, "stt_model", "base")
-        for btn in getattr(self, "_stt_model_btns", {}).values():
-            btn.setChecked(False)
-        target = getattr(self, "_stt_model_btns", {}).get(stt_model)
-        if target:
-            target.setChecked(True)
+        # Медиафильтр — cfg.media_filter хранит ключи: ["photo", "video", ...]
+        # Маппинг ключ → атрибут кнопки
+        media_map = {
+            "photo":      "_media_photo",
+            "video":      "_media_video",
+            "file":       "_media_file",
+            "voice":      "_media_voice",
+            "video_note": "_media_round",
+        }
+        if cfg.media_filter is not None:
+            active_keys = set(cfg.media_filter)
+            for key, attr in media_map.items():
+                btn = getattr(self, attr, None)
+                if btn is not None:
+                    btn.setActive(key in active_keys)
 
     # ──────────────────────────────────────────────────────────────────────
     # ПОСТРОЕНИЕ UI
@@ -1634,8 +1636,21 @@ class MainWindow(QMainWindow):
         # Сохраняем настройки парсинга в cfg → config.json
         try:
             from config import save_config
-            self._cfg.split_mode   = params.split_mode
-            self._cfg.media_filter = params.media_filter or []
+            self._cfg.split_mode = params.split_mode
+            # Собираем активные медиа-ключи из кнопок напрямую
+            media_keys = []
+            sp = self._settings_screen
+            if getattr(sp, "_media_photo", None) and sp._media_photo.isChecked():
+                media_keys.append("photo")
+            if getattr(sp, "_media_video", None) and sp._media_video.isChecked():
+                media_keys.append("video")
+            if getattr(sp, "_media_file",  None) and sp._media_file.isChecked():
+                media_keys.append("file")
+            if getattr(sp, "_media_voice", None) and sp._media_voice.isChecked():
+                media_keys.append("voice")
+            if getattr(sp, "_media_round", None) and sp._media_round.isChecked():
+                media_keys.append("video_note")
+            self._cfg.media_filter = media_keys
             save_config(self._cfg)
         except Exception as exc:
             logger.warning("_on_parse_requested: save_config failed: %s", exc)

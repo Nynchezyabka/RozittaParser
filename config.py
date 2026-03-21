@@ -127,6 +127,11 @@ class AppConfig:
     output_dir:   str        = field(default="output", repr=False)
     session_name: str        = field(default=SESSION_NAME, repr=False)
 
+    # Прокси (SOCKS5 / HTTP) — опционально
+    proxy_enabled: bool      = False
+    proxy_host:    str       = "127.0.0.1"
+    proxy_port:    int       = 9050
+
     # ------------------------------------------------------------------
     # Свойства
     # ------------------------------------------------------------------
@@ -238,6 +243,9 @@ def load_config(path: str = CONFIG_FILE) -> AppConfig:
             split_mode    = str(data.get("split_mode", "none")),
             stt_model     = str(data.get("stt_model", STT_MODEL_DEFAULT)),
             stt_language  = str(data.get("stt_language", STT_LANGUAGE_DEFAULT)),
+            proxy_enabled = bool(data.get("proxy_enabled", False)),
+            proxy_host    = str(data.get("proxy_host", "127.0.0.1")),
+            proxy_port    = int(data.get("proxy_port", 9050)),
         )
 
         logger.debug("config.py: конфиг загружен из %s", path)
@@ -270,15 +278,18 @@ def save_config(cfg: AppConfig, path: str = CONFIG_FILE) -> None:
     """
     # Только сериализуемые поля (исключаем runtime-поля)
     data = {
-        "api_id":       cfg.api_id,
-        "api_hash":     cfg.api_hash,
-        "phone":        cfg.phone,
-        "days":         cfg.days,
-        "media_filter": cfg.media_filter,
-        "comments":     cfg.comments,
-        "split_mode":   cfg.split_mode,
-        "stt_model":    cfg.stt_model,
-        "stt_language": cfg.stt_language,
+        "api_id":        cfg.api_id,
+        "api_hash":      cfg.api_hash,
+        "phone":         cfg.phone,
+        "days":          cfg.days,
+        "media_filter":  cfg.media_filter,
+        "comments":      cfg.comments,
+        "split_mode":    cfg.split_mode,
+        "stt_model":     cfg.stt_model,
+        "stt_language":  cfg.stt_language,
+        "proxy_enabled": cfg.proxy_enabled,
+        "proxy_host":    cfg.proxy_host,
+        "proxy_port":    cfg.proxy_port,
     }
 
     try:
