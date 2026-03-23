@@ -949,6 +949,7 @@ class RozittaWidget(QWidget):
             f"QLabel {{ color: {TEXT_SECONDARY}; background: transparent; }}"
         )
         self._tip_lbl.setMaximumWidth(220)
+        self._tip_lbl.setMinimumHeight(40)
         outer.addWidget(self._tip_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)

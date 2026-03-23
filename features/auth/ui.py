@@ -38,8 +38,8 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal, Slot, QThread, QUrl
 from PySide6.QtGui import QFont, QDesktopServices
 from PySide6.QtWidgets import (
-    QFrame, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QApplication, QFrame, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 from config import AppConfig
 from core.ui_shared.styles import (
@@ -301,9 +301,25 @@ class AuthScreen(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        # Внешний layout — только скролл
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
+
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
 
         # Заголовок
         title = QLabel("🔑  API и вход")
@@ -450,6 +466,7 @@ class AuthScreen(QWidget):
 
         # Инфо-блок
         layout.addWidget(self._make_info_block())
+        layout.addStretch()
 
     def _field_label(self, text: str) -> QLabel:
         lbl = QLabel(text)
@@ -710,6 +727,11 @@ class AuthScreen(QWidget):
         self._checker.finished.connect(self._on_checker_finished)
         self._checker.start()
         self.log_message.emit("🔍 Проверка сессии...")
+        if getattr(self._cfg, "proxy_enabled", False):
+            self.log_message.emit(
+                f"🔌 Соединение через Tor ({self._cfg.proxy_host}:{self._cfg.proxy_port}) — "
+                "может занять 1-2 минуты, подождите..."
+            )
 
     @Slot()
     def _on_checker_finished(self) -> None:
