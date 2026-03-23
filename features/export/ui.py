@@ -190,6 +190,7 @@ class ExportWorker(QThread):
                         user_id          = p.user_id,
                         include_comments = p.include_comments,
                         ai_split         = p.ai_split,
+                        period_label     = p.period_label,
                         log              = self._log,
                     )
                     all_files.extend(json_paths)
@@ -204,6 +205,7 @@ class ExportWorker(QThread):
                         user_id          = p.user_id,
                         include_comments = p.include_comments,
                         ai_split         = p.ai_split,
+                        period_label     = p.period_label,
                         log              = self._log,
                     )
                     all_files.extend(md_paths)

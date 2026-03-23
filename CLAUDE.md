@@ -1,9 +1,9 @@
-# CLAUDE.md — Карта проекта Rozitta Parser
+# claud.md — Карта проекта Rozitta Parser
 
 ## 📋 О проекте
 
 **Название:** Rozitta Parser (Telegram Archiver)
-**Версия:** 4.1 (tdata-импорт; диалог установки библиотек; кэш диалогов; lazy linked_chat; исправления UI)
+**Версия:** 4.2 (SOCKS5/Tor прокси реализован; имена файлов с датой/топиком; кэш бессрочный; логи авторизации; fix faster-whisper в .exe)
 **Тип:** Desktop приложение (PySide6)
 **Назначение:** Архивирование сообщений из Telegram чатов с созданием DOCX / JSON / MD документов
 

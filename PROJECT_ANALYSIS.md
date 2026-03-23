@@ -341,23 +341,26 @@ SettingsPanel
 
 ---
 
-## 🐛 4b. БАГИ (обновлено 2026-03-18)
+## 🐛 4b. БАГИ (обновлено 2026-03-23)
 
 | # | Описание | Файл | Статус |
 |---|----------|------|--------|
-| BUG-2 | Посты + комментарии: `include_comments` не передавался в ExportParams | `ui/main_window.py` | ✅ ИСПРАВЛЕН 2026-03-14 |
-| BUG-3 | linked_chat_id: bulk-запрос убран, теперь ленивая загрузка при выборе канала | `features/chats/api.py`, `ui/main_window.py` | ✅ ИСПРАВЛЕН 2026-03-18 |
-| BUG-4 | Фильтрация по участникам: `user_id: int` → `user_ids: List[int]` | `features/parser/api.py`, `features/parser/ui.py` | ✅ ИСПРАВЛЕН 2026-03-14 |
-| BUG-5 | `Signal(dict)` → RuntimeError в PySide6 при emit TopicsWorker | `features/chats/ui.py:183` | ✅ ИСПРАВЛЕН 2026-03-14 |
-| BUG-6 | TopicsWorker: 0 веток (следствие BUG-5) | `features/chats/ui.py` | ✅ ИСПРАВЛЕН 2026-03-14 |
-| BUG-7 | `database is locked` при старте ChatsWorker после авторизации — race condition | `features/auth/ui.py`, `ui/main_window.py` | ✅ ИСПРАВЛЕН 2026-03-16 |
-| BUG-8 | api_id / api_hash / phone не сохранялись на диск | `features/auth/ui.py` | ✅ ИСПРАВЛЕН 2026-03-16 |
-| BUG-9 | STT запускался всегда, даже если все чипы выключены | `ui/main_window.py` | ✅ ИСПРАВЛЕН 2026-03-18 |
-| BUG-10 | Статус «Генерация DOCX» — хардкод вместо реальных форматов | `ui/main_window.py` | ✅ ИСПРАВЛЕН 2026-03-18 |
-| BUG-11 | Артефакт-линия в заголовках секций — конфликт двух QLayout в SectionTitle | `core/ui_shared/widgets.py` | ✅ ИСПРАВЛЕН 2026-03-18 |
-| BUG-12 | Кнопки фильтра лога обрезались (min-width: 0) | `core/ui_shared/styles.py` | ✅ ИСПРАВЛЕН 2026-03-18 |
-| BUG-13 | GetForumTopicsRequest не получал названия веток — передавался Channel вместо InputChannel | `features/chats/api.py` | ✅ ИСПРАВЛЕН 2026-03-17 |
-| PERF-1 | Загрузка чатов ~30 мин — причина: Telegram FloodWait на новых сессиях + DEBUG-лог в файл | — | 🔴 ОТКРЫТ, ждём фидбека от сообщества |
+| BUG-2 | Посты + комментарии: `include_comments` не передавался в ExportParams | `ui/main_window.py` | ✅ ИСПРАВЛЕН |
+| BUG-3 | linked_chat_id: lazy-загрузка при выборе канала | `features/chats/api.py` | ✅ ИСПРАВЛЕН |
+| BUG-4 | Фильтрация по участникам: `user_id` → `user_ids: List[int]` | `features/parser/api.py` | ✅ ИСПРАВЛЕН |
+| BUG-5 | `Signal(dict)` → RuntimeError в PySide6 | `features/chats/ui.py` | ✅ ИСПРАВЛЕН |
+| BUG-6 | TopicsWorker: 0 веток | `features/chats/ui.py` | ✅ ИСПРАВЛЕН |
+| BUG-7 | `database is locked` race condition | `features/auth/ui.py` | ✅ ИСПРАВЛЕН |
+| BUG-8 | api_id/hash/phone не сохранялись | `features/auth/ui.py` | ✅ ИСПРАВЛЕН |
+| BUG-9 | STT запускался при выключенных чипах | `ui/main_window.py` | ✅ ИСПРАВЛЕН |
+| BUG-10 | Статус «Генерация DOCX» — хардкод | `ui/main_window.py` | ✅ ИСПРАВЛЕН |
+| BUG-11 | Артефакт-линия в заголовках секций | `core/ui_shared/widgets.py` | ✅ ИСПРАВЛЕН |
+| BUG-12 | Кнопки фильтра лога обрезались | `core/ui_shared/styles.py` | ✅ ИСПРАВЛЕН |
+| BUG-13 | GetForumTopicsRequest: Channel вместо InputChannel | `features/chats/api.py` | ✅ ИСПРАВЛЕН |
+| BUG-14 | faster-whisper автоустановка запускала второй .exe | `core/stt/whisper_manager.py` | ✅ ИСПРАВЛЕН 2026-03-23 |
+| BUG-15 | Файлы JSON/MD не содержали дату и топик в имени — перезаписывали друг друга | `features/export/generator.py` | ✅ ИСПРАВЛЕН 2026-03-23 |
+| BUG-16 | GetForumTopicsRequest: именованные аргументы + пагинация + get_input_entity | `features/chats/api.py` | ✅ ИСПРАВЛЕН 2026-03-23 |
+| PERF-1 | Загрузка чатов ~30 мин — Telegram FloodWait на новых сессиях | — | 🟡 Частично (кэш + lazy + адаптивные паузы) |
 
 ---
 
@@ -452,6 +455,6 @@ SettingsPanel
 ---
 
 **Анализ создан:** 2025-02-12
-**Последнее обновление:** 2026-03-18 (TDL-AUTH завершён, BF-3 закрыт, I18N в roadmap, PERF-1 открыт, баги 9-13 исправлены)
-**Версия:** 4.4
+**Последнее обновление:** 2026-03-23 (SOCKS5/Tor прокси, имена файлов с датой/топиком, кэш бессрочный, fix whisper в .exe, скролл авторизации, логи авторизации)
+**Версия:** 4.5
 **Автор:** Claude (Anthropic)

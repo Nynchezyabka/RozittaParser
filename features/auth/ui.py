@@ -89,6 +89,8 @@ class SessionCheckWorker(QThread):
             if result is not None:
                 client, user = result
                 self.session_valid.emit(client, user)
+        except ConnectionError as exc:
+            self.log_message.emit(f"❌ {exc}")
         except Exception:
             pass  # нет сессии — молча ничего не делаем
         finally:
