@@ -99,6 +99,11 @@ class WhisperManager:
         import subprocess, sys
 
         log = log_callback or (lambda s: logger.info(s))
+        # В .exe sys.executable указывает на сам .exe — запустит второй экземпляр
+        if getattr(sys, "frozen", False):
+            log("⚠️ Автоустановка недоступна в .exe — установите вручную:")
+            log("   pip install faster-whisper")
+            return False
         log("📦 Устанавливаю faster-whisper (ctranslate2 + зависимости)...")
         log("⏳ Это может занять 1–3 минуты, подождите...")
 
