@@ -167,7 +167,7 @@ class ChatsService:
             try:
                 from core.database import DBManager
                 with DBManager(cache_db_path) as _db:
-                    cached = _db.load_dialogs_cache(max_age_hours=24)
+                    cached = _db.load_dialogs_cache(max_age_hours=87600)
                     age    = _db.dialogs_cache_age_minutes()
                 if cached:
                     age_str = f"{age} мин. назад" if age is not None else "недавно"

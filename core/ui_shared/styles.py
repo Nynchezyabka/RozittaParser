@@ -551,7 +551,7 @@ QSS_FILTER_BUTTON = f"""
         background-color: transparent;
         border: 1px solid {BORDER_HEX};
         border-radius: {RADIUS_MD}px;
-        padding: 3px 8px;
+        padding: 3px 3px;
         color: {TEXT_SECONDARY};
         font-size: {FONT_SIZE_XS}px;
         min-width: 36px;
