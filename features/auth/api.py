@@ -59,45 +59,9 @@ class AuthService:
 
         logger.debug("auth: build_client api_id=%s session=%s", cfg.api_id, cfg.session_name)
 
-        # Прокси: SOCKS5 (Tor, системный VPN-клиент и т.п.)
-        proxy = None
-        if getattr(cfg, "proxy_enabled", False):
-            try:
-                import socks  # PySocks
-                # Проверяем доступность прокси перед подключением
-                import socket as _socket
-                try:
-                    _s = _socket.socket()
-                    _s.settimeout(2)
-                    _s.connect((cfg.proxy_host, cfg.proxy_port))
-                    _s.close()
-                    proxy = (socks.SOCKS5, cfg.proxy_host, cfg.proxy_port, True, None, None)
-                    logger.info("auth: прокси SOCKS5 %s:%s активен", cfg.proxy_host, cfg.proxy_port)
-                except OSError:
-                    logger.warning(
-                        "auth: прокси %s:%s недоступен — убедитесь что Tor запущен",
-                        cfg.proxy_host, cfg.proxy_port,
-                    )
-                    # Бросаем исключение чтобы UI показал понятное сообщение
-                    raise ConnectionError(
-                        f"🔌 Прокси недоступен ({cfg.proxy_host}:{cfg.proxy_port})\n\n"
-                        f"Запустите Tor перед входом в приложение,\n"
-                        f"дождитесь «Bootstrapped 100%» и повторите."
-                    )
-            except ImportError:
-                logger.warning("auth: PySocks не установлен — pip install PySocks")
-
-        return TelegramClient(
-            session=cfg.session_path,
-            api_id=cfg.api_id_int,
-            api_hash=cfg.api_hash,
-            device_model="Rozitta Parser Desktop",
-            system_version="Windows 11",
-            app_version="3.3.0",
-            lang_code="ru",
-            system_lang_code="ru-RU",
-            proxy=proxy,
-        )
+        from core.utils import build_telegram_client
+        telegram_client = build_telegram_client(cfg)
+        return telegram_client
 
     @staticmethod
     async def sign_in(
