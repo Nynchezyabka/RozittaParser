@@ -27,7 +27,43 @@ from enum import Enum
 from pathlib import Path
 from typing import Literal, Set
 
+from telethon import TelegramClient
+
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Создаём настроенный экземпляр TelegramClient.
+# ---------------------------------------------------------------------------
+def build_telegram_client(cfg, *,
+                          auto_reconnect=True,
+                          connection_retries=5,
+                          retry_delay=5,
+                          timeout=120,
+                          ) -> TelegramClient:
+    config = {
+        'api_id': cfg.api_id,
+        'api_hash': cfg.api_hash,
+        'app_version': "3.3.0",
+        'auto_reconnect': auto_reconnect,
+        'connection_retries': connection_retries,
+        'device_model': "Rozitta Parser Desktop",
+        'lang_code': "ru",
+        'retry_delay': retry_delay,
+        'session': cfg.session_name,
+        'system_version': "Windows 11",
+        'system_lang_code': "ru-RU",
+        'timeout': timeout,
+    }
+
+    if cfg.proxy_enabled:
+        print('use proxy')
+        from telethon.network import ConnectionTcpMTProxyAbridged
+        config['proxy'] = ('tg2.x6.homes', 443, 'dd9d137443c118caab90485732ae358230')
+        config['connection'] = ConnectionTcpMTProxyAbridged
+
+    print(config)
+    return TelegramClient(**config)
 
 
 # ---------------------------------------------------------------------------
@@ -46,8 +82,8 @@ class TelegramEntityType(str, Enum):
 # ---------------------------------------------------------------------------
 
 def finalize_telegram_id(
-    raw_id: int | str,
-    entity_type: TelegramEntityType = TelegramEntityType.CHANNEL,
+        raw_id: int | str,
+        entity_type: TelegramEntityType = TelegramEntityType.CHANNEL,
 ) -> int:
     """
     Универсальная нормализация Telegram Peer ID.
@@ -225,9 +261,9 @@ class DownloadTracker:
     def __init__(self, output_dir: str, chat_title: str, chat_id: int) -> None:
         safe_title = sanitize_filename(chat_title)
         self._chat_id = chat_id
-        self._dir  = os.path.join(output_dir, safe_title)
+        self._dir = os.path.join(output_dir, safe_title)
         self._path = os.path.join(self._dir, "downloaded.txt")
-        self._ids:  Set[int] = set()
+        self._ids: Set[int] = set()
         self._load()
 
     # ── Внутренний загрузчик ───────────────────────────────────────

@@ -51,6 +51,7 @@ from core.ui_shared.styles import (
     QSS_INPUT, QSS_SCROLL_AREA, QSS_COMBOBOX,
 )
 from core.ui_shared.widgets import SectionTitle
+from tst import client
 
 logger = logging.getLogger(__name__)
 
@@ -148,17 +149,21 @@ class ChatsWorker(QThread):
     async def _load(self) -> list:
         from telethon import TelegramClient
         from features.chats.api import ChatsService
+        from core.utils import build_telegram_client
+
         self.character_state.emit("process")
         self.log_message.emit("📥 Загружаю список чатов...")
-        client = TelegramClient(
-            str(self._cfg.session_path),
-            self._cfg.api_id_int,
-            self._cfg.api_hash,
-            timeout=120,
-            connection_retries=5,
-            retry_delay=5,
-            auto_reconnect=True,
-        )
+        # client = TelegramClient(
+        #     str(self._cfg.session_path),
+        #     self._cfg.api_id_int,
+        #     self._cfg.api_hash,
+        #     timeout=120,
+        #     connection_retries=5,
+        #     retry_delay=5,
+        #     auto_reconnect=True,
+        # )
+        client = build_telegram_client(self._cfg)
+
         await client.connect()
         try:
             service = ChatsService(client)
@@ -217,15 +222,18 @@ class TopicsWorker(QThread):
         from telethon import TelegramClient
         from features.chats.api import ChatsService
         self.log_message.emit("📁 Загружаю ветки форума...")
-        client = TelegramClient(
-            str(self._cfg.session_path),
-            self._cfg.api_id_int,
-            self._cfg.api_hash,
-            timeout=120,
-            connection_retries=5,
-            retry_delay=5,
-            auto_reconnect=True,
-        )
+        from core.utils import build_telegram_client
+
+        client = build_telegram_client(self._cfg)
+        # client = TelegramClient(
+        #     str(self._cfg.session_path),
+        #     self._cfg.api_id_int,
+        #     self._cfg.api_hash,
+        #     timeout=120,
+        #     connection_retries=5,
+        #     retry_delay=5,
+        #     auto_reconnect=True,
+        # )
         await client.connect()
         try:
             service = ChatsService(client)
@@ -269,14 +277,16 @@ class LinkedGroupWorker(QThread):
     async def _check(self) -> None:
         from telethon import TelegramClient
         from features.chats.api import ChatsService
+        from core.utils import build_telegram_client
 
-        client = TelegramClient(
-            str(self._cfg.session_path),
-            self._cfg.api_id_int,
-            self._cfg.api_hash,
-            timeout=30,
-            connection_retries=3,
-        )
+        client = build_telegram_client(self._cfg)
+        # client = TelegramClient(
+        #     str(self._cfg.session_path),
+        #     self._cfg.api_id_int,
+        #     self._cfg.api_hash,
+        #     timeout=30,
+        #     connection_retries=3,
+        # )
         await client.connect()
         try:
             service = ChatsService(client)
@@ -334,15 +344,17 @@ class MembersWorker(QThread):
         from telethon import TelegramClient
         from features.chats.api import ChatsService
         self.log_message.emit("👥 Загружаю участников...")
-        client = TelegramClient(
-            str(self._cfg.session_path),
-            self._cfg.api_id_int,
-            self._cfg.api_hash,
-            timeout=120,
-            connection_retries=5,
-            retry_delay=5,
-            auto_reconnect=True,
-        )
+        from core.utils import build_telegram_client
+        client = build_telegram_client(self._cfg)
+        # client = TelegramClient(
+        #     str(self._cfg.session_path),
+        #     self._cfg.api_id_int,
+        #     self._cfg.api_hash,
+        #     timeout=120,
+        #     connection_retries=5,
+        #     retry_delay=5,
+        #     auto_reconnect=True,
+        # )
         await client.connect()
         try:
             service = ChatsService(client)
