@@ -36,8 +36,9 @@ import asyncio
 import logging
 from typing import Optional
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize, QUrl
 from PySide6.QtGui import QCloseEvent, QFont, QColor
+from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QSizePolicy, QProgressBar, QStackedWidget,
@@ -1212,6 +1213,13 @@ class MainWindow(QMainWindow):
 
         self._rozetta = RozittaWidget()
         self._rozetta.set_image_path('resource/rozitta_idle.png') # Загружаем аватар персонажа.
+
+        self._greeting_sound = QSoundEffect()
+        self._greeting_sound.setSource(QUrl.fromLocalFile("resource/frog-croaking-x1.wav"))
+        self._greeting_sound.setVolume(0.8)
+
+        self._rozetta.clicked.connect(lambda: self._greeting_sound.play())
+
         char_layout.addWidget(self._rozetta, 0, Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(char_wrap)
 
