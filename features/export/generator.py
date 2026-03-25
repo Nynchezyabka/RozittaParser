@@ -783,6 +783,7 @@ class MarkdownGenerator:
         include_comments: bool           = False,
         ai_split:         bool           = False,
         log:              _LogCallback   = lambda _: None,
+        period_label:     str,
     ) -> List[str]:
         """
         Основная точка входа. Строит Markdown и сохраняет на диск.
