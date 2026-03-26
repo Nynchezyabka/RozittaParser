@@ -352,7 +352,7 @@
     const nodes = new vis.DataSet([
         { id: "main_full", label: "main_full.py", group: "entry", level: 0, description: "Точка входа для полной версии. Инициализирует UI, загружает конфиг, создаёт MainWindow." },
         { id: "main_lite", label: "main_lite.py", group: "entry", level: 0, description: "Точка входа для lite‑версии. Запускает упрощённый интерфейс (QR, теги)." },
-        { id: "ui_full", label: "ui/full/main_window.py", group: "ui_full", level: 1, description: "Полный интерфейс: 3-колоночный макет, вкладки настроек, управление воркерами, логи." },
+        { id: "ui_full", label: "ui/full/main_window.py", group: "ui_full", level: 1, description: "Полный интерфейс: вкладки (авторизация, чаты, настройки), управление воркерами, логи." },
         { id: "ui_lite", label: "ui/lite/main_window.py", group: "ui_lite", level: 1, description: "Lite‑интерфейс: три экрана (QR, чаты с тегами, экспорт), три чекбокса." },
         { id: "auth_api", label: "features/auth/api.py", group: "core", level: 2, description: "AuthService — вход через QR, tdata-импорт, MTProto прокси. Создаёт TelegramClient." },
         { id: "chats_api", label: "features/chats/api.py", group: "core", level: 2, description: "ChatsService — загрузка диалогов (MTProto ускорил), классификация, кэширование 24ч." },
