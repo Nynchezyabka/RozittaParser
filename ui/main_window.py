@@ -1211,7 +1211,19 @@ class MainWindow(QMainWindow):
         char_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self._rozetta = RozittaWidget()
-        self._rozetta.set_image_path('resource/rozitta_idle.png') # Загружаем аватар персонажа.
+        # Загружаем аватар персонажа. Ищем сначала в assets/, потом в корне приложения.
+        import os as _os
+        _base = _os.path.dirname(_os.path.abspath(__file__))   # папка ui/
+        _app_root = _os.path.dirname(_base)                    # корень приложения
+        for _candidate in (
+            _os.path.join(_app_root, "assets", "rozitta_idle.png"),
+            _os.path.join(_app_root, "rozitta_idle.png"),
+            "assets/rozitta_idle.png",
+            "rozitta_idle.png",
+        ):
+            if _os.path.exists(_candidate):
+                self._rozetta.set_image_path(_candidate)
+                break
         char_layout.addWidget(self._rozetta, 0, Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(char_wrap)
 
