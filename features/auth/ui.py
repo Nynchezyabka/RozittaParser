@@ -39,7 +39,7 @@ from PySide6.QtCore import Qt, Signal, Slot, QThread, QUrl
 from PySide6.QtGui import QFont, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QFrame, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget, QGridLayout
 )
 from config import AppConfig
 from core.ui_shared.styles import (
@@ -303,25 +303,11 @@ class AuthScreen(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        # Внешний layout — только скролл
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-
         container = QWidget()
         container.setStyleSheet("background: transparent;")
-        layout = QVBoxLayout(container)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-
-        scroll.setWidget(container)
-        outer.addWidget(scroll)
 
         # Заголовок
         title = QLabel("🔑  API и вход")
@@ -373,7 +359,7 @@ class AuthScreen(QWidget):
         pfl.setSpacing(6)
 
         proxy_row = QHBoxLayout()
-        proxy_lbl = QLabel("🔌  SOCKS5 прокси (Tor)")
+        proxy_lbl = QLabel("🔌  MTProto прокси")
         proxy_lbl.setFont(QFont(FONT_FAMILY, FONT_SIZE_XS))
         proxy_row.addWidget(proxy_lbl)
         proxy_row.addStretch()
@@ -385,26 +371,80 @@ class AuthScreen(QWidget):
 
         host_row = QHBoxLayout()
         host_row.setSpacing(6)
-        self._proxy_host_auth = QLineEdit(
-            getattr(self._cfg, "proxy_host", "127.0.0.1")
+        self._proxy_url = QLineEdit(
+            getattr(self._cfg, "proxy_url", "")
         )
-        self._proxy_host_auth.setPlaceholderText("127.0.0.1")
-        self._proxy_host_auth.setFixedHeight(28)
-        self._proxy_host_auth.setStyleSheet(QSS_INPUT)
-        self._proxy_port_auth = QSpinBox()
-        self._proxy_port_auth.setRange(1, 65535)
-        self._proxy_port_auth.setValue(getattr(self._cfg, "proxy_port", 9050))
-        self._proxy_port_auth.setFixedHeight(28)
-        self._proxy_port_auth.setFixedWidth(80)
-        self._proxy_port_auth.setStyleSheet(QSS_INPUT)
-        host_row.addWidget(self._proxy_host_auth, 1)
-        host_row.addWidget(self._proxy_port_auth)
+        self._proxy_url.setPlaceholderText("Вставить ссылку на прокси...")
+        self._proxy_url.setFixedHeight(32)
+        self._proxy_url.setStyleSheet(QSS_INPUT)
+
+        host_row.addWidget(self._proxy_url, 1)
         pfl.addLayout(host_row)
+
+        # ── Поля для авторизации прокси (сервер, порт, секрет) ──────────────
+        auth_container = QWidget()
+        auth_layout = QGridLayout(auth_container)
+        auth_layout.setContentsMargins(0, 0, 0, 0)
+        auth_layout.setSpacing(6)
+        auth_layout.setVerticalSpacing(4)
+
+        # Сервер
+        self._proxy_host = QLineEdit(getattr(self._cfg, "proxy_host", "127.0.0.1"))
+        self._proxy_host.setPlaceholderText("Сервер")
+        self._proxy_host.setFixedHeight(32)
+        self._proxy_host.setStyleSheet(QSS_INPUT)
+        auth_layout.addWidget(self._proxy_host, 1, 0)
+        # Порт
+        self._proxy_port = QLineEdit(str(getattr(self._cfg, "proxy_port", 443)))
+        self._proxy_port.setPlaceholderText("Порт")
+        self._proxy_port.setFixedHeight(32)
+        self._proxy_port.setStyleSheet(QSS_INPUT)
+        auth_layout.addWidget(self._proxy_port, 1, 1)
+        # Секрет (пароль для авторизации SOCKS5)
+        self._proxy_secret = QLineEdit(getattr(self._cfg, "proxy_secret", ""))
+        self._proxy_secret.setFixedHeight(32)
+        self._proxy_secret.setStyleSheet(QSS_INPUT)
+        auth_layout.addWidget(self._proxy_secret, 1, 2)
+
+        # Устанавливаем пропорции колонок
+        auth_layout.setColumnStretch(0, 2)  # Сервер - шире
+        auth_layout.setColumnStretch(1, 1)  # Порт - уже
+        auth_layout.setColumnStretch(2, 2)  # Секрет - шире
+
+        pfl.addWidget(auth_container)
 
         def _save_proxy_auth():
             self._cfg.proxy_enabled = self._proxy_toggle.isChecked()
-            self._cfg.proxy_host    = self._proxy_host_auth.text().strip() or "127.0.0.1"
-            self._cfg.proxy_port    = self._proxy_port_auth.value()
+            try:
+                from config import save_config
+                save_config(self._cfg)
+            except Exception:
+                pass
+
+        def _proxy_ur_editing():
+            self._cfg.proxy_url = self._proxy_url.text().strip()
+            try:
+                    proxy_string = self._proxy_url.text().strip()
+                    h, p, s = [i.split('=')[1] for i in proxy_string.split('&')]
+                    self._cfg.proxy_host    = h
+                    self._cfg.proxy_port    = int(p)
+                    self._cfg.proxy_secret  = s
+                    self._proxy_port.setText(p)
+                    self._proxy_host.setText(h)
+                    self._proxy_secret.setText(s)
+            except Exception:
+                    pass
+            try:
+                from config import save_config
+                save_config(self._cfg)
+            except Exception:
+                pass
+
+        def _save_option():
+            self._cfg.proxy_host = self._proxy_host.text().strip()
+            self._cfg.proxy_port = int(self._proxy_port.text().strip())
+            self._cfg.proxy_secret = self._proxy_secret.text().strip()
+
             try:
                 from config import save_config
                 save_config(self._cfg)
@@ -412,8 +452,11 @@ class AuthScreen(QWidget):
                 pass
 
         self._proxy_toggle.toggled.connect(_save_proxy_auth)
-        self._proxy_host_auth.editingFinished.connect(_save_proxy_auth)
-        self._proxy_port_auth.valueChanged.connect(_save_proxy_auth)
+        self._proxy_url.editingFinished.connect(_proxy_ur_editing)
+        self._proxy_host.editingFinished.connect(_save_option)
+        self._proxy_port.editingFinished.connect(_save_option)
+        self._proxy_secret.editingFinished.connect(_save_option)
+
 
         layout.addWidget(proxy_frame)
 

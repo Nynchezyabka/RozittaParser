@@ -69,9 +69,9 @@ IMAGE_EXTENSIONS: frozenset[str] = frozenset({
 })
 
 # --- DOCX ---
-DOCX_IMAGE_WIDTH_INCHES      = 4.5     # ширина вставляемых изображений
-DOCX_IMAGE_WIDTH_COMMENT_INCHES = 4.0  # ширина изображений в комментариях
-DOCX_SEPARATOR_LENGTH        = 60      # длина разделителя "_" * N
+DOCX_IMAGE_WIDTH_INCHES         = 4.5     # ширина вставляемых изображений
+DOCX_IMAGE_WIDTH_COMMENT_INCHES = 4.0     # ширина изображений в комментариях
+DOCX_SEPARATOR_LENGTH           = 60      # длина разделителя "_" * N
 
 # --- Валидные режимы разбивки DOCX ---
 VALID_SPLIT_MODES: tuple[str, ...] = ("none", "day", "month", "post")
@@ -129,9 +129,10 @@ class AppConfig:
 
     # Прокси (SOCKS5 / HTTP) — опционально
     proxy_enabled: bool      = False
-    proxy_host:    str       = "127.0.0.1"
-    proxy_port:    int       = 9050
-
+    proxy_host:    str       = ""
+    proxy_port:    int       = 433
+    proxy_secret:  str       = ""
+    proxy_url:     str       = ""
     # ------------------------------------------------------------------
     # Свойства
     # ------------------------------------------------------------------
@@ -244,8 +245,10 @@ def load_config(path: str = CONFIG_FILE) -> AppConfig:
             stt_model     = str(data.get("stt_model", STT_MODEL_DEFAULT)),
             stt_language  = str(data.get("stt_language", STT_LANGUAGE_DEFAULT)),
             proxy_enabled = bool(data.get("proxy_enabled", False)),
-            proxy_host    = str(data.get("proxy_host", "127.0.0.1")),
-            proxy_port    = int(data.get("proxy_port", 9050)),
+            proxy_host    = str(data.get("proxy_host", "")),
+            proxy_port    = int(data.get("proxy_port", 443)),
+            proxy_secret  = str(data.get("proxy_secret", "")),
+            proxy_url     = str(data.get("proxy_url", "")),
         )
 
         logger.debug("config.py: конфиг загружен из %s", path)
@@ -290,6 +293,8 @@ def save_config(cfg: AppConfig, path: str = CONFIG_FILE) -> None:
         "proxy_enabled": cfg.proxy_enabled,
         "proxy_host":    cfg.proxy_host,
         "proxy_port":    cfg.proxy_port,
+        "proxy_secret":  cfg.proxy_secret,
+        "proxy_url":     cfg.proxy_url,
     }
 
     try:
