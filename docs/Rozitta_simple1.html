@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Rozitta Parser — Упрощённый интерфейс</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #FF9500;
+            --primary-hover: #E08600;
+            --success: #4CAF50;
+            --success-light: rgba(76, 175, 80, 0.15);
+            --bg-dark: #1A1A1A;
+            --glass: rgba(255, 255, 255, 0.07);
+            --glass-hover: rgba(255, 255, 255, 0.12);
+            --border-light: rgba(255, 255, 255, 0.1);
+            --text-primary: #FFFFFF;
+            --text-secondary: #B0B0B0;
+            --error: #FF5A5A;
+            --warning: #FFB74D;
+            --radius: 16px;
+            --radius-sm: 10px;
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            --transition: all 0.2s ease;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        /* Основной контейнер приложения */
+        .app-container {
+            width: 100%;
+            max-width: 1000px;
+            min-height: 600px;
+            background: var(--glass);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        /* Шапка */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 28px;
+            border-bottom: 1px solid var(--border-light);
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--primary), #FFB347);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 40px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            border: 1px solid var(--border-light);
+        }
+
+        .status-pill.online {
+            color: var(--success);
+        }
+        .status-pill.online::before {
+            content: "●";
+            font-size: 0.9rem;
+        }
+
+        /* Степпер */
+        .stepper {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 24px 28px 16px;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        .step .step-number {
+            width: 28px;
+            height: 28px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            font-size: 0.8rem;
+            transition: var(--transition);
+        }
+
+        .step.active {
+            color: var(--primary);
+        }
+        .step.active .step-number {
+            background: var(--primary);
+            color: #1A1A1A;
+            font-weight: 700;
+        }
+
+        .step-line {
+            width: 40px;
+            height: 2px;
+            background: var(--border-light);
+        }
+        .step-line.completed {
+            background: var(--primary);
+        }
+
+        /* Основной контент (стек экранов) */
+        .screens-stack {
+            padding: 28px;
+            min-height: 420px;
+        }
+
+        .screen {
+            animation: fadeIn 0.3s ease;
+            display: none;
+        }
+
+        .screen.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Карточки, кнопки */
+        .qr-container {
+            text-align: center;
+            margin: 24px 0;
+            padding: 24px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: var(--radius);
+            border: 2px dashed var(--border-light);
+        }
+
+        .qr-placeholder {
+            width: 180px;
+            height: 180px;
+            margin: 0 auto 16px;
+            background: linear-gradient(135deg, var(--primary), #FFB347);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            color: white;
+        }
+
+        .progress {
+            margin: 24px 0;
+        }
+
+        .progress-bar-bg {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            height: 8px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            width: 0%;
+            height: 100%;
+            background: var(--primary);
+            border-radius: 20px;
+            transition: width 0.3s ease;
+        }
+
+        .status-message {
+            margin-top: 12px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: var(--radius-sm);
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+            border: none;
+            font-family: inherit;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: #1A1A1A;
+        }
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+            border: 1px solid var(--border-light);
+        }
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            justify-content: space-between;
+            margin-top: 24px;
+        }
+
+        /* Поиск чатов */
+        .search-tags {
+            margin-bottom: 24px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-light);
+            border-radius: 40px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            font-family: inherit;
+            margin-bottom: 12px;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .tags {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .tag {
+            padding: 6px 14px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 30px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        .tag:hover, .tag.active {
+            background: var(--primary);
+            color: #1A1A1A;
+        }
+
+        .chats-list {
+            max-height: 280px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .chat-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: var(--transition);
+            border: 1px solid transparent;
+        }
+        .chat-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: var(--border-light);
+        }
+        .chat-item.selected {
+            background: rgba(255, 149, 0, 0.2);
+            border-color: var(--primary);
+        }
+        .chat-icon {
+            font-size: 1.6rem;
+        }
+        .chat-info {
+            flex: 1;
+        }
+        .chat-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .chat-meta {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+        .chat-badge {
+            background: var(--primary);
+            color: #1A1A1A;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        /* Опции экспорта */
+        .export-options {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .option-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .option-row label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+        .checkbox-custom {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--primary);
+        }
+
+        .result-card {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: var(--radius);
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .result-icon {
+            font-size: 2.5rem;
+            margin-bottom: 12px;
+        }
+        .file-name {
+            font-weight: 600;
+            font-size: 1rem;
+            margin: 8px 0;
+            word-break: break-all;
+        }
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 16px;
+        }
+
+        /* Адаптив */
+        @media (max-width: 768px) {
+            .app-container {
+                max-width: 100%;
+                margin: 0;
+            }
+            .header {
+                padding: 16px;
+            }
+            .screens-stack {
+                padding: 20px;
+            }
+            .step-line {
+                width: 20px;
+            }
+            .btn-group {
+                flex-direction: column;
+            }
+            .qr-placeholder {
+                width: 140px;
+                height: 140px;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="app-container">
+    <!-- Шапка -->
+    <div class="header">
+        <h1>Rozitta Parser</h1>
+        <div class="status-pill online" id="statusPill">🟢 MTProto</div>
+    </div>
+
+    <!-- Степпер -->
+    <div class="stepper" id="stepper">
+        <div class="step active" data-step="1">
+            <span class="step-number">1</span>
+            <span>Войти</span>
+        </div>
+        <div class="step-line" id="line1"></div>
+        <div class="step" data-step="2">
+            <span class="step-number">2</span>
+            <span>Чаты</span>
+        </div>
+        <div class="step-line" id="line2"></div>
+        <div class="step" data-step="3">
+            <span class="step-number">3</span>
+            <span>Сохранить</span>
+        </div>
+    </div>
+
+    <!-- Стек экранов -->
+    <div class="screens-stack">
+        <!-- Экран 1: Авторизация -->
+        <div class="screen active" id="screen1">
+            <div class="qr-container">
+                <div class="qr-placeholder">
+                    <i class="fas fa-qrcode"></i>
+                </div>
+                <p style="margin-bottom: 12px;">Отсканируйте QR-код в Telegram</p>
+                <button class="btn btn-secondary" id="importTdataBtn" style="margin-top: 8px;">
+                    <i class="fas fa-folder-open"></i> Импорт из Telegram Desktop
+                </button>
+            </div>
+
+            <div class="progress">
+                <div class="progress-bar-bg">
+                    <div class="progress-fill" id="authProgressFill" style="width: 0%;"></div>
+                </div>
+                <div class="status-message" id="authStatusMsg">
+                    <i class="fas fa-spinner fa-spin"></i> Проверяю MTProto прокси...
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" id="nextToChatsBtn">Далее →</button>
+            </div>
+        </div>
+
+        <!-- Экран 2: Чаты -->
+        <div class="screen" id="screen2">
+            <div class="search-tags">
+                <input type="text" class="search-input" id="chatSearch" placeholder="Поиск чатов...">
+                <div class="tags" id="tagList">
+                    <span class="tag" data-tag="семья">🏠 семья</span>
+                    <span class="tag" data-tag="школа">📚 школа</span>
+                    <span class="tag" data-tag="дети">👶 дети</span>
+                    <span class="tag" data-tag="работа">💼 работа</span>
+                    <span class="tag" data-tag="друзья">❤️ друзья</span>
+                </div>
+            </div>
+
+            <div class="chats-list" id="chatsList">
+                <!-- Динамические чаты -->
+                <div class="chat-item" data-chat-id="family" data-chat-name="Семья">
+                    <div class="chat-icon">📱</div>
+                    <div class="chat-info">
+                        <div class="chat-name">Семья</div>
+                        <div class="chat-meta">245 новых сообщений</div>
+                    </div>
+                    <div class="chat-badge">245</div>
+                </div>
+                <div class="chat-item" data-chat-id="school" data-chat-name="Уроки">
+                    <div class="chat-icon">📚</div>
+                    <div class="chat-info">
+                        <div class="chat-name">Уроки</div>
+                        <div class="chat-meta">89 новых</div>
+                    </div>
+                    <div class="chat-badge">89</div>
+                </div>
+                <div class="chat-item" data-chat-id="friends" data-chat-name="Друзья">
+                    <div class="chat-icon">❤️</div>
+                    <div class="chat-info">
+                        <div class="chat-name">Друзья</div>
+                        <div class="chat-meta">12 новых</div>
+                    </div>
+                    <div class="chat-badge">12</div>
+                </div>
+                <div class="chat-item" data-chat-id="work" data-chat-name="Работа">
+                    <div class="chat-icon">💼</div>
+                    <div class="chat-info">
+                        <div class="chat-name">Работа</div>
+                        <div class="chat-meta">34 новых</div>
+                    </div>
+                    <div class="chat-badge">34</div>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-secondary" id="backToAuthBtn">← Назад</button>
+                <button class="btn btn-primary" id="nextToExportBtn" disabled>Выбрать → Экспорт</button>
+            </div>
+        </div>
+
+        <!-- Экран 3: Экспорт -->
+        <div class="screen" id="screen3">
+            <div style="margin-bottom: 16px;">
+                <span style="color: var(--text-secondary);">Чат:</span>
+                <strong id="selectedChatName">—</strong>
+            </div>
+
+            <div class="export-options">
+                <div class="option-row">
+                    <label>
+                        <input type="checkbox" class="checkbox-custom" id="last30Days"> 📅 Последние 30 дней
+                    </label>
+                    <label>
+                        <input type="checkbox" class="checkbox-custom" id="withMedia"> 🖼️ С фото/видео
+                    </label>
+                    <label>
+                        <input type="checkbox" class="checkbox-custom" id="voiceToText"> 🎙️ Голос → текст
+                    </label>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" id="exportBtn" style="width: 100%; margin-bottom: 20px;">
+                <i class="fas fa-save"></i> СОХРАНИТЬ
+            </button>
+
+            <div id="exportResult" style="display: none;">
+                <div class="result-card">
+                    <div class="result-icon">✅</div>
+                    <div class="file-name" id="fileNameDisplay">Семья_24_03_2026.docx</div>
+                    <div class="status-message" style="justify-content: center;">Готово! Файл сохранён</div>
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary" id="openNotebookLMBtn">
+                            <i class="fas fa-robot"></i> NotebookLM
+                        </button>
+                        <button class="btn btn-secondary" id="openFolderBtn">
+                            <i class="fas fa-folder-open"></i> Папка
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-secondary" id="backToChatsBtn">← Новый чат</button>
+            </div>
+            <div class="status-message" id="exportStatusMsg" style="margin-top: 16px; justify-content: center;">
+                <i class="fas fa-hand-pointer"></i> Перетащите в NotebookLM
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Состояние ---
+    let currentStep = 1;
+    let selectedChat = null;
+    let exportCompleted = false;
+    let authCompleted = false;
+
+    // Элементы
+    const screens = {
+        1: document.getElementById('screen1'),
+        2: document.getElementById('screen2'),
+        3: document.getElementById('screen3')
+    };
+    const stepperSteps = document.querySelectorAll('.step');
+    const line1 = document.getElementById('line1');
+    const line2 = document.getElementById('line2');
+    const authProgressFill = document.getElementById('authProgressFill');
+    const authStatusMsg = document.getElementById('authStatusMsg');
+    const nextToChatsBtn = document.getElementById('nextToChatsBtn');
+    const backToAuthBtn = document.getElementById('backToAuthBtn');
+    const nextToExportBtn = document.getElementById('nextToExportBtn');
+    const backToChatsBtn = document.getElementById('backToChatsBtn');
+    const chatsList = document.getElementById('chatsList');
+    const chatSearch = document.getElementById('chatSearch');
+    const tagList = document.getElementById('tagList');
+    const selectedChatNameSpan = document.getElementById('selectedChatName');
+    const exportBtn = document.getElementById('exportBtn');
+    const exportResultDiv = document.getElementById('exportResult');
+    const fileNameDisplay = document.getElementById('fileNameDisplay');
+    const openNotebookLMBtn = document.getElementById('openNotebookLMBtn');
+    const openFolderBtn = document.getElementById('openFolderBtn');
+    const exportStatusMsg = document.getElementById('exportStatusMsg');
+    const last30DaysCheck = document.getElementById('last30Days');
+    const withMediaCheck = document.getElementById('withMedia');
+    const voiceToTextCheck = document.getElementById('voiceToText');
+    const importTdataBtn = document.getElementById('importTdataBtn');
+
+    // --- Управление экранами и степпером ---
+    function setStep(step) {
+        currentStep = step;
+        // Показать нужный экран
+        Object.keys(screens).forEach(s => {
+            screens[s].classList.remove('active');
+        });
+        screens[step].classList.add('active');
+
+        // Обновить степпер
+        stepperSteps.forEach((stepEl, idx) => {
+            const stepNum = idx + 1;
+            if (stepNum === currentStep) {
+                stepEl.classList.add('active');
+            } else {
+                stepEl.classList.remove('active');
+            }
+        });
+        // Линии
+        if (currentStep >= 2) {
+            line1.classList.add('completed');
+        } else {
+            line1.classList.remove('completed');
+        }
+        if (currentStep >= 3) {
+            line2.classList.add('completed');
+        } else {
+            line2.classList.remove('completed');
+        }
+    }
+
+    // --- Симуляция авторизации с прогрессом ---
+    function startAuth() {
+        authCompleted = false;
+        let progress = 0;
+        authProgressFill.style.width = '0%';
+        authStatusMsg.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Проверяю MTProto прокси...';
+        const interval = setInterval(() => {
+            progress += 12;
+            if (progress >= 100) {
+                clearInterval(interval);
+                authProgressFill.style.width = '100%';
+                authStatusMsg.innerHTML = '<i class="fas fa-check-circle" style="color: var(--success);"></i> Готово! Подключение установлено.';
+                authCompleted = true;
+                // Обновить статус в шапке
+                document.getElementById('statusPill').innerHTML = '🟢 Подключено';
+                document.getElementById('statusPill').classList.add('online');
+                nextToChatsBtn.disabled = false;
+            } else {
+                authProgressFill.style.width = progress + '%';
+                if (progress === 30) authStatusMsg.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Подключаюсь к MTProto...';
+                if (progress === 60) authStatusMsg.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Загружаю диалоги...';
+            }
+        }, 180);
+    }
+
+    // --- Фильтрация чатов ---
+    function filterChats() {
+        const query = chatSearch.value.toLowerCase();
+        const activeTag = document.querySelector('.tag.active');
+        let tagFilter = activeTag ? activeTag.getAttribute('data-tag') : '';
+        const items = document.querySelectorAll('.chat-item');
+        items.forEach(item => {
+            const name = item.getAttribute('data-chat-name').toLowerCase();
+            let matches = name.includes(query);
+            if (tagFilter && !name.includes(tagFilter)) matches = false;
+            item.style.display = matches ? 'flex' : 'none';
+        });
+    }
+
+    // --- Выбор чата ---
+    function selectChat(chatElement) {
+        document.querySelectorAll('.chat-item').forEach(c => c.classList.remove('selected'));
+        chatElement.classList.add('selected');
+        selectedChat = {
+            id: chatElement.getAttribute('data-chat-id'),
+            name: chatElement.getAttribute('data-chat-name')
+        };
+        selectedChatNameSpan.innerText = selectedChat.name;
+        nextToExportBtn.disabled = false;
+    }
+
+    // --- Экспорт (симуляция) ---
+    function startExport() {
+        if (!selectedChat) return;
+        // Обновляем статус Pill
+        document.getElementById('statusPill').innerHTML = '🟡 Парсинг...';
+        exportBtn.disabled = true;
+        exportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Экспортирую...';
+        exportResultDiv.style.display = 'none';
+        exportStatusMsg.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Скачиваю сообщения...';
+
+        setTimeout(() => {
+            // Генерируем имя файла
+            const today = new Date();
+            const dateStr = `${today.getDate()}_${today.getMonth()+1}_${today.getFullYear()}`;
+            const fileName = `${selectedChat.name.replace(/[^a-zа-яё]/gi, '_')}_${dateStr}.docx`;
+            fileNameDisplay.innerText = fileName;
+
+            exportBtn.disabled = false;
+            exportBtn.innerHTML = '<i class="fas fa-save"></i> СОХРАНИТЬ';
+            exportResultDiv.style.display = 'block';
+            exportStatusMsg.innerHTML = '<i class="fas fa-hand-pointer"></i> Перетащите в NotebookLM';
+            document.getElementById('statusPill').innerHTML = '🟢 Подключено';
+            exportCompleted = true;
+        }, 2000);
+    }
+
+    // --- Открыть NotebookLM ---
+    function openNotebookLM() {
+        window.open('https://notebooklm.google.com', '_blank');
+    }
+
+    // --- Открыть папку (имитация) ---
+    function openFolder() {
+        alert('Папка с экспортом: ~/Documents/Rozitta_Export');
+    }
+
+    // --- События ---
+    nextToChatsBtn.addEventListener('click', () => {
+        if (authCompleted) {
+            setStep(2);
+            filterChats();
+        } else {
+            alert('Пожалуйста, дождитесь завершения авторизации');
+        }
+    });
+    backToAuthBtn.addEventListener('click', () => setStep(1));
+    nextToExportBtn.addEventListener('click', () => {
+        if (selectedChat) setStep(3);
+        else alert('Выберите чат для экспорта');
+    });
+    backToChatsBtn.addEventListener('click', () => setStep(2));
+
+    // Выбор чата через делегирование
+    chatsList.addEventListener('click', (e) => {
+        const chatItem = e.target.closest('.chat-item');
+        if (chatItem) selectChat(chatItem);
+    });
+
+    // Поиск и теги
+    chatSearch.addEventListener('input', filterChats);
+    tagList.addEventListener('click', (e) => {
+        const tag = e.target.closest('.tag');
+        if (tag) {
+            document.querySelectorAll('.tag').forEach(t => t.classList.remove('active'));
+            tag.classList.add('active');
+            filterChats();
+        }
+    });
+
+    // Кнопка экспорта
+    exportBtn.addEventListener('click', startExport);
+    openNotebookLMBtn.addEventListener('click', openNotebookLM);
+    openFolderBtn.addEventListener('click', openFolder);
+
+    // Импорт tdata (симуляция)
+    importTdataBtn.addEventListener('click', () => {
+        authStatusMsg.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Импортирую сессию из Telegram Desktop...';
+        setTimeout(() => {
+            authProgressFill.style.width = '100%';
+            authStatusMsg.innerHTML = '<i class="fas fa-check-circle" style="color: var(--success);"></i> Импорт завершён!';
+            authCompleted = true;
+            document.getElementById('statusPill').innerHTML = '🟢 Подключено';
+        }, 1500);
+    });
+
+    // Чекбоксы последних 30 дней, медиа, голос → текст просто сохраняют состояние (для демо)
+    // Также симулируем смену статуса в процессе экспорта
+    // Старт авторизации при загрузке
+    startAuth();
+
+    // Инициализация выбора чата по умолчанию нет, nextToExportBtn заблокирован
+    nextToExportBtn.disabled = true;
+    // Обновление стиля для статус-пиллы
+    document.getElementById('statusPill').innerHTML = '🟡 Подключение...';
+</script>
+</body>
+</html>
