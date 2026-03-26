@@ -2,188 +2,262 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rozitta Parser — Живая карта с GitHub Issues</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Rozitta Parser — Живая карта проекта | Архитектура и GitHub Issues</title>
     <script type="text/javascript" src="https://unpkg.com/vis-network@9.1.6/dist/vis-network.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
+
         body {
-            font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
-            background: #0a0a12;
-            color: #eef2ff;
+            font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            background: radial-gradient(circle at 10% 20%, #0b0b14, #050507);
+            color: #f0f3fa;
             display: flex;
             flex-direction: column;
             height: 100vh;
             overflow: hidden;
         }
+
+        /* Современный хедер с градиентом */
         .header {
-            background: #11111c;
-            padding: 0.8rem 2rem;
-            border-bottom: 1px solid #2a2a3a;
+            background: rgba(17, 17, 28, 0.75);
+            backdrop-filter: blur(12px);
+            padding: 0.75rem 2rem;
+            border-bottom: 1px solid rgba(255, 149, 0, 0.3);
             display: flex;
             justify-content: space-between;
-            align-items: baseline;
+            align-items: center;
             flex-wrap: wrap;
+            gap: 1rem;
+            z-index: 10;
         }
+
         .title h1 {
-            font-size: 1.4rem;
-            font-weight: 600;
-            background: linear-gradient(135deg, #FF9500, #FF6BC9);
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #FFB347, #FF6BC9, #FF3D6C);
             background-clip: text;
             -webkit-background-clip: text;
             color: transparent;
-            display: inline-block;
+            letter-spacing: -0.3px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .title h1::before {
+            content: "📡";
+            font-size: 1.4rem;
+            background: none;
+            color: #FFB347;
         }
         .title p {
-            font-size: 0.8rem;
-            color: #8f8faa;
+            font-size: 0.75rem;
+            color: #a5a5c7;
+            margin-top: 4px;
+            letter-spacing: 0.3px;
         }
+
+        /* Легенда */
         .legend {
             display: flex;
             gap: 1rem;
             flex-wrap: wrap;
-            background: #1a1a28;
-            padding: 0.4rem 1rem;
-            border-radius: 40px;
+            background: rgba(26, 26, 40, 0.7);
+            backdrop-filter: blur(8px);
+            padding: 0.5rem 1.2rem;
+            border-radius: 60px;
+            border: 1px solid rgba(255,149,0,0.2);
         }
         .legend span {
             display: inline-flex;
             align-items: center;
-            gap: 0.4rem;
+            gap: 0.5rem;
             font-size: 0.75rem;
+            font-weight: 500;
+            background: rgba(10,10,18,0.5);
+            padding: 0.2rem 0.8rem;
+            border-radius: 32px;
+            backdrop-filter: blur(2px);
         }
         .legend .color {
-            width: 12px;
-            height: 12px;
-            border-radius: 2px;
+            width: 14px;
+            height: 14px;
+            border-radius: 4px;
+            box-shadow: 0 0 2px rgba(0,0,0,0.3);
         }
+
+        /* Контейнер графа и панели */
         .container {
             display: flex;
             flex: 1;
             overflow: hidden;
+            gap: 0;
         }
+
         #network {
             flex: 3;
-            background: #0a0a12;
+            background: radial-gradient(ellipse at 30% 40%, #0f0f1a, #08080f);
             position: relative;
+            border-radius: 0;
         }
+
+        /* Информационная панель */
         .info-panel {
             flex: 1.2;
-            background: #11111c;
-            border-left: 1px solid #2a2a3a;
+            background: rgba(17, 17, 28, 0.85);
+            backdrop-filter: blur(16px);
+            border-left: 1px solid rgba(255, 149, 0, 0.4);
             overflow-y: auto;
-            padding: 1rem;
+            padding: 1.4rem 1.2rem;
             font-size: 0.9rem;
+            box-shadow: -5px 0 20px rgba(0,0,0,0.5);
         }
         .info-panel h3 {
-            font-size: 1.1rem;
-            margin-bottom: 1rem;
-            color: #FF9500;
-            border-left: 3px solid #FF6BC9;
-            padding-left: 0.6rem;
+            font-size: 1.2rem;
+            margin-bottom: 1.2rem;
+            color: #FFB347;
+            border-left: 4px solid #FF6BC9;
+            padding-left: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
         }
         .info-content {
             line-height: 1.5;
-            color: #cbd5e6;
+            color: #e2e8ff;
         }
         .info-empty {
-            color: #6c6b85;
+            color: #a0a0c0;
             font-style: italic;
+            background: rgba(0,0,0,0.2);
+            padding: 1rem;
+            border-radius: 20px;
+            text-align: center;
         }
         .note {
-            background: #1f1f2e;
-            padding: 0.8rem;
-            border-radius: 12px;
-            margin-top: 1rem;
+            background: rgba(31, 31, 46, 0.8);
+            backdrop-filter: blur(4px);
+            padding: 1rem;
+            border-radius: 20px;
+            margin-top: 1.2rem;
             border-left: 3px solid #FF9500;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         }
         .issue-list {
-            margin-top: 0.5rem;
+            margin-top: 0.7rem;
             list-style: none;
             padding-left: 0;
         }
         .issue-item {
-            background: #0a0a12;
-            padding: 0.6rem;
-            border-radius: 8px;
-            margin-bottom: 0.5rem;
+            background: #0a0a14;
+            padding: 0.7rem;
+            border-radius: 16px;
+            margin-bottom: 0.7rem;
             border-left: 2px solid #FF5A5A;
+            transition: all 0.2s ease;
+        }
+        .issue-item:hover {
+            background: #14141f;
+            transform: translateX(4px);
         }
         .issue-title {
             font-weight: 600;
             font-size: 0.85rem;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.3rem;
         }
         .issue-title a {
-            color: #FF9500;
+            color: #FFB347;
             text-decoration: none;
+            transition: 0.2s;
         }
         .issue-title a:hover {
+            color: #FF6BC9;
             text-decoration: underline;
         }
         .issue-meta {
             font-size: 0.7rem;
-            color: #8f8faa;
+            color: #aaaac9;
             display: flex;
             gap: 0.8rem;
             flex-wrap: wrap;
         }
         .create-issue-btn {
-            display: inline-block;
-            background: #FF9500;
-            color: #1A1A1A;
-            padding: 0.4rem 0.8rem;
-            border-radius: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: linear-gradient(105deg, #FF9500, #FF6BC9);
+            color: #0a0a12;
+            padding: 0.5rem 1rem;
+            border-radius: 40px;
             font-size: 0.75rem;
-            font-weight: 600;
+            font-weight: 700;
             text-decoration: none;
-            margin-top: 0.5rem;
-            transition: all 0.2s;
+            margin-top: 0.8rem;
+            transition: all 0.25s ease;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         }
         .create-issue-btn:hover {
-            background: #FFB347;
-            transform: translateY(-1px);
+            transform: translateY(-2px);
+            background: linear-gradient(105deg, #FFB347, #FF86D4);
+            box-shadow: 0 6px 14px rgba(255,149,0,0.3);
         }
         .github-badge {
             background: #2a2a3a;
-            padding: 0.2rem 0.6rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
+            padding: 0.3rem 0.8rem;
+            border-radius: 32px;
+            font-size: 0.75rem;
             display: inline-flex;
             align-items: center;
-            gap: 0.3rem;
+            gap: 0.5rem;
+            font-weight: 500;
         }
         .footer {
-            background: #11111c;
-            padding: 0.4rem 2rem;
+            background: rgba(17, 17, 28, 0.8);
+            backdrop-filter: blur(8px);
+            padding: 0.5rem 2rem;
             font-size: 0.7rem;
-            color: #6c6b85;
+            color: #9a9ac2;
             text-align: center;
-            border-top: 1px solid #2a2a3a;
+            border-top: 1px solid rgba(255,149,0,0.25);
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            align-items: center;
         }
         button {
-            background: #2a2a3a;
-            border: none;
-            color: white;
-            padding: 0.2rem 0.6rem;
-            border-radius: 6px;
+            background: rgba(42, 42, 58, 0.8);
+            border: 1px solid #FF9500;
+            color: #FFE0B5;
+            padding: 0.3rem 1rem;
+            border-radius: 32px;
             cursor: pointer;
             font-size: 0.7rem;
+            font-weight: 600;
+            transition: all 0.2s;
+            backdrop-filter: blur(2px);
         }
         button:hover {
             background: #FF9500;
+            color: #0a0a12;
+            border-color: #FF9500;
+            box-shadow: 0 0 8px rgba(255,149,0,0.6);
         }
         .badge-resolved {
-            background: #2c9b77;
-            padding: 0.1rem 0.4rem;
-            border-radius: 12px;
+            background: #10b981;
+            padding: 0.2rem 0.6rem;
+            border-radius: 40px;
             font-size: 0.7rem;
+            font-weight: 600;
             margin-left: 0.5rem;
             color: white;
+            display: inline-block;
         }
         .loading-spinner {
             display: inline-block;
@@ -195,8 +269,29 @@
             animation: spin 0.6s linear infinite;
             margin-right: 0.4rem;
         }
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Кастомизация скролла */
+        .info-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+        .info-panel::-webkit-scrollbar-track {
+            background: #1f1f2e;
+            border-radius: 8px;
+        }
+        .info-panel::-webkit-scrollbar-thumb {
+            background: #FF9500;
+            border-radius: 8px;
+        }
+
+        /* Эффекты для canvas (сеть) */
+        #network canvas {
+            filter: drop-shadow(0 0 4px rgba(0,0,0,0.3));
+        }
+
+        @media (max-width: 800px) {
+            .legend span { font-size: 0.65rem; padding: 0.2rem 0.5rem; }
+            .info-panel { flex: 1.5; }
         }
     </style>
 </head>
@@ -204,30 +299,30 @@
 <div class="header">
     <div class="title">
         <h1>✦ Rozitta Parser — Живая карта проекта</h1>
-        <p>Интеграция с GitHub Issues • кликните узел → список проблем</p>
+        <p>Граф зависимостей • GitHub Issues • кликни узел → подробности</p>
     </div>
     <div class="legend">
-        <span><div class="color" style="background:#FF9500;"></div> Точка входа</span>
-        <span><div class="color" style="background:#2c9b77;"></div> UI (полная версия)</span>
+        <span><div class="color" style="background:#f97316;"></div> Точка входа</span>
+        <span><div class="color" style="background:#10b981;"></div> UI (полная версия)</span>
         <span><div class="color" style="background:#3b82f6;"></div> UI (lite‑версия)</span>
-        <span><div class="color" style="background:#6a4e9b;"></div> Бизнес‑логика / Ядро</span>
-        <span><div class="color" style="background:#6c6b85;"></div> Инфраструктура</span>
+        <span><div class="color" style="background:#8b5cf6;"></div> Бизнес‑логика / Ядро</span>
+        <span><div class="color" style="background:#4b5563;"></div> Инфраструктура</span>
         <span><div class="color" style="background:#FF0000;"></div> ⚠️ Есть открытые Issue</span>
-        <span><div class="color" style="background:#2c9b77;"></div> ✅ Работает стабильно</span>
+        <span><div class="color" style="background:#10b981;"></div> ✅ Работает стабильно</span>
     </div>
 </div>
 <div class="container">
     <div id="network"></div>
     <div class="info-panel">
-        <h3>📌 Информация о модуле</h3>
+        <h3><i class="fas fa-info-circle"></i> Информация о модуле</h3>
         <div id="nodeInfo" class="info-content">
-            <p class="info-empty">Нажмите на любой блок, чтобы увидеть его описание и связанные GitHub Issues.</p>
+            <p class="info-empty">✨ Нажмите на любой блок, чтобы увидеть его описание, связанные GitHub Issues и зависимости.</p>
             <div class="note">
-                <strong>🔗 GitHub интеграция</strong><br>
+                <strong><i class="fab fa-github"></i> GitHub интеграция</strong><br>
                 Карта автоматически загружает открытые Issues из репозитория.<br>
                 🔴 Красная рамка — есть открытые проблемы.<br>
-                ➕ Кнопка "Создать issue" — предзаполнит заголовок и метку.<br>
-                <span id="githubStatus" class="github-badge" style="margin-top: 0.5rem; display: inline-flex;">
+                ➕ Кнопка "Создать issue" — предзаполнит заголовок, метку и контекст.<br>
+                <span id="githubStatus" class="github-badge" style="margin-top: 0.6rem;">
                     <i class="loading-spinner"></i> Загрузка данных...
                 </span>
             </div>
@@ -235,18 +330,15 @@
     </div>
 </div>
 <div class="footer">
-    🧠 Данные загружены из GitHub API • при клике на узел — список открытых issues.
-    <button id="resetView" style="margin-left: 1rem;">⟳ Сбросить вид</button>
+    <span><i class="fas fa-project-diagram"></i> Данные из GitHub API</span>
+    <button id="resetView"><i class="fas fa-sync-alt"></i> Сбросить вид</button>
 </div>
 
 <script>
-    // === КОНФИГУРАЦИЯ ===
     const REPO_OWNER = "Nynchezyabka";
     const REPO_NAME = "RozittaParser";
     const GITHUB_API_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues?state=open&per_page=100`;
-    
-    // Сопоставление модулей с ключевыми словами для поиска в issues (пока без меток)
-    // Позже можно будет переключиться на фильтрацию по labels
+
     const MODULE_KEYWORDS = {
         "export_api": ["export", "generator", "docx", "json", "md", "имя файла", "чанк", "split"],
         "database": ["database", "db", "locked", "sqlite", "WAL", "batch"],
@@ -261,14 +353,13 @@
         "merger": ["merger", "склейка", "merge"],
         "retry": ["retry", "backoff"]
     };
-    
-    // Узлы карты
+
     const nodes = new vis.DataSet([
-        { id: "main_full", label: "main_full.py", group: "entry", level: 0, description: "Точка входа для полной версии. Загружает сложный интерфейс." },
-        { id: "main_lite", label: "main_lite.py", group: "entry", level: 0, description: "Точка входа для lite‑версии. Загружает упрощённый интерфейс." },
-        { id: "ui_full", label: "ui/full/main_window.py", group: "ui_full", level: 1, description: "Полный интерфейс: вкладки настроек, все форматы экспорта." },
-        { id: "ui_lite", label: "ui/lite/main_window.py", group: "ui_lite", level: 1, description: "Lite‑интерфейс: QR‑вход, чаты с тегами, три чекбокса." },
-        { id: "auth_api", label: "features/auth/api.py", group: "core", level: 2, description: "AuthService — вход через QR, tdata-импорт, MTProto прокси." },
+        { id: "main_full", label: "main_full.py", group: "entry", level: 0, description: "Точка входа для полной версии. Инициализирует UI, конфиги и клиент Telegram." },
+        { id: "main_lite", label: "main_lite.py", group: "entry", level: 0, description: "Точка входа для lite‑версии. Запускает упрощённый интерфейс." },
+        { id: "ui_full", label: "ui/full/main_window.py", group: "ui_full", level: 1, description: "Полный интерфейс: вкладки настроек, все форматы экспорта, управление парсингом." },
+        { id: "ui_lite", label: "ui/lite/main_window.py", group: "ui_lite", level: 1, description: "Lite‑интерфейс: QR‑вход, чаты с тегами, три чекбокса. Быстрый старт." },
+        { id: "auth_api", label: "features/auth/api.py", group: "core", level: 2, description: "AuthService — вход через QR, tdata-импорт, MTProto прокси. Гибкая аутентификация." },
         { id: "chats_api", label: "features/chats/api.py", group: "core", level: 2, description: "ChatsService — загрузка диалогов. ✅ Скорость решена через MTProto." },
         { id: "parser_api", label: "features/parser/api.py", group: "core", level: 2, description: "ParserService — сбор сообщений, скачивание медиа, batch-запись." },
         { id: "export_api", label: "features/export/generator.py", group: "core", level: 2, description: "Генераторы DOCX/JSON/MD. 🔴 Имена файлов без топика, чанк фиксирован." },
@@ -276,12 +367,11 @@
         { id: "merger", label: "core/merger.py", group: "infra", level: 3, description: "Склейка сообщений. Работает стабильно." },
         { id: "stt", label: "core/stt/", group: "infra", level: 3, description: "STTWorker + WhisperManager. Транскрипция работает." },
         { id: "utils", label: "core/utils.py", group: "infra", level: 3, description: "Утилиты + build_telegram_client — единый билдер клиента." },
-        { id: "retry", label: "core/retry.py", group: "infra", level: 3, description: "@async_retry декоратор." },
-        { id: "config", label: "config.py", group: "infra", level: 3, description: "AppConfig, ProxyConfig." },
-        { id: "logger", label: "core/logger.py", group: "infra", level: 3, description: "Логирование." }
+        { id: "retry", label: "core/retry.py", group: "infra", level: 3, description: "@async_retry декоратор для устойчивости." },
+        { id: "config", label: "config.py", group: "infra", level: 3, description: "AppConfig, ProxyConfig. Загрузка настроек из окружения." },
+        { id: "logger", label: "core/logger.py", group: "infra", level: 3, description: "Логирование с ротацией." }
     ]);
-    
-    // Рёбра
+
     const edges = new vis.DataSet([
         { from: "main_full", to: "ui_full", label: "запускает", arrows: "to" },
         { from: "main_lite", to: "ui_lite", label: "запускает", arrows: "to" },
@@ -302,143 +392,108 @@
         { from: "export_api", to: "database", label: "читает", arrows: "to" },
         { from: "stt", to: "database", label: "транскрипции", arrows: "to" }
     ]);
-    
-    // Группы стилей
+
+    // 🎨 Улучшенная цветовая схема: ядро яркое, инфра — холодный графит
     const groups = {
-        entry: { color: { background: "#FF9500" }, shape: "box", font: { color: "#fff", bold: true } },
-        ui_full: { color: { background: "#2c9b77" }, shape: "ellipse", font: { color: "#fff" } },
-        ui_lite: { color: { background: "#3b82f6" }, shape: "ellipse", font: { color: "#fff" } },
-        core: { color: { background: "#6a4e9b" }, shape: "box", font: { color: "#fff" } },
-        infra: { color: { background: "#6c6b85" }, shape: "diamond", font: { color: "#fff" } }
+        entry: { color: { background: "#f97316", border: "#ea580c" }, shape: "box", font: { color: "#fff", bold: true, size: 11 }, shadow: true },
+        ui_full: { color: { background: "#10b981", border: "#059669" }, shape: "ellipse", font: { color: "#fff", size: 11 }, shadow: true },
+        ui_lite: { color: { background: "#3b82f6", border: "#2563eb" }, shape: "ellipse", font: { color: "#fff", size: 11 }, shadow: true },
+        core: { color: { background: "#8b5cf6", border: "#6d28d9" }, shape: "box", font: { color: "#fff", bold: true, size: 11 }, shadow: true },
+        infra: { color: { background: "#4b5563", border: "#374151" }, shape: "diamond", font: { color: "#e2e8ff", size: 10 }, shadow: true }
     };
-    
-    // Хранилище для issues, привязанных к модулям
+
     let moduleIssues = {};
     let allIssues = [];
-    let dataLoaded = false;
-    
-    // Функция проверки, относится ли issue к модулю
+
     function issueMatchesModule(issue, moduleId, keywords) {
-        if (!keywords || keywords.length === 0) return false;
+        if (!keywords) return false;
         const text = (issue.title + " " + (issue.body || "")).toLowerCase();
-        for (const kw of keywords) {
-            if (text.includes(kw.toLowerCase())) return true;
-        }
-        return false;
+        return keywords.some(kw => text.includes(kw.toLowerCase()));
     }
-    
-    // Загрузка issues из GitHub
+
     async function loadGitHubIssues() {
         const statusEl = document.getElementById("githubStatus");
         try {
             statusEl.innerHTML = '<i class="loading-spinner"></i> Загрузка issues...';
             const response = await fetch(GITHUB_API_URL);
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const issues = await response.json();
-            // Фильтруем pull requests (у них есть поле pull_request)
             const openIssues = issues.filter(issue => !issue.pull_request);
             allIssues = openIssues;
-            
-            // Сопоставляем issues с модулями
+
             for (const [moduleId, keywords] of Object.entries(MODULE_KEYWORDS)) {
                 moduleIssues[moduleId] = openIssues.filter(issue => issueMatchesModule(issue, moduleId, keywords));
             }
-            
-            // Обновляем внешний вид узлов
-            for (const [moduleId, issues] of Object.entries(moduleIssues)) {
+
+            // Обновление визуализации: красная рамка если есть открытые issues
+            for (const [moduleId, issuesArr] of Object.entries(moduleIssues)) {
                 const node = nodes.get(moduleId);
                 if (node) {
-                    if (issues.length > 0) {
-                        // Красная рамка для проблемных узлов
-                        nodes.update({ 
-                            id: moduleId, 
-                            borderWidth: 3, 
-                            color: { border: "#FF0000", background: node.color?.background || "#6a4e9b" }
-                        });
+                    if (issuesArr.length > 0) {
+                        nodes.update({ id: moduleId, borderWidth: 3, color: { border: "#FF3B3B" } });
+                    } else if (moduleId === "chats_api") {
+                        nodes.update({ id: moduleId, borderWidth: 2, color: { border: "#10b981" } });
                     } else {
-                        // Если проблем нет, возвращаем стандартный цвет (кроме chats_api, у которого есть зелёная метка)
-                        if (moduleId === "chats_api") {
-                            nodes.update({ 
-                                id: moduleId, 
-                                borderWidth: 2, 
-                                color: { border: "#2c9b77", background: node.color?.background || "#6a4e9b" }
-                            });
-                        } else {
-                            nodes.update({ 
-                                id: moduleId, 
-                                borderWidth: 1, 
-                                color: { border: node.color?.border || "#4f4e6b", background: node.color?.background || "#6a4e9b" }
-                            });
-                        }
+                        // сброс к стандартной рамке группы
+                        nodes.update({ id: moduleId, borderWidth: 1, color: { border: null } });
                     }
                 }
             }
-            
-            const issueCount = openIssues.length;
-            statusEl.innerHTML = `<i class="fab fa-github"></i> ${issueCount} открытых issues`;
-            dataLoaded = true;
-            
+            statusEl.innerHTML = `<i class="fab fa-github"></i> ${openIssues.length} открытых issues`;
         } catch (error) {
             console.error("Ошибка загрузки issues:", error);
             statusEl.innerHTML = '<i class="fab fa-github"></i> Не удалось загрузить issues (работа офлайн)';
-            // Продолжаем работу без данных
         }
     }
-    
-    // Генерация ссылки для создания issue
+
     function getCreateIssueUrl(moduleId, moduleLabel) {
         const title = encodeURIComponent(`[${moduleLabel}] Краткое описание проблемы`);
         const body = encodeURIComponent(`## Описание\n\n\n## Шаги воспроизведения\n\n\n## Ожидаемое поведение\n\n\n## Фактическое поведение\n\n\n## Окружение\n- Версия приложения:\n- ОС:\n`);
         const labels = `module:${moduleId.replace("_api", "").replace("_full", "").replace("_lite", "")}`;
         return `https://github.com/${REPO_OWNER}/${REPO_NAME}/issues/new?title=${title}&body=${body}&labels=${labels}`;
     }
-    
-    // Настройка сети
+
     const options = {
         layout: {
             hierarchical: {
                 enabled: true,
-                levelSeparation: 120,
-                nodeSpacing: 130,
-                treeSpacing: 180,
+                levelSeparation: 130,
+                nodeSpacing: 140,
+                treeSpacing: 200,
                 direction: "UD",
                 sortMethod: "directed"
             }
         },
         nodes: {
             shape: "box",
-            margin: 8,
-            widthConstraint: { minimum: 110, maximum: 170 },
-            font: { size: 10, face: "Segoe UI", color: "#ffffff" },
+            margin: 10,
+            widthConstraint: { minimum: 120, maximum: 180 },
+            font: { size: 10, face: "Segoe UI", color: "#ffffff", strokeWidth: 0 },
             borderWidth: 1,
-            shadow: true,
+            shadow: { enabled: true, color: "rgba(0,0,0,0.4)", size: 5, x: 2, y: 2 },
         },
         edges: {
             smooth: { type: "cubicBezier", roundness: 0.5 },
             arrows: { to: { enabled: true, scaleFactor: 0.8 } },
-            font: { size: 8, align: "middle", background: "#0a0a12", color: "#b0b0d0" },
-            color: { color: "#7f8c8d", highlight: "#FF9500" },
-            length: 130,
+            font: { size: 8, align: "middle", background: "#0a0a12", color: "#c0c0e0", strokeWidth: 0 },
+            color: { color: "#7e8a98", highlight: "#FF9500" },
+            length: 140,
+            selectionWidth: 2,
         },
         physics: false,
         interaction: {
             hover: true,
-            tooltipDelay: 100,
+            tooltipDelay: 80,
             navigationButtons: false,
             keyboard: true,
             selectConnectedEdges: true
         },
         groups: groups,
     };
-    
+
     const container = document.getElementById("network");
     const network = new vis.Network(container, { nodes, edges }, options);
-    
-    // Обработка клика по узлу
+
     network.on("click", function(params) {
         if (params.nodes.length > 0) {
             const nodeId = params.nodes[0];
@@ -447,77 +502,54 @@
             const connectedNodes = network.getConnectedNodes(nodeId);
             network.selectNodes([nodeId]);
             network.selectEdges(connectedEdges);
-            
             if (node) {
                 const issues = moduleIssues[nodeId] || [];
-                const hasIssues = issues.length > 0;
                 const createIssueUrl = getCreateIssueUrl(nodeId, node.label);
-                
                 let issuesHtml = "";
-                if (hasIssues) {
+                if (issues.length) {
                     issuesHtml = `<div class="note" style="margin-top: 0.5rem;">
-                        <strong>🐛 Открытые issues (${issues.length}):</strong>
+                        <strong><i class="fas fa-bug"></i> Открытые issues (${issues.length}):</strong>
                         <ul class="issue-list">
                             ${issues.map(issue => `
                                 <li class="issue-item">
-                                    <div class="issue-title">
-                                        <a href="${issue.html_url}" target="_blank">#${issue.number}: ${issue.title}</a>
-                                    </div>
-                                    <div class="issue-meta">
-                                        <span>📅 ${new Date(issue.created_at).toLocaleDateString()}</span>
-                                        <span>🏷️ ${issue.labels.map(l => l.name).join(", ") || "нет меток"}</span>
-                                    </div>
+                                    <div class="issue-title"><a href="${issue.html_url}" target="_blank">#${issue.number}: ${issue.title}</a></div>
+                                    <div class="issue-meta"><i class="far fa-calendar-alt"></i> ${new Date(issue.created_at).toLocaleDateString()} &nbsp;| 🏷️ ${issue.labels.map(l => l.name).join(", ") || "нет меток"}</div>
                                 </li>
                             `).join('')}
                         </ul>
                     </div>`;
                 }
-                
-                const problemBadge = hasIssues ? '<span style="background:#FF0000; padding:0.1rem 0.4rem; border-radius:12px; font-size:0.7rem;">⚠️ есть проблемы</span> ' : '';
-                const resolvedBadge = nodeId === "chats_api" ? '<span class="badge-resolved">✅ MTProto ускорил</span>' : '';
-                
+                const problemBadge = issues.length ? '<span style="background:#FF3B3B; padding:0.2rem 0.7rem; border-radius:20px; font-size:0.7rem; font-weight:600;">⚠️ есть проблемы</span> ' : '';
+                const resolvedBadge = nodeId === "chats_api" ? '<span class="badge-resolved"><i class="fas fa-check-circle"></i> MTProto ускорил</span>' : '';
                 document.getElementById("nodeInfo").innerHTML = `
-                    <strong style="color: #FF9500;">${problemBadge} ${node.label}</strong> ${resolvedBadge}
-                    <p style="margin-top: 0.5rem;">${node.description}</p>
-                    ${issuesHtml}
-                    <div class="note" style="margin-top: 0.8rem;">
-                        <strong>⚡ Влияние изменений:</strong><br>
-                        Этот модуль связан с <strong>${connectedNodes.length}</strong> другими.
-                        <ul style="margin-top: 0.3rem;">
-                            ${connectedNodes.map(n => `<li><code>${nodes.get(n)?.label || n}</code></li>`).join('')}
-                        </ul>
-                        <a href="${createIssueUrl}" target="_blank" class="create-issue-btn" style="display: inline-block; margin-top: 0.8rem;">
-                            <i class="fab fa-github"></i> ➕ Сообщить о проблеме
-                        </a>
+                    <div style="background: rgba(0,0,0,0.3); border-radius: 20px; padding: 0.8rem;">
+                        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;">
+                            ${problemBadge} <strong style="color: #FFB347; font-size: 1rem;">${node.label}</strong> ${resolvedBadge}
+                        </div>
+                        <p style="margin: 0.5rem 0 0.8rem 0;">${node.description}</p>
+                        ${issuesHtml}
+                        <div class="note" style="margin-top: 1rem;">
+                            <strong><i class="fas fa-link"></i> Влияние и зависимости:</strong><br>
+                            Этот модуль связан с <strong>${connectedNodes.length}</strong> другими.
+                            <ul style="margin-top: 0.5rem; list-style: none; padding-left: 0;">
+                                ${connectedNodes.map(n => `<li><i class="fas fa-caret-right"></i> <code>${nodes.get(n)?.label || n}</code></li>`).join('')}
+                            </ul>
+                            <a href="${createIssueUrl}" target="_blank" class="create-issue-btn"><i class="fab fa-github"></i> Сообщить о проблеме</a>
+                        </div>
+                        <p style="margin-top: 0.6rem; font-size: 0.7rem; color:#b0b0dd;"><i class="fas fa-mouse-pointer"></i> Сбросьте выделение кнопкой внизу</p>
                     </div>
-                    <p style="margin-top: 0.5rem; font-size: 0.75rem; color:#8f8faa;">💡 Сбросьте выделение кнопкой внизу.</p>
                 `;
-            } else {
-                document.getElementById("nodeInfo").innerHTML = `<p class="info-empty">Нет данных для узла ${nodeId}</p>`;
             }
         } else {
             network.unselectAll();
-            document.getElementById("nodeInfo").innerHTML = `
-                <p class="info-empty">Нажмите на модуль, чтобы увидеть его описание и связанные GitHub Issues.</p>
-                <div class="note">
-                    <strong>🎯 Как работает карта:</strong><br>
-                    • 🔴 Красная рамка — у модуля есть открытые Issue на GitHub.<br>
-                    • При клике — список проблем и ссылки.<br>
-                    • ➕ Кнопка "Сообщить о проблеме" — создаст issue с предзаполненными полями.<br>
-                    • Данные обновляются при загрузке страницы (GitHub API).
-                </div>
-            `;
+            document.getElementById("nodeInfo").innerHTML = `<p class="info-empty"><i class="fas fa-hand-pointer"></i> Нажмите на модуль, чтобы увидеть описание и связанные GitHub Issues.</p>
+                <div class="note"><strong><i class="fas fa-chart-network"></i> Как читать карту:</strong><br>• 🔴 Красная рамка — открытые Issue на GitHub.<br>• При клике — список проблем, ссылки, зависимости.<br>• ➕ Кнопка "Сообщить о проблеме" — создаст issue с предзаполненными полями.<br>• Данные обновляются из GitHub API при загрузке.</div>`;
         }
     });
-    
-    document.getElementById("resetView").addEventListener("click", () => {
-        network.fit({ animation: true, duration: 300 });
-        network.unselectAll();
-    });
-    
-    // Запуск загрузки
+
+    document.getElementById("resetView").addEventListener("click", () => { network.fit({ animation: true, duration: 300 }); network.unselectAll(); });
     loadGitHubIssues();
-    setTimeout(() => network.fit({ animation: false }), 100);
+    setTimeout(() => network.fit({ animation: true, duration: 400 }), 150);
 </script>
 </body>
 </html>
