@@ -1,5 +1,5 @@
 # 🐸 Rozitta Parser
-
+## 🗺️ [Интерактивная карта проекта](https://nynchezyabka.github.io/RozittaParser/map.html)
 English | [Русский](#-rozitta-parser-v40)
 
 > Back up and explore your Telegram chats — locally, privately, offline.
