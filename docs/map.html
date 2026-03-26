@@ -23,7 +23,6 @@
             overflow: hidden;
         }
 
-        /* Современный хедер с градиентом */
         .header {
             background: rgba(17, 17, 28, 0.75);
             backdrop-filter: blur(12px);
@@ -62,7 +61,6 @@
             letter-spacing: 0.3px;
         }
 
-        /* Легенда */
         .legend {
             display: flex;
             gap: 1rem;
@@ -91,7 +89,6 @@
             box-shadow: 0 0 2px rgba(0,0,0,0.3);
         }
 
-        /* Контейнер графа и панели */
         .container {
             display: flex;
             flex: 1;
@@ -106,7 +103,6 @@
             border-radius: 0;
         }
 
-        /* Информационная панель */
         .info-panel {
             flex: 1.2;
             background: rgba(17, 17, 28, 0.85);
@@ -271,7 +267,6 @@
         }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* Кастомизация скролла */
         .info-panel::-webkit-scrollbar {
             width: 6px;
         }
@@ -284,7 +279,6 @@
             border-radius: 8px;
         }
 
-        /* Эффекты для canvas (сеть) */
         #network canvas {
             filter: drop-shadow(0 0 4px rgba(0,0,0,0.3));
         }
@@ -299,7 +293,7 @@
 <div class="header">
     <div class="title">
         <h1>✦ Rozitta Parser — Живая карта проекта</h1>
-        <p>Граф зависимостей • GitHub Issues • кликни узел → подробности</p>
+        <p>Граф зависимостей • кликните узел или стрелку для подробностей</p>
     </div>
     <div class="legend">
         <span><div class="color" style="background:#f97316;"></div> Точка входа</span>
@@ -314,9 +308,9 @@
 <div class="container">
     <div id="network"></div>
     <div class="info-panel">
-        <h3><i class="fas fa-info-circle"></i> Информация о модуле</h3>
+        <h3><i class="fas fa-info-circle"></i> Информация о модуле / связи</h3>
         <div id="nodeInfo" class="info-content">
-            <p class="info-empty">✨ Нажмите на любой блок, чтобы увидеть его описание, связанные GitHub Issues и зависимости.</p>
+            <p class="info-empty">✨ Нажмите на любой блок или стрелку, чтобы увидеть описание, связанные GitHub Issues и детали взаимодействия.</p>
             <div class="note">
                 <strong><i class="fab fa-github"></i> GitHub интеграция</strong><br>
                 Карта автоматически загружает открытые Issues из репозитория.<br>
@@ -330,7 +324,7 @@
     </div>
 </div>
 <div class="footer">
-    <span><i class="fas fa-project-diagram"></i> Данные из GitHub API</span>
+    <span><i class="fas fa-project-diagram"></i> Данные из GitHub API • кликните стрелку для деталей</span>
     <button id="resetView"><i class="fas fa-sync-alt"></i> Сбросить вид</button>
 </div>
 
@@ -339,61 +333,69 @@
     const REPO_NAME = "RozittaParser";
     const GITHUB_API_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues?state=open&per_page=100`;
 
-    const MODULE_KEYWORDS = {
-        "export_api": ["export", "generator", "docx", "json", "md", "имя файла", "чанк", "split"],
-        "database": ["database", "db", "locked", "sqlite", "WAL", "batch"],
-        "parser_api": ["parser", "collect", "media", "download", "floodwait", "timeout"],
-        "chats_api": ["chats", "dialogs", "forum", "topics", "thread"],
-        "auth_api": ["auth", "login", "tdata", "session", "qr", "mtproto"],
-        "stt": ["stt", "whisper", "voice", "transcription", "audio"],
-        "ui_full": ["ui", "main_window", "интерфейс", "gui", "settings"],
-        "ui_lite": ["lite", "простой", "qr", "теги"],
-        "config": ["config", "настройки", "proxy"],
-        "utils": ["utils", "sanitize", "tracker"],
-        "merger": ["merger", "склейка", "merge"],
-        "retry": ["retry", "backoff"]
+    // Сопоставление идентификатора модуля (id узла) с ключевыми словами и названием метки (без module:)
+    const MODULE_CONFIG = {
+        "export_api":   { labelPart: "export",   keywords: ["export", "generator", "docx", "json", "md", "имя файла", "чанк", "split"] },
+        "database":     { labelPart: "database", keywords: ["database", "db", "locked", "sqlite", "WAL", "batch"] },
+        "parser_api":   { labelPart: "parser",   keywords: ["parser", "collect", "media", "download", "floodwait", "timeout"] },
+        "chats_api":    { labelPart: "chats",    keywords: ["chats", "dialogs", "forum", "topics", "thread"] },
+        "auth_api":     { labelPart: "auth",     keywords: ["auth", "login", "tdata", "session", "qr", "mtproto"] },
+        "stt":          { labelPart: "stt",      keywords: ["stt", "whisper", "voice", "transcription", "audio"] },
+        "ui_full":      { labelPart: "ui",       keywords: ["ui", "main_window", "интерфейс", "gui", "settings"] },
+        "ui_lite":      { labelPart: "ui-lite",  keywords: ["lite", "простой", "qr", "теги"] },
+        "config":       { labelPart: "config",   keywords: ["config", "настройки", "proxy"] },
+        "utils":        { labelPart: "utils",    keywords: ["utils", "sanitize", "tracker"] },
+        "merger":       { labelPart: "merger",   keywords: ["merger", "склейка", "merge"] },
+        "retry":        { labelPart: "retry",    keywords: ["retry", "backoff"] }
     };
 
     const nodes = new vis.DataSet([
-        { id: "main_full", label: "main_full.py", group: "entry", level: 0, description: "Точка входа для полной версии. Инициализирует UI, конфиги и клиент Telegram." },
-        { id: "main_lite", label: "main_lite.py", group: "entry", level: 0, description: "Точка входа для lite‑версии. Запускает упрощённый интерфейс." },
-        { id: "ui_full", label: "ui/full/main_window.py", group: "ui_full", level: 1, description: "Полный интерфейс: вкладки настроек, все форматы экспорта, управление парсингом." },
-        { id: "ui_lite", label: "ui/lite/main_window.py", group: "ui_lite", level: 1, description: "Lite‑интерфейс: QR‑вход, чаты с тегами, три чекбокса. Быстрый старт." },
-        { id: "auth_api", label: "features/auth/api.py", group: "core", level: 2, description: "AuthService — вход через QR, tdata-импорт, MTProto прокси. Гибкая аутентификация." },
-        { id: "chats_api", label: "features/chats/api.py", group: "core", level: 2, description: "ChatsService — загрузка диалогов. ✅ Скорость решена через MTProto." },
-        { id: "parser_api", label: "features/parser/api.py", group: "core", level: 2, description: "ParserService — сбор сообщений, скачивание медиа, batch-запись." },
+        { id: "main_full", label: "main_full.py", group: "entry", level: 0, description: "Точка входа для полной версии. Инициализирует UI, загружает конфиг, создаёт MainWindow." },
+        { id: "main_lite", label: "main_lite.py", group: "entry", level: 0, description: "Точка входа для lite‑версии. Запускает упрощённый интерфейс (QR, теги)." },
+        { id: "ui_full", label: "ui/full/main_window.py", group: "ui_full", level: 1, description: "Полный интерфейс: 3-колоночный макет, вкладки настроек, управление воркерами, логи." },
+        { id: "ui_lite", label: "ui/lite/main_window.py", group: "ui_lite", level: 1, description: "Lite‑интерфейс: три экрана (QR, чаты с тегами, экспорт), три чекбокса." },
+        { id: "auth_api", label: "features/auth/api.py", group: "core", level: 2, description: "AuthService — вход через QR, tdata-импорт, MTProto прокси. Создаёт TelegramClient." },
+        { id: "chats_api", label: "features/chats/api.py", group: "core", level: 2, description: "ChatsService — загрузка диалогов (MTProto ускорил), классификация, кэширование 24ч." },
+        { id: "parser_api", label: "features/parser/api.py", group: "core", level: 2, description: "ParserService — сбор сообщений, скачивание медиа (таймаут 120с), batch-запись." },
         { id: "export_api", label: "features/export/generator.py", group: "core", level: 2, description: "Генераторы DOCX/JSON/MD. 🔴 Имена файлов без топика, чанк фиксирован." },
-        { id: "database", label: "core/database.py", group: "infra", level: 3, description: "DBManager — WAL. 🔴 Периодически 'database is locked'." },
-        { id: "merger", label: "core/merger.py", group: "infra", level: 3, description: "Склейка сообщений. Работает стабильно." },
-        { id: "stt", label: "core/stt/", group: "infra", level: 3, description: "STTWorker + WhisperManager. Транскрипция работает." },
-        { id: "utils", label: "core/utils.py", group: "infra", level: 3, description: "Утилиты + build_telegram_client — единый билдер клиента." },
-        { id: "retry", label: "core/retry.py", group: "infra", level: 3, description: "@async_retry декоратор для устойчивости." },
-        { id: "config", label: "config.py", group: "infra", level: 3, description: "AppConfig, ProxyConfig. Загрузка настроек из окружения." },
-        { id: "logger", label: "core/logger.py", group: "infra", level: 3, description: "Логирование с ротацией." }
+        { id: "database", label: "core/database.py", group: "infra", level: 3, description: "DBManager — WAL, thread‑local. 🔴 Периодически 'database is locked'." },
+        { id: "merger", label: "core/merger.py", group: "infra", level: 3, description: "Склейка сообщений (один автор, ≤60 сек). O(n) алгоритм." },
+        { id: "stt", label: "core/stt/", group: "infra", level: 3, description: "STTWorker + WhisperManager. Транскрипция голосовых/видео, сохранение в БД." },
+        { id: "utils", label: "core/utils.py", group: "infra", level: 3, description: "Утилиты: sanitize_filename, finalize_telegram_id, build_telegram_client." },
+        { id: "retry", label: "core/retry.py", group: "infra", level: 3, description: "@async_retry декоратор с exponential backoff для сетевых операций." },
+        { id: "config", label: "config.py", group: "infra", level: 3, description: "AppConfig, ProxyConfig (MTProto). Загрузка/сохранение настроек." },
+        { id: "logger", label: "core/logger.py", group: "infra", level: 3, description: "Логирование в файл rozitta.log, цветной вывод в консоль." }
     ]);
 
-    const edges = new vis.DataSet([
-        { from: "main_full", to: "ui_full", label: "запускает", arrows: "to" },
-        { from: "main_lite", to: "ui_lite", label: "запускает", arrows: "to" },
-        { from: "ui_full", to: "auth_api", label: "вызывает", arrows: "to" },
-        { from: "ui_full", to: "chats_api", label: "вызывает", arrows: "to" },
-        { from: "ui_full", to: "parser_api", label: "вызывает", arrows: "to" },
-        { from: "ui_full", to: "export_api", label: "вызывает", arrows: "to" },
-        { from: "ui_lite", to: "auth_api", label: "вызывает", arrows: "to" },
-        { from: "ui_lite", to: "chats_api", label: "вызывает", arrows: "to" },
-        { from: "ui_lite", to: "parser_api", label: "вызывает", arrows: "to" },
-        { from: "ui_lite", to: "export_api", label: "вызывает", arrows: "to" },
-        { from: "auth_api", to: "config", label: "читает", arrows: "to" },
-        { from: "auth_api", to: "utils", label: "build_client", arrows: "to" },
-        { from: "chats_api", to: "utils", label: "нормализация", arrows: "to" },
-        { from: "parser_api", to: "database", label: "batch insert", arrows: "to" },
-        { from: "parser_api", to: "merger", label: "склейка", arrows: "to" },
-        { from: "parser_api", to: "retry", label: "@async_retry", arrows: "to" },
-        { from: "export_api", to: "database", label: "читает", arrows: "to" },
-        { from: "stt", to: "database", label: "транскрипции", arrows: "to" }
-    ]);
+    // Рёбра с краткими подписями (label) и детальным описанием (detail)
+    const edgesData = [
+        { from: "main_full", to: "ui_full", label: "создаёт", detail: "main.py загружает конфиг, инициализирует QApplication и создаёт экземпляр MainWindow (полная версия)." },
+        { from: "main_lite", to: "ui_lite", label: "создаёт", detail: "main_lite.py запускает упрощённый интерфейс с QR-входом и тегами чатов." },
+        { from: "ui_full", to: "auth_api", label: "AuthWorker", detail: "При переходе на вкладку авторизации создаётся AuthWorker, который вызывает AuthService.sign_in() и сохраняет сессию." },
+        { from: "ui_full", to: "chats_api", label: "ChatsWorker", detail: "После успешной авторизации ChatsWorker загружает диалоги через ChatsService.get_dialogs() (MTProto)." },
+        { from: "ui_full", to: "parser_api", label: "ParseWorker", detail: "При нажатии «Старт» запускается ParseWorker, который вызывает ParserService.collect_data() для сбора сообщений." },
+        { from: "ui_full", to: "export_api", label: "ExportWorker", detail: "После парсинга и STT запускается ExportWorker, который генерирует DOCX/JSON/MD через генераторы." },
+        { from: "ui_lite", to: "auth_api", label: "QR-вход", detail: "Lite-версия использует тот же AuthService, но с упрощённым интерфейсом (QR-код, tdata)." },
+        { from: "ui_lite", to: "chats_api", label: "загрузка", detail: "Lite-версия загружает чаты через ChatsService, но отображает только отфильтрованные по тегам." },
+        { from: "ui_lite", to: "parser_api", label: "парсинг", detail: "Lite-версия запускает парсинг с предустановленными параметрами (30 дней, медиа, STT)." },
+        { from: "ui_lite", to: "export_api", label: "экспорт", detail: "Lite-версия экспортирует только в DOCX с базовыми настройками." },
+        { from: "auth_api", to: "config", label: "читает/сохраняет", detail: "AuthService загружает api_id, api_hash, phone из config, после входа сохраняет сессию и обновляет конфиг." },
+        { from: "auth_api", to: "utils", label: "build_client", detail: "AuthService использует build_telegram_client() из utils для создания TelegramClient с поддержкой прокси." },
+        { from: "chats_api", to: "utils", label: "нормализация", detail: "ChatsService вызывает finalize_telegram_id() для нормализации ID чатов." },
+        { from: "parser_api", to: "database", label: "batch insert", detail: "ParserService вставляет сообщения пакетами по 200-500 записей (один commit), что в 500 раз быстрее поштучной вставки." },
+        { from: "parser_api", to: "merger", label: "склейка", detail: "После сбора сообщений MergerService склеивает сообщения одного автора, если интервал ≤60 секунд." },
+        { from: "parser_api", to: "retry", label: "@async_retry", detail: "ParserService использует декоратор @async_retry для повторных попыток при сетевых ошибках и flood wait." },
+        { from: "export_api", to: "database", label: "читает", detail: "Генераторы читают сообщения из БД, включая транскрипции из таблицы transcriptions." },
+        { from: "stt", to: "database", label: "транскрипции", detail: "STTWorker сохраняет распознанный текст в таблицу transcriptions, привязанную к message_id и peer_id." }
+    ];
 
-    // 🎨 Улучшенная цветовая схема: ядро яркое, инфра — холодный графит
+    const edges = new vis.DataSet(edgesData.map(e => ({
+        ...e,
+        arrows: "to",
+        title: e.detail,   // для тех браузеров, где работает всплывающая подсказка
+        // Сохраняем detail для использования в клике
+    })));
+
     const groups = {
         entry: { color: { background: "#f97316", border: "#ea580c" }, shape: "box", font: { color: "#fff", bold: true, size: 11 }, shadow: true },
         ui_full: { color: { background: "#10b981", border: "#059669" }, shape: "ellipse", font: { color: "#fff", size: 11 }, shadow: true },
@@ -405,10 +407,18 @@
     let moduleIssues = {};
     let allIssues = [];
 
-    function issueMatchesModule(issue, moduleId, keywords) {
-        if (!keywords) return false;
+    // Проверка, относится ли issue к модулю: сначала по метке module:xxx, потом по ключевым словам
+    function issueMatchesModule(issue, moduleId) {
+        const cfg = MODULE_CONFIG[moduleId];
+        if (!cfg) return false;
+
+        const moduleLabelName = `module:${cfg.labelPart}`;
+        if (issue.labels && issue.labels.some(label => label.name === moduleLabelName)) {
+            return true;
+        }
+
         const text = (issue.title + " " + (issue.body || "")).toLowerCase();
-        return keywords.some(kw => text.includes(kw.toLowerCase()));
+        return cfg.keywords.some(kw => text.includes(kw.toLowerCase()));
     }
 
     async function loadGitHubIssues() {
@@ -421,11 +431,10 @@
             const openIssues = issues.filter(issue => !issue.pull_request);
             allIssues = openIssues;
 
-            for (const [moduleId, keywords] of Object.entries(MODULE_KEYWORDS)) {
-                moduleIssues[moduleId] = openIssues.filter(issue => issueMatchesModule(issue, moduleId, keywords));
+            for (const moduleId of Object.keys(MODULE_CONFIG)) {
+                moduleIssues[moduleId] = openIssues.filter(issue => issueMatchesModule(issue, moduleId));
             }
 
-            // Обновление визуализации: красная рамка если есть открытые issues
             for (const [moduleId, issuesArr] of Object.entries(moduleIssues)) {
                 const node = nodes.get(moduleId);
                 if (node) {
@@ -434,7 +443,6 @@
                     } else if (moduleId === "chats_api") {
                         nodes.update({ id: moduleId, borderWidth: 2, color: { border: "#10b981" } });
                     } else {
-                        // сброс к стандартной рамке группы
                         nodes.update({ id: moduleId, borderWidth: 1, color: { border: null } });
                     }
                 }
@@ -447,10 +455,13 @@
     }
 
     function getCreateIssueUrl(moduleId, moduleLabel) {
+        const cfg = MODULE_CONFIG[moduleId];
+        const label = cfg ? `module:${cfg.labelPart}` : "";
         const title = encodeURIComponent(`[${moduleLabel}] Краткое описание проблемы`);
         const body = encodeURIComponent(`## Описание\n\n\n## Шаги воспроизведения\n\n\n## Ожидаемое поведение\n\n\n## Фактическое поведение\n\n\n## Окружение\n- Версия приложения:\n- ОС:\n`);
-        const labels = `module:${moduleId.replace("_api", "").replace("_full", "").replace("_lite", "")}`;
-        return `https://github.com/${REPO_OWNER}/${REPO_NAME}/issues/new?title=${title}&body=${body}&labels=${labels}`;
+        let url = `https://github.com/${REPO_OWNER}/${REPO_NAME}/issues/new?title=${title}&body=${body}`;
+        if (label) url += `&labels=${encodeURIComponent(label)}`;
+        return url;
     }
 
     const options = {
@@ -475,7 +486,7 @@
         edges: {
             smooth: { type: "cubicBezier", roundness: 0.5 },
             arrows: { to: { enabled: true, scaleFactor: 0.8 } },
-            font: { size: 8, align: "middle", background: "#0a0a12", color: "#c0c0e0", strokeWidth: 0 },
+            font: { size: 9, align: "middle", background: "#0a0a12", color: "#FFE0B5", strokeWidth: 0 },
             color: { color: "#7e8a98", highlight: "#FF9500" },
             length: 140,
             selectionWidth: 2,
@@ -494,7 +505,9 @@
     const container = document.getElementById("network");
     const network = new vis.Network(container, { nodes, edges }, options);
 
+    // Обработка клика (узлы и рёбра)
     network.on("click", function(params) {
+        // Если клик на узле
         if (params.nodes.length > 0) {
             const nodeId = params.nodes[0];
             const node = nodes.get(nodeId);
@@ -540,10 +553,29 @@
                     </div>
                 `;
             }
+        }
+        // Если клик на ребре (стрелке)
+        else if (params.edges.length > 0) {
+            const edgeId = params.edges[0];
+            const edge = edges.get(edgeId);
+            if (edge && edge.detail) {
+                document.getElementById("nodeInfo").innerHTML = `
+                    <div style="background: rgba(0,0,0,0.3); border-radius: 20px; padding: 0.8rem;">
+                        <strong style="color: #FFB347; font-size: 1rem;">🔗 Связь: ${edge.from} → ${edge.to}</strong>
+                        <p style="margin-top: 0.8rem;"><i class="fas fa-info-circle"></i> <strong>Детали взаимодействия:</strong><br>${edge.detail}</p>
+                        <div class="note" style="margin-top: 1rem;">
+                            <i class="fas fa-mouse-pointer"></i> Нажмите на блок, чтобы вернуться к информации о модуле.
+                        </div>
+                    </div>
+                `;
+                network.selectEdges([edgeId]);
+            } else {
+                document.getElementById("nodeInfo").innerHTML = `<p class="info-empty">Нет дополнительной информации о данной связи.</p>`;
+            }
         } else {
             network.unselectAll();
-            document.getElementById("nodeInfo").innerHTML = `<p class="info-empty"><i class="fas fa-hand-pointer"></i> Нажмите на модуль, чтобы увидеть описание и связанные GitHub Issues.</p>
-                <div class="note"><strong><i class="fas fa-chart-network"></i> Как читать карту:</strong><br>• 🔴 Красная рамка — открытые Issue на GitHub.<br>• При клике — список проблем, ссылки, зависимости.<br>• ➕ Кнопка "Сообщить о проблеме" — создаст issue с предзаполненными полями.<br>• Данные обновляются из GitHub API при загрузке.</div>`;
+            document.getElementById("nodeInfo").innerHTML = `<p class="info-empty"><i class="fas fa-hand-pointer"></i> Нажмите на модуль или стрелку, чтобы увидеть описание и связанные GitHub Issues.</p>
+                <div class="note"><strong><i class="fas fa-chart-network"></i> Как читать карту:</strong><br>• 🔴 Красная рамка — открытые Issue на GitHub.<br>• При клике на блок — список проблем, ссылки, зависимости.<br>• При клике на стрелку — детали взаимодействия.<br>• ➕ Кнопка "Сообщить о проблеме" — создаст issue с предзаполненными полями.<br>• Данные обновляются из GitHub API при загрузке.</div>`;
         }
     });
 
