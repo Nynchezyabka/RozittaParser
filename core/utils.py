@@ -57,12 +57,11 @@ def build_telegram_client(cfg, *,
     }
 
     if cfg.proxy_enabled:
-        print('use proxy')
         from telethon.network import ConnectionTcpMTProxyAbridged
-        config['proxy'] = ('tg2.x6.homes', 443, 'dd9d137443c118caab90485732ae358230')
+        config['proxy'] = (cfg.proxy_host, cfg.proxy_port, cfg.proxy_secret)
         config['connection'] = ConnectionTcpMTProxyAbridged
 
-    print(config)
+
     return TelegramClient(**config)
 
 

@@ -39,7 +39,7 @@ from PySide6.QtCore import Qt, Signal, Slot, QThread, QUrl
 from PySide6.QtGui import QFont, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QFrame, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget, QGridLayout
 )
 from config import AppConfig
 from core.ui_shared.styles import (
@@ -302,25 +302,11 @@ class AuthScreen(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        # Внешний layout — только скролл
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-
         container = QWidget()
         container.setStyleSheet("background: transparent;")
-        layout = QVBoxLayout(container)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-
-        scroll.setWidget(container)
-        outer.addWidget(scroll)
 
         # Заголовок
         title = QLabel("🔑  API и вход")

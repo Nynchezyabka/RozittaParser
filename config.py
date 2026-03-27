@@ -69,9 +69,9 @@ IMAGE_EXTENSIONS: frozenset[str] = frozenset({
 })
 
 # --- DOCX ---
-DOCX_IMAGE_WIDTH_INCHES      = 4.5     # ширина вставляемых изображений
-DOCX_IMAGE_WIDTH_COMMENT_INCHES = 4.0  # ширина изображений в комментариях
-DOCX_SEPARATOR_LENGTH        = 60      # длина разделителя "_" * N
+DOCX_IMAGE_WIDTH_INCHES         = 4.5     # ширина вставляемых изображений
+DOCX_IMAGE_WIDTH_COMMENT_INCHES = 4.0     # ширина изображений в комментариях
+DOCX_SEPARATOR_LENGTH           = 60      # длина разделителя "_" * N
 
 # --- Валидные режимы разбивки DOCX ---
 VALID_SPLIT_MODES: tuple[str, ...] = ("none", "day", "month", "post")

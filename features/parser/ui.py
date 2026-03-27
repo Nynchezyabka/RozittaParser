@@ -54,6 +54,7 @@ from core.ui_shared.widgets import (
     SectionTitle, MediaButton, ChipButton,
     SplitModeButton, ToggleSwitch, UserTag,
 )
+from core.utils import build_telegram_client
 
 logger = logging.getLogger(__name__)
 
