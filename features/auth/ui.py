@@ -96,25 +96,32 @@ class SessionCheckWorker(QThread):
         finally:
             loop.close()
 
+
     async def _check(self):
         from features.auth.api import AuthService
         client = None
         try:
             self.log_message.emit("🔌 Подключаюсь к Telegram...")
             client = AuthService.build_client(self._cfg)
-            await client.connect()
+            # Жёсткий таймаут на connect — чтобы не висеть при протухшем прокси
+            await asyncio.wait_for(client.connect(), timeout=15.0)
             self.log_message.emit("🔍 Проверяю сессию...")
-            if await client.is_user_authorized():
+            authorized = await asyncio.wait_for(
+                client.is_user_authorized(), timeout=10.0
+            )
+            if authorized:
                 self.log_message.emit("✅ Сессия активна, получаю данные...")
-                user = await client.get_me()
+                user = await asyncio.wait_for(client.get_me(), timeout=10.0)
                 if user is not None:
                     return None, user
+        except asyncio.TimeoutError:
+            self.log_message.emit("⏱ Таймаут проверки сессии — прокси недоступен?")
         except Exception:
             pass
         finally:
             if client is not None:
                 try:
-                    await client.disconnect()
+                    await asyncio.wait_for(client.disconnect(), timeout=5.0)
                 except Exception:
                     pass
         return None
@@ -417,7 +424,7 @@ class AuthScreen(QWidget):
         host_row.addWidget(self._proxy_port_auth)
         pfl.addLayout(host_row)
 
-        # Поле для MTProto ссылки (t.me/proxy?...)
+        # ── MTProto: ссылка (t.me/proxy?...) ─────────────────────────────
         self._proxy_link_edit = QLineEdit(
             f"https://t.me/proxy?server={self._cfg.proxy_host}&port={self._cfg.proxy_port}&secret={getattr(self._cfg, 'proxy_secret', '')}"
             if is_mtproto and getattr(self._cfg, "proxy_secret", "") else ""
@@ -427,16 +434,98 @@ class AuthScreen(QWidget):
         self._proxy_link_edit.setStyleSheet(QSS_INPUT)
         pfl.addWidget(self._proxy_link_edit)
 
-        # Показываем/скрываем нужные поля
+        # ── MTProto: переключатель «ссылка / вручную» ─────────────────────
+        mtproto_mode_row = QHBoxLayout()
+        mtproto_mode_row.setSpacing(4)
+        self._mtproto_link_btn   = QPushButton("🔗 Ссылка")
+        self._mtproto_manual_btn = QPushButton("✏️ Вручную")
+        for _mb in (self._mtproto_link_btn, self._mtproto_manual_btn):
+            _mb.setCheckable(True)
+            _mb.setFixedHeight(22)
+            _mb.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    border: 1px solid {BORDER_HEX};
+                    border-radius: 3px;
+                    color: {TEXT_SECONDARY};
+                    font-size: 10px;
+                    padding: 0 6px;
+                }}
+                QPushButton:checked {{
+                    background: {OVERLAY_HEX};
+                    color: {TEXT_PRIMARY};
+                    border-color: {ACCENT_ORANGE};
+                }}
+            """)
+        self._mtproto_link_btn.setChecked(True)
+        mtproto_mode_row.addWidget(self._mtproto_link_btn)
+        mtproto_mode_row.addWidget(self._mtproto_manual_btn)
+        mtproto_mode_row.addStretch()
+        pfl.addLayout(mtproto_mode_row)
+
+        # ── MTProto: поля «вручную» (host / port / secret) ────────────────
+        mtproto_manual_frame = QFrame()
+        mtproto_manual_frame.setStyleSheet("QFrame { background: transparent; }")
+        mtproto_mfl = QVBoxLayout(mtproto_manual_frame)
+        mtproto_mfl.setContentsMargins(0, 2, 0, 0)
+        mtproto_mfl.setSpacing(4)
+
+        _mp_host_row = QHBoxLayout()
+        _mp_host_row.setSpacing(4)
+        self._mtproto_host = QLineEdit(
+            getattr(self._cfg, "proxy_host", "127.0.0.1") if is_mtproto else ""
+        )
+        self._mtproto_host.setPlaceholderText("Host (например: proxy.example.com)")
+        self._mtproto_host.setFixedHeight(28)
+        self._mtproto_host.setStyleSheet(QSS_INPUT)
+        self._mtproto_port = QSpinBox()
+        self._mtproto_port.setRange(1, 65535)
+        self._mtproto_port.setValue(
+            getattr(self._cfg, "proxy_port", 443) if is_mtproto else 443
+        )
+        self._mtproto_port.setFixedHeight(28)
+        self._mtproto_port.setFixedWidth(72)
+        self._mtproto_port.setStyleSheet(QSS_INPUT)
+        _mp_host_row.addWidget(self._mtproto_host, 1)
+        _mp_host_row.addWidget(self._mtproto_port)
+        mtproto_mfl.addLayout(_mp_host_row)
+
+        self._mtproto_secret = QLineEdit(
+            getattr(self._cfg, "proxy_secret", "") if is_mtproto else ""
+        )
+        self._mtproto_secret.setPlaceholderText("Secret (hex или base64)")
+        self._mtproto_secret.setFixedHeight(28)
+        self._mtproto_secret.setStyleSheet(QSS_INPUT)
+        mtproto_mfl.addWidget(self._mtproto_secret)
+
+        pfl.addWidget(mtproto_manual_frame)
+
+        # ── Логика переключения видимости ─────────────────────────────────
         def _refresh_proxy_ui():
             mtproto = self._proxy_mtproto_btn.isChecked()
+            # SOCKS5-поля
             self._proxy_host_auth.setVisible(not mtproto)
             self._proxy_port_auth.setVisible(not mtproto)
-            self._proxy_link_edit.setVisible(mtproto)
+            # MTProto-поля
+            self._proxy_link_edit.setVisible(mtproto and self._mtproto_link_btn.isChecked())
+            # Показываем строку переключателя только в MTProto-режиме
+            self._mtproto_link_btn.setVisible(mtproto)
+            self._mtproto_manual_btn.setVisible(mtproto)
+            mtproto_manual_frame.setVisible(mtproto and self._mtproto_manual_btn.isChecked())
+
             if mtproto:
                 self._proxy_socks5_btn.setChecked(False)
             else:
                 self._proxy_mtproto_btn.setChecked(False)
+
+        def _refresh_mtproto_mode():
+            link_mode = self._mtproto_link_btn.isChecked()
+            self._proxy_link_edit.setVisible(link_mode)
+            mtproto_manual_frame.setVisible(not link_mode)
+            if link_mode:
+                self._mtproto_manual_btn.setChecked(False)
+            else:
+                self._mtproto_link_btn.setChecked(False)
 
         self._proxy_socks5_btn.clicked.connect(lambda: (
             self._proxy_mtproto_btn.setChecked(False),
@@ -448,20 +537,35 @@ class AuthScreen(QWidget):
             self._proxy_mtproto_btn.setChecked(True),
             _refresh_proxy_ui(),
         ))
+        self._mtproto_link_btn.clicked.connect(lambda: (
+            self._mtproto_link_btn.setChecked(True),
+            _refresh_mtproto_mode(),
+        ))
+        self._mtproto_manual_btn.clicked.connect(lambda: (
+            self._mtproto_manual_btn.setChecked(True),
+            _refresh_mtproto_mode(),
+        ))
         _refresh_proxy_ui()
 
+        # ── Сохранение прокси-настроек ────────────────────────────────────
         def _save_proxy_auth():
             from features.auth.api import AuthService
             self._cfg.proxy_enabled = self._proxy_toggle.isChecked()
             if self._proxy_mtproto_btn.isChecked():
                 self._cfg.proxy_type = "mtproto"
-                # Пробуем распарсить ссылку
-                link = self._proxy_link_edit.text().strip()
-                parsed = AuthService.parse_proxy_link(link) if link else None
-                if parsed:
-                    self._cfg.proxy_host   = parsed["host"]
-                    self._cfg.proxy_port   = parsed["port"]
-                    self._cfg.proxy_secret = parsed["secret"]
+                if self._mtproto_link_btn.isChecked():
+                    # Режим ссылки — парсим t.me/proxy?...
+                    link = self._proxy_link_edit.text().strip()
+                    parsed = AuthService.parse_proxy_link(link) if link else None
+                    if parsed:
+                        self._cfg.proxy_host   = parsed["host"]
+                        self._cfg.proxy_port   = parsed["port"]
+                        self._cfg.proxy_secret = parsed["secret"]
+                else:
+                    # Режим ручного ввода
+                    self._cfg.proxy_host   = self._mtproto_host.text().strip() or "127.0.0.1"
+                    self._cfg.proxy_port   = self._mtproto_port.value()
+                    self._cfg.proxy_secret = self._mtproto_secret.text().strip()
             else:
                 self._cfg.proxy_type   = "socks5"
                 self._cfg.proxy_host   = self._proxy_host_auth.text().strip() or "127.0.0.1"
@@ -477,16 +581,43 @@ class AuthScreen(QWidget):
         self._proxy_host_auth.editingFinished.connect(_save_proxy_auth)
         self._proxy_port_auth.valueChanged.connect(_save_proxy_auth)
         self._proxy_link_edit.editingFinished.connect(_save_proxy_auth)
+        self._mtproto_host.editingFinished.connect(_save_proxy_auth)
+        self._mtproto_port.valueChanged.connect(_save_proxy_auth)
+        self._mtproto_secret.editingFinished.connect(_save_proxy_auth)
 
         layout.addWidget(proxy_frame)
 
-        # Кнопка входа
+        # Кнопка входа + кнопка отмены проверки сессии
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+
         self._login_btn = QPushButton("🔐  Войти")
         self._login_btn.setFixedHeight(40)
         self._login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._login_btn.setStyleSheet(QSS_BUTTON_PRIMARY)
         self._login_btn.clicked.connect(self._start_auth)
-        layout.addWidget(self._login_btn)
+        btn_row.addWidget(self._login_btn)
+
+        self._cancel_check_btn = QPushButton("✕ Отмена")
+        self._cancel_check_btn.setFixedHeight(40)
+        self._cancel_check_btn.setFixedWidth(90)
+        self._cancel_check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._cancel_check_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {BORDER_HEX};
+                border-radius: {RADIUS_MD}px;
+                color: {TEXT_SECONDARY};
+                font-family: {FONT_FAMILY};
+                font-size: {FONT_SIZE_SMALL}px;
+            }}
+            QPushButton:hover {{ border-color: {COLOR_ERROR}; color: {COLOR_ERROR}; }}
+        """)
+        self._cancel_check_btn.setVisible(False)  # скрыта по умолчанию
+        self._cancel_check_btn.clicked.connect(self._cancel_session_check)
+        btn_row.addWidget(self._cancel_check_btn)
+
+        layout.addLayout(btn_row)
 
         # Разделитель
         sep_lbl = QLabel("— или —")
@@ -607,6 +738,11 @@ class AuthScreen(QWidget):
         self._phone.setEnabled(enabled)
         self._login_btn.setEnabled(enabled)
         self._tdata_btn.setEnabled(enabled)
+        # Кнопка «Отмена» видна только пока идёт проверка сессии
+        checker_running = (
+            self._checker is not None and self._checker.isRunning()
+        )
+        self._cancel_check_btn.setVisible(not enabled and checker_running)
 
     # ──────────────────────────────────────────────────────────────────────
     # TDATA IMPORT
@@ -782,27 +918,42 @@ class AuthScreen(QWidget):
                 "• Папка не зашифрована паролем",
             )
 
+
     def _check_existing_session(self) -> None:
         """Тихая проверка при старте. Если сессия жива — пропускаем форму."""
-        # Блокируем кнопку на время проверки — предотвращает гонку SessionCheck ∩ AuthWorker
         self._set_controls_enabled(False)
         self._checker = SessionCheckWorker(self._cfg, parent=self)
         self._checker.session_valid.connect(self._on_session_restored)
         self._checker.log_message.connect(self.log_message)
         self._checker.finished.connect(self._on_checker_finished)
         self._checker.start()
-        self.log_message.emit("🔍 Проверка сессии...")
+        # Показываем кнопку «Отмена» — она даёт выход если прокси завис
+        self._cancel_check_btn.setVisible(True)
+        self.log_message.emit("🔍 Проверка сессии... (нажмите «Отмена» если долго)")
         if getattr(self._cfg, "proxy_enabled", False):
             self.log_message.emit(
-                f"🔌 Соединение через Tor ({self._cfg.proxy_host}:{self._cfg.proxy_port}) — "
-                "может занять 1-2 минуты, подождите..."
+                f"🔌 Прокси {self._cfg.proxy_host}:{self._cfg.proxy_port} — "
+                "таймаут 15 сек, после чего форма разблокируется автоматически."
             )
-
+# добавлен слот отмены проверки сессии, который позволяет пользователю прервать долгую проверку (например, если прокси недоступен) и вернуться к форме входа.:
+    @Slot()
+    def _cancel_session_check(self) -> None:
+        """
+        Принудительно прерывает SessionCheckWorker.
+        Разблокирует форму немедленно — пользователь может войти с новыми данными.
+        """
+        if self._checker is not None and self._checker.isRunning():
+            self.log_message.emit("⏹ Проверка сессии отменена пользователем.")
+            self._checker.quit()
+            self._checker.wait(2000)  # ждём максимум 2 сек
+            self._checker = None
+        self._cancel_check_btn.setVisible(False)
+        self._set_controls_enabled(True)
+        self._set_status("idle", "Не авторизован")
+# СТАЛО:
     @Slot()
     def _on_checker_finished(self) -> None:
-        """SessionCheckWorker завершился без валидной сессии — разблокируем форму."""
-        # Если сессия была найдена, _on_session_restored уже заблокировал форму навсегда.
-        # Разблокируем только если авторизация НЕ произошла.
+        self._cancel_check_btn.setVisible(False)
         if self._status_lbl.text() in ("Не авторизован", "🔍 Проверка..."):
             self._set_controls_enabled(True)
             self._set_status("idle", "Не авторизован")
