@@ -895,7 +895,8 @@ class LogoutWorker(QThread):
         import gc
         cfg = self._cfg
         self.log_message.emit("⏻ Выход из Telegram...")
-        client = TelegramClient(cfg.session_path, cfg.api_id_int, cfg.api_hash)
+        from features.auth.api import AuthService
+        client = AuthService.build_client(cfg)
         try:
             await client.connect()
             await client.log_out()
