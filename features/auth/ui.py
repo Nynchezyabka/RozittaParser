@@ -97,19 +97,18 @@ class SessionCheckWorker(QThread):
             loop.close()
 
     async def _check(self):
-        """
-        Возвращает (None, user) если сессия жива, иначе None.
-        Client всегда отключается здесь — ChatsWorker/ParseWorker создадут свой.
-        """
         from features.auth.api import AuthService
         client = None
         try:
+            self.log_message.emit("🔌 Подключаюсь к Telegram...")
             client = AuthService.build_client(self._cfg)
             await client.connect()
+            self.log_message.emit("🔍 Проверяю сессию...")
             if await client.is_user_authorized():
+                self.log_message.emit("✅ Сессия активна, получаю данные...")
                 user = await client.get_me()
                 if user is not None:
-                    return None, user   # сессия сохранена на диск — живой client не нужен
+                    return None, user
         except Exception:
             pass
         finally:
@@ -358,7 +357,7 @@ class AuthScreen(QWidget):
         self._phone.setText(getattr(self._cfg, "phone", "") or "")
         layout.addWidget(self._phone)
 
-        # ── Прокси SOCKS5 (Tor) ───────────────────────────────────────────
+        # ── Прокси (SOCKS5 / MTProto) ────────────────────────────────────
         proxy_frame = QFrame()
         proxy_frame.setStyleSheet(f"""
             QFrame {{
@@ -372,8 +371,9 @@ class AuthScreen(QWidget):
         pfl.setContentsMargins(10, 8, 10, 8)
         pfl.setSpacing(6)
 
+        # Строка: заголовок + тоггл
         proxy_row = QHBoxLayout()
-        proxy_lbl = QLabel("🔌  SOCKS5 прокси (Tor)")
+        proxy_lbl = QLabel("🔌  Прокси")
         proxy_lbl.setFont(QFont(FONT_FAMILY, FONT_SIZE_XS))
         proxy_row.addWidget(proxy_lbl)
         proxy_row.addStretch()
@@ -383,11 +383,41 @@ class AuthScreen(QWidget):
         proxy_row.addWidget(self._proxy_toggle)
         pfl.addLayout(proxy_row)
 
+        # Переключатель типа: SOCKS5 / MTProto
+        type_row = QHBoxLayout()
+        type_row.setSpacing(6)
+        self._proxy_socks5_btn = QPushButton("SOCKS5 (Tor)")
+        self._proxy_mtproto_btn = QPushButton("MTProto")
+        for btn in (self._proxy_socks5_btn, self._proxy_mtproto_btn):
+            btn.setCheckable(True)
+            btn.setFixedHeight(24)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    border: 1px solid {BORDER_HEX};
+                    border-radius: 4px;
+                    color: {TEXT_SECONDARY};
+                    font-size: 11px;
+                    padding: 0 8px;
+                }}
+                QPushButton:checked {{
+                    background: {ACCENT_ORANGE};
+                    color: #000;
+                    border-color: {ACCENT_ORANGE};
+                }}
+            """)
+        is_mtproto = getattr(self._cfg, "proxy_type", "socks5") == "mtproto"
+        self._proxy_socks5_btn.setChecked(not is_mtproto)
+        self._proxy_mtproto_btn.setChecked(is_mtproto)
+        type_row.addWidget(self._proxy_socks5_btn)
+        type_row.addWidget(self._proxy_mtproto_btn)
+        type_row.addStretch()
+        pfl.addLayout(type_row)
+
+        # Поля хост + порт (для SOCKS5)
         host_row = QHBoxLayout()
         host_row.setSpacing(6)
-        self._proxy_host_auth = QLineEdit(
-            getattr(self._cfg, "proxy_host", "127.0.0.1")
-        )
+        self._proxy_host_auth = QLineEdit(getattr(self._cfg, "proxy_host", "127.0.0.1"))
         self._proxy_host_auth.setPlaceholderText("127.0.0.1")
         self._proxy_host_auth.setFixedHeight(28)
         self._proxy_host_auth.setStyleSheet(QSS_INPUT)
@@ -401,10 +431,56 @@ class AuthScreen(QWidget):
         host_row.addWidget(self._proxy_port_auth)
         pfl.addLayout(host_row)
 
+        # Поле для MTProto ссылки (t.me/proxy?...)
+        self._proxy_link_edit = QLineEdit(
+            f"https://t.me/proxy?server={self._cfg.proxy_host}&port={self._cfg.proxy_port}&secret={getattr(self._cfg, 'proxy_secret', '')}"
+            if is_mtproto and getattr(self._cfg, "proxy_secret", "") else ""
+        )
+        self._proxy_link_edit.setPlaceholderText("https://t.me/proxy?server=...&port=...&secret=...")
+        self._proxy_link_edit.setFixedHeight(28)
+        self._proxy_link_edit.setStyleSheet(QSS_INPUT)
+        pfl.addWidget(self._proxy_link_edit)
+
+        # Показываем/скрываем нужные поля
+        def _refresh_proxy_ui():
+            mtproto = self._proxy_mtproto_btn.isChecked()
+            self._proxy_host_auth.setVisible(not mtproto)
+            self._proxy_port_auth.setVisible(not mtproto)
+            self._proxy_link_edit.setVisible(mtproto)
+            if mtproto:
+                self._proxy_socks5_btn.setChecked(False)
+            else:
+                self._proxy_mtproto_btn.setChecked(False)
+
+        self._proxy_socks5_btn.clicked.connect(lambda: (
+            self._proxy_mtproto_btn.setChecked(False),
+            self._proxy_socks5_btn.setChecked(True),
+            _refresh_proxy_ui(),
+        ))
+        self._proxy_mtproto_btn.clicked.connect(lambda: (
+            self._proxy_socks5_btn.setChecked(False),
+            self._proxy_mtproto_btn.setChecked(True),
+            _refresh_proxy_ui(),
+        ))
+        _refresh_proxy_ui()
+
         def _save_proxy_auth():
+            from features.auth.api import AuthService
             self._cfg.proxy_enabled = self._proxy_toggle.isChecked()
-            self._cfg.proxy_host    = self._proxy_host_auth.text().strip() or "127.0.0.1"
-            self._cfg.proxy_port    = self._proxy_port_auth.value()
+            if self._proxy_mtproto_btn.isChecked():
+                self._cfg.proxy_type = "mtproto"
+                # Пробуем распарсить ссылку
+                link = self._proxy_link_edit.text().strip()
+                parsed = AuthService.parse_proxy_link(link) if link else None
+                if parsed:
+                    self._cfg.proxy_host   = parsed["host"]
+                    self._cfg.proxy_port   = parsed["port"]
+                    self._cfg.proxy_secret = parsed["secret"]
+            else:
+                self._cfg.proxy_type   = "socks5"
+                self._cfg.proxy_host   = self._proxy_host_auth.text().strip() or "127.0.0.1"
+                self._cfg.proxy_port   = self._proxy_port_auth.value()
+                self._cfg.proxy_secret = ""
             try:
                 from config import save_config
                 save_config(self._cfg)
@@ -414,6 +490,7 @@ class AuthScreen(QWidget):
         self._proxy_toggle.toggled.connect(_save_proxy_auth)
         self._proxy_host_auth.editingFinished.connect(_save_proxy_auth)
         self._proxy_port_auth.valueChanged.connect(_save_proxy_auth)
+        self._proxy_link_edit.editingFinished.connect(_save_proxy_auth)
 
         layout.addWidget(proxy_frame)
 
