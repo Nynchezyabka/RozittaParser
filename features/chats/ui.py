@@ -51,7 +51,7 @@ from core.ui_shared.styles import (
     QSS_INPUT, QSS_SCROLL_AREA, QSS_COMBOBOX,
 )
 from core.ui_shared.widgets import SectionTitle
-from tst import client
+
 
 logger = logging.getLogger(__name__)
 

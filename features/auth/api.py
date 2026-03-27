@@ -46,22 +46,86 @@ class AuthService:
     """
 
     @staticmethod
+    def parse_proxy_link(link: str):
+        """
+        Разбирает ссылку https://t.me/proxy?server=...&port=...&secret=...
+        Возвращает dict {type, host, port, secret} или None.
+        """
+        try:
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(link.strip())
+            if "proxy" not in parsed.path:
+                return None
+            qs = parse_qs(parsed.query)
+            host   = qs.get("server", [""])[0]
+            port   = int(qs.get("port", [443])[0])
+            secret = qs.get("secret", [""])[0]
+            if host and secret:
+                return {"type": "mtproto", "host": host, "port": port, "secret": secret}
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def build_client(cfg: AppConfig) -> TelegramClient:
         """
-        Создаёт TelegramClient с параметрами реального устройства.
-
-        Это критически важно в 2026 году: без device_model Telegram часто
-        не высылает код подтверждения.
-        Если cfg.proxy_enabled=True — подключается через SOCKS5 прокси
-        (например Tor на 127.0.0.1:9050).
+        Единственное место создания TelegramClient — все воркеры используют этот метод.
+        Поддерживает SOCKS5 (Tor) и MTProto (ссылки t.me/proxy).
         """
         cfg.validate()
+        logger.debug("auth: build_client api_id=%s proxy=%s",
+                     cfg.api_id, cfg.proxy_type if cfg.proxy_enabled else "none")
 
-        logger.debug("auth: build_client api_id=%s session=%s", cfg.api_id, cfg.session_name)
+        connection_class = None
+        proxy = None
 
-        from core.utils import build_telegram_client
-        telegram_client = build_telegram_client(cfg)
-        return telegram_client
+        if getattr(cfg, "proxy_enabled", False):
+            ptype = getattr(cfg, "proxy_type", "socks5")
+
+            if ptype == "mtproto":
+                try:
+                    from telethon.network import ConnectionTcpMTProxyAbridged
+                    connection_class = ConnectionTcpMTProxyAbridged
+                    proxy = (cfg.proxy_host, cfg.proxy_port, cfg.proxy_secret)
+                    logger.info("auth: прокси MTProto %s:%s активен", cfg.proxy_host, cfg.proxy_port)
+                except Exception as exc:
+                    logger.warning("auth: MTProto прокси ошибка: %s", exc)
+            else:  # socks5
+                try:
+                    import socks
+                    import socket as _socket
+                    try:
+                        _s = _socket.socket()
+                        _s.settimeout(2)
+                        _s.connect((cfg.proxy_host, cfg.proxy_port))
+                        _s.close()
+                        proxy = (socks.SOCKS5, cfg.proxy_host, cfg.proxy_port)
+                        logger.info("auth: прокси SOCKS5 %s:%s активен", cfg.proxy_host, cfg.proxy_port)
+                    except OSError:
+                        logger.warning("auth: прокси %s:%s недоступен", cfg.proxy_host, cfg.proxy_port)
+                        raise ConnectionError(
+                            f"🔌 Прокси недоступен ({cfg.proxy_host}:{cfg.proxy_port})\n\n"
+                            f"Запустите Tor перед входом в приложение,\n"
+                            f"дождитесь «Bootstrapped 100%» и повторите."
+                        )
+                except ImportError:
+                    logger.warning("auth: PySocks не установлен — pip install PySocks")
+
+        kwargs = dict(
+            session          = cfg.session_path,
+            api_id           = cfg.api_id_int,
+            api_hash         = cfg.api_hash,
+            device_model     = "Rozitta Parser Desktop",
+            system_version   = "Windows 11",
+            app_version      = "3.3.0",
+            lang_code        = "ru",
+            system_lang_code = "ru-RU",
+            proxy            = proxy,
+        )
+        if connection_class:
+            kwargs["connection"] = connection_class
+        return TelegramClient(**kwargs)
+
 
     @staticmethod
     async def sign_in(
