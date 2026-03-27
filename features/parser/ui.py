@@ -264,7 +264,7 @@ class ParseSettingsScreen(QWidget):
         container = QWidget()
         container.setStyleSheet("background: transparent;")
         scroll_layout = QVBoxLayout(container)
-        scroll_layout.setContentsMargins(0, 8, 8, 8)  # 8px справа для скроллбара
+        scroll_layout.setContentsMargins(0, 8, 8, 8)   # 8px справа для скроллбара
         scroll_layout.setSpacing(20)
 
         # Секции
@@ -302,7 +302,7 @@ class ParseSettingsScreen(QWidget):
                 color: #888888;
             }}
         """)
-        self._start_btn.setEnabled(False)  # включится при выборе чата
+        self._start_btn.setEnabled(False)   # включится при выборе чата
         self._start_btn.clicked.connect(self._on_start_clicked)
 
         root.addSpacing(12)
@@ -343,11 +343,11 @@ class ParseSettingsScreen(QWidget):
         grid.setContentsMargins(0, 0, 0, 0)
 
         media_defs = [
-            ("🖼️", "Фото", "photo"),
-            ("🎬", "Видео", "video"),
-            ("🔵", "Кружки", "videomessage"),
-            ("🎙️", "Голос", "voice"),
-            ("📎", "Файлы", "file"),
+            ("🖼️", "Фото",   "photo"),
+            ("🎬", "Видео",   "video"),
+            ("🔵", "Кружки",  "videomessage"),
+            ("🎙️", "Голос",   "voice"),
+            ("📎", "Файлы",   "file"),
         ]
 
         self._media_buttons: dict[str, MediaButton] = {}
@@ -379,9 +379,9 @@ class ParseSettingsScreen(QWidget):
         chips_layout.setContentsMargins(0, 0, 0, 0)
 
         stt_defs = [
-            ("🎬", "Видео", "video"),
-            ("🎙️", "Аудио", "voice"),
-            ("🔵", "Кружки", "videomessage"),
+            ("🎬", "Видео",   "video"),
+            ("🎙️", "Аудио",   "voice"),
+            ("🔵", "Кружки",  "videomessage"),
         ]
 
         self._stt_chips: dict[str, ChipButton] = {}
@@ -538,10 +538,10 @@ class ParseSettingsScreen(QWidget):
         split_grid.setContentsMargins(0, 0, 0, 0)
 
         split_defs = [
-            ("📄", "Единый", "none", True),
-            ("📆", "Дни", "day", False),
-            ("🗓️", "Месяцы", "month", False),
-            ("📬", "Посты", "post", False),
+            ("📄", "Единый",  "none",  True),
+            ("📆", "Дни",     "day",   False),
+            ("🗓️", "Месяцы",  "month", False),
+            ("📬", "Посты",   "post",  False),
         ]
 
         self._split_buttons: dict[str, SplitModeButton] = {}
@@ -663,7 +663,7 @@ class ParseSettingsScreen(QWidget):
 
         # Убираем stretch перед добавлением новых
         # (addStretch добавляем снова в конце)
-        while self._tags_layout.count() > 1:  # 0 = tag_all
+        while self._tags_layout.count() > 1:   # 0 = tag_all
             item = self._tags_layout.takeAt(1)
             if item.widget():
                 item.widget().deleteLater()
@@ -841,10 +841,10 @@ class ParseWorker(QThread):
     character_state = Signal(str)
 
     def __init__(
-            self,
-            params: "ParseParams",
-            cfg,  # AppConfig
-            parent: Optional[QObject] = None,
+        self,
+        params: "ParseParams",
+        cfg,                     # AppConfig
+        parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
         self._params = params
@@ -884,10 +884,8 @@ class ParseWorker(QThread):
 
         self.log_message.emit(f"📂  Папка чата: {chat_dir}")
 
-        from core.utils import build_telegram_client
-
-        client = build_telegram_client(self._cfg)
-
+        from features.auth.api import AuthService
+        client = AuthService.build_client(self._cfg)
         for _attempt in range(5):
             try:
                 await client.connect()
