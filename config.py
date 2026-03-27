@@ -127,12 +127,13 @@ class AppConfig:
     output_dir:   str        = field(default="output", repr=False)
     session_name: str        = field(default=SESSION_NAME, repr=False)
 
-    # Прокси (SOCKS5 / HTTP) — опционально
+    # Прокси (SOCKS5 / MTProto) — опционально
     proxy_enabled: bool      = False
-    proxy_host:    str       = ""
-    proxy_port:    int       = 433
-    proxy_secret:  str       = ""
-    proxy_url:     str       = ""
+    proxy_type:    str       = "socks5"    # "socks5" | "mtproto"
+    proxy_host:    str       = "127.0.0.1"
+    proxy_port:    int       = 9050
+    proxy_secret:  str       = ""          # только для MTProto
+
     # ------------------------------------------------------------------
     # Свойства
     # ------------------------------------------------------------------
@@ -245,10 +246,10 @@ def load_config(path: str = CONFIG_FILE) -> AppConfig:
             stt_model     = str(data.get("stt_model", STT_MODEL_DEFAULT)),
             stt_language  = str(data.get("stt_language", STT_LANGUAGE_DEFAULT)),
             proxy_enabled = bool(data.get("proxy_enabled", False)),
-            proxy_host    = str(data.get("proxy_host", "")),
-            proxy_port    = int(data.get("proxy_port", 443)),
+            proxy_type    = str(data.get("proxy_type", "socks5")),
+            proxy_host    = str(data.get("proxy_host", "127.0.0.1")),
+            proxy_port    = int(data.get("proxy_port", 9050)),
             proxy_secret  = str(data.get("proxy_secret", "")),
-            proxy_url     = str(data.get("proxy_url", "")),
         )
 
         logger.debug("config.py: конфиг загружен из %s", path)
@@ -291,10 +292,10 @@ def save_config(cfg: AppConfig, path: str = CONFIG_FILE) -> None:
         "stt_model":     cfg.stt_model,
         "stt_language":  cfg.stt_language,
         "proxy_enabled": cfg.proxy_enabled,
+        "proxy_type":    cfg.proxy_type,
         "proxy_host":    cfg.proxy_host,
         "proxy_port":    cfg.proxy_port,
         "proxy_secret":  cfg.proxy_secret,
-        "proxy_url":     cfg.proxy_url,
     }
 
     try:
