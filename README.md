@@ -35,7 +35,7 @@ python -m venv .venv
 source .venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 python main.py
-
+```
 Requires Python 3.10–3.13. Python 3.14 requires Microsoft C++ Build Tools (see issue #35).
 
 > ⚠️ For personal use only — chats you are a member of.
