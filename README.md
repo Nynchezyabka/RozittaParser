@@ -52,7 +52,6 @@ English | [Русский](#-rozitta-parser-v15)
 
 **Rozitta Parser** — десктопное приложение для архивирования сообщений, медиа и голосовых заметок из любых чатов, где вы участвуете: группы, каналы, форумы с топиками, личные диалоги.
 
-![Screenshot_17](https://github.com/user-attachments/assets/09fd78d7-c6ee-4f31-affc-140aea1e3c8d)
 
 ---
 
