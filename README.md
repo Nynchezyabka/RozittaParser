@@ -1,6 +1,6 @@
 # 🐸 Rozitta Parser
 ## 🗺️ [Интерактивная карта проекта (с заделом на две будущих версии интерфейса)](https://nynchezyabka.github.io/RozittaParser/map.html)
-English | [Русский](#-rozitta-parser-v40)
+English | [Русский](#-rozitta-parser-v15)
 
 > Back up and explore your Telegram chats — locally, privately, offline.
 **Rozitta Parser** is a desktop GUI app that exports messages, media, 
