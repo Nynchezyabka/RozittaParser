@@ -40,6 +40,7 @@ import html as html_lib
 import json
 import logging
 import os
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -1022,89 +1023,129 @@ _HTML_TEMPLATE = """\
 <style>
   *, *::before, *::after {{ box-sizing: border-box; }}
   body {{
-    font-family: 'Segoe UI', system-ui, sans-serif;
     background: #0e1117;
-    color: #e2e8f0;
-    max-width: 860px;
-    margin: 0 auto;
-    padding: 24px 16px;
-    line-height: 1.6;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, sans-serif;
+    padding: 20px 12px;
+    color: #e7edf5;
+    margin: 0;
   }}
-  h1 {{
-    font-size: 1.4rem;
-    color: #FF9500;
-    border-bottom: 1px solid #2a2f3a;
-    padding-bottom: 10px;
-    margin-bottom: 20px;
+  .container {{ max-width: 800px; margin: 0 auto; }}
+  .header {{
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #2a2f3f;
+    position: sticky;
+    top: 0;
+    background: #0e1117;
+    z-index: 10;
+    padding-top: 8px;
   }}
-  .msg {{
-    border-bottom: 1px solid #1e2430;
-    padding: 12px 0;
-  }}
-  .msg.comment {{
-    margin-left: 24px;
-    border-left: 2px solid #2a3040;
-    padding-left: 12px;
-  }}
-  .msg-header {{
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    margin-bottom: 4px;
-  }}
-  .msg-author {{
+  .header h1 {{
+    font-size: 1.5rem;
     font-weight: 600;
-    color: #FF9500;
-    font-size: 0.9rem;
+    background: linear-gradient(135deg, #FFB347, #FF8C42);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
   }}
-  .msg-date {{
-    color: #607080;
-    font-size: 0.78rem;
+  .header .stats {{ font-size: 0.75rem; color: #6c7a8e; margin-top: 6px; }}
+  .message {{ margin-bottom: 4px; transition: background 0.1s; }}
+  .message:target {{ background: rgba(255,149,0,0.15); border-radius: 12px; scroll-margin-top: 80px; }}
+  .message.highlight {{ background: rgba(255,149,0,0.25); border-radius: 12px; }}
+  .msg-row {{ display: flex; gap: 12px; padding: 10px 12px; border-radius: 12px; transition: background 0.1s; }}
+  .msg-row:hover {{ background: #1a232e; }}
+  .depth-0 {{ margin-left: 0; }}
+  .depth-1 {{ margin-left: 32px; }}
+  .depth-2 {{ margin-left: 56px; }}
+  .depth-3 {{ margin-left: 80px; }}
+  .avatar {{
+    width: 36px; height: 36px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 0.85rem; flex-shrink: 0;
+    background: linear-gradient(135deg, #FF9500, #FF6B00);
+    color: #0e1117;
   }}
-  .msg-text {{
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-size: 0.92rem;
-    color: #d0d8e8;
+  .content {{ flex: 1; min-width: 0; }}
+  .msg-header {{ display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }}
+  .author {{ font-weight: 600; font-size: 0.9rem; color: #FFA559; }}
+  .date {{ font-size: 0.65rem; color: #6f7e93; }}
+  .reply-badge {{ font-size: 0.65rem; color: #70b0ff; margin-left: 4px; }}
+  .reply-badge a {{ color: #70b0ff; text-decoration: none; display: inline-flex; align-items: center; gap: 3px; }}
+  .reply-badge a:hover {{ text-decoration: underline; }}
+  .quote-preview {{
+    font-size: 0.7rem; color: #9aaec9; margin-bottom: 6px;
+    padding-left: 8px; border-left: 2px solid #FF9500; cursor: pointer;
   }}
+  .msg-text {{ font-size: 0.88rem; line-height: 1.45; color: #e2eaf5; white-space: pre-wrap; word-break: break-word; }}
+  .msg-text a {{ color: #70b0ff; text-decoration: none; border-bottom: 1px dotted #70b0ff; }}
   .msg-media {{
-    margin-top: 6px;
-    font-size: 0.82rem;
-    color: #8090a0;
+    margin-top: 8px; font-size: 0.75rem;
+    background: #0e151e; padding: 4px 10px;
+    border-radius: 12px; display: inline-block;
   }}
-  .msg-media a {{
-    color: #60a0e0;
-    text-decoration: none;
-  }}
+  .msg-media a {{ color: #60a0e0; text-decoration: none; }}
   .msg-media a:hover {{ text-decoration: underline; }}
-  .msg-stt {{
-    margin-top: 6px;
-    font-size: 0.82rem;
-    color: #90a0b0;
-    font-style: italic;
+  .msg-img {{ margin-top: 8px; max-width: 100%; max-height: 400px; border-radius: 8px; display: block; cursor: pointer; }}
+  .msg-stt {{ margin-top: 6px; font-size: 0.82rem; color: #90a0b0; font-style: italic; padding-left: 4px; border-left: 2px solid #3a4a5a; }}
+  .scroll-top {{
+    position: fixed; bottom: 20px; right: 20px;
+    background: #FF9500; color: #0e1117;
+    border: none; border-radius: 40px; padding: 8px 16px;
+    cursor: pointer; font-size: 0.8rem; font-weight: 600;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
   }}
-  .part-nav {{
-    text-align: center;
-    padding: 16px 0;
-    color: #607080;
-    font-size: 0.82rem;
-  }}
+  .scroll-top:hover {{ background: #FFB347; }}
+  .part-nav {{ text-align: center; padding: 16px 0; color: #607080; font-size: 0.82rem; }}
 </style>
 </head>
 <body>
-<h1>{title}</h1>
+<div class="container">
+  <div class="header">
+    <h1>{title}</h1>
+    <div class="stats">{total} сообщений</div>
+  </div>
+  <div id="messages-container">
 {body}
+  </div>
+</div>
+<button class="scroll-top" id="scrollTopBtn">↑ Наверх</button>
+<script>
+  document.getElementById('scrollTopBtn').addEventListener('click', function() {{
+    window.scrollTo({{ top: 0, behavior: 'smooth' }});
+  }});
+  document.querySelectorAll('a[href^="#msg"]').forEach(function(link) {{
+    link.addEventListener('click', function(e) {{
+      var hash = this.getAttribute('href');
+      if (hash && hash.startsWith('#')) {{
+        e.preventDefault();
+        var target = document.getElementById(hash.substring(1));
+        if (target) {{
+          target.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+          target.classList.add('highlight');
+          setTimeout(function() {{ target.classList.remove('highlight'); }}, 1000);
+        }}
+      }}
+    }});
+  }});
+</script>
 </body>
 </html>
 """
 
 _HTML_MSG = """\
-<div class="msg{comment_class}">
-  <div class="msg-header">
-    <span class="msg-author">{author}</span>
-    <span class="msg-date">{date}</span>
+<div class="message depth-{depth}" id="msg_{msg_id}">
+  <div class="msg-row">
+    <div class="avatar">{avatar_letter}</div>
+    <div class="content">
+      <div class="msg-header">
+        <span class="author">{author}</span>
+        <span class="date">{date}</span>
+        {reply_badge}
+      </div>
+      {quote_block}{text_block}{media_block}{stt_block}
+    </div>
   </div>
-{text_block}{media_block}{stt_block}</div>
+</div>
 """
 
 
@@ -1171,13 +1212,16 @@ class HtmlGenerator:
         base_name   = f"{safe_title}{topic_sfx}_{period_label}_history"
         h_title     = html_lib.escape(chat_title)
 
+        total    = len(rows)
+        row_dict = {row[_COL_MESSAGE_ID]: row for row in rows}
+
         # ── Без разбивки: один файл ────────────────────────────────────
         if not ai_split:
             blocks: List[str] = []
             for row in rows:
-                blocks.append(self._format_message(row, stt_map.get(row[_COL_MESSAGE_ID])))
+                blocks.append(self._format_message(row, stt_map.get(row[_COL_MESSAGE_ID]), row_dict))
             out_path = os.path.join(self._output_dir, f"{base_name}.html")
-            self._write_html(out_path, h_title, blocks, log)
+            self._write_html(out_path, h_title, blocks, total, log)
             return [out_path]
 
         # ── С разбивкой по ai_split_chunk_words слов ───────────────────
@@ -1185,34 +1229,27 @@ class HtmlGenerator:
         chunk:     List[str] = []
         words      = 0
         part       = 1
-        total      = len(rows)
 
         for row in rows:
             msg_id = row[_COL_MESSAGE_ID]
             stt    = stt_map.get(msg_id)
-            block  = self._format_message(row, stt)
+            block  = self._format_message(row, stt, row_dict)
             chunk.append(block)
             words += _word_count(row[_COL_TEXT]) + _word_count(stt)
 
             if words >= ai_split_chunk_words:
-                path = os.path.join(
-                    self._output_dir,
-                    f"{base_name}_part_{part}.html",
-                )
+                path = os.path.join(self._output_dir, f"{base_name}_part_{part}.html")
                 nav = f'<div class="part-nav">Часть {part} · {len(chunk)} сообщений</div>'
-                self._write_html(path, f"{h_title} — часть {part}", chunk + [nav], log)
+                self._write_html(path, f"{h_title} — часть {part}", chunk + [nav], total, log)
                 out_paths.append(path)
                 chunk = []
                 words = 0
                 part += 1
 
         if chunk:
-            path = os.path.join(
-                self._output_dir,
-                f"{base_name}_part_{part}.html",
-            )
+            path = os.path.join(self._output_dir, f"{base_name}_part_{part}.html")
             nav = f'<div class="part-nav">Часть {part} · {len(chunk)} сообщений</div>'
-            self._write_html(path, f"{h_title} — часть {part}", chunk + [nav], log)
+            self._write_html(path, f"{h_title} — часть {part}", chunk + [nav], total, log)
             out_paths.append(path)
 
         log(f"✅ HTML готов: {total} сообщений → {len(out_paths)} файл(ов)")
@@ -1221,47 +1258,100 @@ class HtmlGenerator:
     # ── Вспомогательные ───────────────────────────────────────────────
 
     @staticmethod
-    def _format_message(row, stt_text: Optional[str]) -> str:
-        """Форматирует одно сообщение в HTML-блок."""
+    def _format_message(row, stt_text: Optional[str], row_dict: dict) -> str:
+        """Форматирует одно сообщение в HTML-блок по структуре макета."""
+        msg_id   = row[_COL_MESSAGE_ID]
         raw_date = row[_COL_DATE] or ""
         date_str = raw_date[:16].replace("T", " ") if raw_date else "—"
         author   = row[_COL_USERNAME] or f"id:{row[_COL_USER_ID]}" or "Неизвестно"
         text     = (row[_COL_TEXT] or "").strip()
-        is_cmt   = bool(row[_COL_IS_COMMENT])
+        reply_to = row[_COL_REPLY_TO]
 
-        text_block  = ""
-        media_block = ""
-        stt_block   = ""
+        # Первая буква автора для аватара
+        avatar_letter = html_lib.escape(author)[0].upper() if author else "?"
 
-        if text:
-            text_block = (
-                f'  <div class="msg-text">{html_lib.escape(text)}</div>\n'
+        # Глубина: 1 если есть ответ на известное сообщение, иначе 0
+        depth = 1 if (reply_to and reply_to in row_dict) else 0
+
+        # Бейдж ответа
+        reply_badge = ""
+        if reply_to and reply_to in row_dict:
+            reply_badge = (
+                f'<span class="reply-badge">'
+                f'<a href="#msg_{reply_to}">↪️ ответ</a></span>'
             )
 
-        media_path = row[_COL_MEDIA_PATH]
+        # Блок цитаты (превью сообщения, на которое отвечают)
+        quote_block = ""
+        if reply_to and reply_to in row_dict:
+            ref = row_dict[reply_to]
+            ref_author  = ref[_COL_USERNAME] or f"id:{ref[_COL_USER_ID]}" or "?"
+            ref_text    = (ref[_COL_TEXT] or "").strip()
+            preview     = ref_text[:70] + ("…" if len(ref_text) > 70 else "")
+            quote_block = (
+                f'<div class="quote-preview" onclick="'
+                f"var t=document.getElementById('msg_{reply_to}');"
+                f"if(t){{t.scrollIntoView({{behavior:'smooth',block:'center'}});"
+                f"t.classList.add('highlight');"
+                f"setTimeout(function(){{t.classList.remove('highlight')}},1000)}}"
+                f'">'
+                f'💬 {html_lib.escape(ref_author)}: {html_lib.escape(preview)}'
+                f'</div>\n      '
+            )
+
+        # Текст с авто-ссылками
+        text_block = ""
+        if text:
+            escaped = html_lib.escape(text)
+            linked  = re.sub(
+                r'(https?://[^\s"\'<>)]+)',
+                r'<a href="\1" target="_blank">\1</a>',
+                escaped,
+            )
+            text_block = f'<div class="msg-text">{linked}</div>\n      '
+
+        # Медиа: inline-превью для изображений, ссылка для остальных
+        media_block = ""
+        media_path  = row[_COL_MEDIA_PATH]
         if media_path:
             fname = os.path.basename(media_path)
             if os.path.exists(media_path):
                 uri = Path(os.path.abspath(media_path)).as_uri()
-                media_block = (
-                    f'  <div class="msg-media">📎 '
-                    f'<a href="{uri}">{html_lib.escape(fname)}</a></div>\n'
-                )
+                if is_image_path(media_path):
+                    media_block = (
+                        f'<img class="msg-img" src="{uri}" alt="{html_lib.escape(fname)}"'
+                        f' onclick="window.open(\'{uri}\',\'_blank\')">\n      '
+                        f'<div class="msg-media">🖼 '
+                        f'<a href="{uri}" target="_blank">{html_lib.escape(fname)}</a>'
+                        f'</div>\n      '
+                    )
+                else:
+                    media_block = (
+                        f'<div class="msg-media">📎 '
+                        f'<a href="{uri}" target="_blank">{html_lib.escape(fname)}</a>'
+                        f'</div>\n      '
+                    )
             else:
                 media_block = (
-                    f'  <div class="msg-media">📎 [недоступен] '
-                    f'{html_lib.escape(fname)}</div>\n'
+                    f'<div class="msg-media">📎 [недоступен] '
+                    f'{html_lib.escape(fname)}</div>\n      '
                 )
 
+        # STT — курсив с левой полосой
+        stt_block = ""
         if stt_text:
             stt_block = (
-                f'  <div class="msg-stt">🎙 {html_lib.escape(stt_text.strip())}</div>\n'
+                f'<div class="msg-stt">🎙 {html_lib.escape(stt_text.strip())}</div>\n      '
             )
 
         return _HTML_MSG.format(
-            comment_class = " comment" if is_cmt else "",
+            depth         = depth,
+            msg_id        = msg_id,
+            avatar_letter = avatar_letter,
             author        = html_lib.escape(author),
             date          = html_lib.escape(date_str),
+            reply_badge   = reply_badge,
+            quote_block   = quote_block,
             text_block    = text_block,
             media_block   = media_block,
             stt_block     = stt_block,
@@ -1269,13 +1359,14 @@ class HtmlGenerator:
 
     def _write_html(
         self,
-        path:  str,
-        title: str,
+        path:   str,
+        title:  str,
         blocks: List[str],
-        log:   _LogCallback,
+        total:  int,
+        log:    _LogCallback,
     ) -> None:
         log(f"💾 Записываю HTML: {os.path.basename(path)} ({len(blocks)} блоков)")
-        content = _HTML_TEMPLATE.format(title=title, body="".join(blocks))
+        content = _HTML_TEMPLATE.format(title=title, body="".join(blocks), total=total)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(content)
         logger.info("HtmlGenerator: saved → %s", path)

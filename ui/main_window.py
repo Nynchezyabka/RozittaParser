@@ -990,6 +990,12 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._set_step(0)
 
+        from datetime import datetime
+        logger.info("")
+        logger.info("=" * 70)
+        logger.info("  ROZITTA PARSER — ЗАПУСК  %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        logger.info("=" * 70)
+        logger.info("")
         logger.info("MainWindow initialized (v4.0 redesign)")
 
     # ──────────────────────────────────────────────────────────────────────
@@ -1848,7 +1854,7 @@ class MainWindow(QMainWindow):
             period_label=getattr(collect_result, "period_label", "fullchat"),
             export_formats=self._settings_screen.get_export_formats(),
             ai_split=self._settings_screen.get_ai_split(),
-            ai_split_chunk_words=self._settings_screen.get_ai_split_chunk_words(),
+            ai_split_chunk_words=self._settings_screen.get_ai_split_chunk_words() if hasattr(self._settings_screen, 'get_ai_split_chunk_words') else 300_000,
         )
 
         worker = ExportWorker(export_params)
