@@ -6,44 +6,134 @@ on:
       publish_to_release:
         description: "Также загрузить в GitHub Release"
         type: boolean
+        required: false
         default: false
       release_tag:
-        description: "Тег релиза (например v1.2.3)"
+        description: "Тег релиза (например v1.2.3) для ручного запуска"
         type: string
+        required: false
         default: ""
   push:
     tags:
       - "v*"
+
+concurrency:
+  group: nuitka-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
   build:
+    name: Build (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - label: Linux
+          - label: Windows x64
+            runner: windows-latest
+            slug: windows-x64
+            mode: onefile
+            extra: >-
+              --windows-console-mode=disable
+              --windows-icon-from-ico=assets/rozitta_idle.ico
+            package_cmd: |
+              set -euo pipefail
+              mkdir -p upload
+              test -f "dist/RozittaParser.exe"
+              cp "dist/RozittaParser.exe" "upload/RozittaParser-Windows-x64.exe"
+
+          - label: Linux x64
             runner: ubuntu-22.04
+            slug: linux-x64
             mode: onefile
             extra: "--linux-icon=assets/rozitta_idle.png"
+            package_cmd: |
+              set -euo pipefail
+              mkdir -p upload
+              if [ ! -f dist/RozittaParser ]; then
+                echo "Expected dist/RozittaParser"
+                ls -la dist/
+                exit 1
+              fi
+              chmod +x dist/RozittaParser
+              tar -I 'xz -9e' -cf upload/RozittaParser-Linux-x64.tar.xz -C dist RozittaParser
 
-          - label: macOS Intel
+          - label: macOS Intel x64
             runner: macos-15-intel
+            slug: macos-intel-x64
             mode: app
-            extra: "--macos-app-icon=assets/rozitta_idle_mac2.icns --macos-app-name=RozittaParser"
+            extra: >-
+              --macos-app-icon=assets/rozitta_idle_mac2.icns
+              --macos-app-name=RozittaParser
+            package_cmd: |
+              set -euo pipefail
 
-          - label: macOS ARM
+              # Находим .app, созданный Nuitka (обычно называется main.app)
+              APP=$(find dist -maxdepth 3 -name "*.app" -print -quit)
+              if [ -z "$APP" ]; then
+                echo "Could not find .app in dist/"
+                ls -laR dist/
+                exit 1
+              fi
+
+              # 🔧 Переименование .app в стабильное имя
+              # Зачем: Nuitka берёт имя из main.py → получается main.app,
+              # а нам нужно единое имя RozittaParser.app для релиза
+              NEW_APP="$(dirname "$APP")/RozittaParser.app"
+              mv "$APP" "$NEW_APP"
+              APP="$NEW_APP"
+
+              mkdir -p upload
+              (cd "$(dirname "$APP")" && zip -r9 "${GITHUB_WORKSPACE}/upload/RozittaParser-macOS-Intel-x64.zip" "$(basename "$APP")")
+
+          - label: macOS Apple Silicon arm64
             runner: macos-15
+            slug: macos-arm64
             mode: app
-            extra: "--macos-app-icon=assets/rozitta_idle.icns --macos-app-name=RozittaParser"
+            extra: >-
+              --macos-app-icon=assets/rozitta_idle.ico
+              --macos-app-name=RozittaParser
+            package_cmd: |
+              set -euo pipefail
+
+              # Находим .app, созданный Nuitka (обычно называется main.app)
+              APP=$(find dist -maxdepth 3 -name "*.app" -print -quit)
+              if [ -z "$APP" ]; then
+                echo "Could not find .app in dist/"
+                ls -laR dist/
+                exit 1
+              fi
+
+              # 🔧 Переименование .app в стабильное имя
+              # Зачем: Nuitka берёт имя из main.py → получается main.app,
+              # а нам нужно единое имя RozittaParser.app для релиза
+              NEW_APP="$(dirname "$APP")/RozittaParser.app"
+              mv "$APP" "$NEW_APP"
+              APP="$NEW_APP"
+
+              mkdir -p upload
+              (cd "$(dirname "$APP")" && zip -r9 "${GITHUB_WORKSPACE}/upload/RozittaParser-macOS-arm64.zip" "$(basename "$APP")")
 
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@v5
 
-      - name: Setup Python
+      - name: Build cache (Nuitka, ccache)
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/Nuitka
+            ~/.cache/ccache
+#            .nuitka
+#          key: build-cache-${{ runner.os }}-${{ matrix.slug }}-${{ hashFiles('.github/workflows/requirements-build.txt') }}
+          key: build-cache-${{ runner.os }}-${{ matrix.slug }}-${{ hashFiles('**/*.py', 'requirements.txt') }}
+          restore-keys: |
+            build-cache-${{ runner.os }}-${{ matrix.slug }}-
+
+      - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
@@ -52,96 +142,114 @@ jobs:
             requirements.txt
             .github/workflows/requirements-build.txt
 
-      - name: Install dependencies (Linux)
+      - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ccache build-essential patchelf
+#          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ccache patchelf \
+            libgl1-mesa-dev libdbus-1-3 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-sync1 \
+            libxcb-xfixes0 libxcb-xinerama0 libxcb-cursor0 libxcb-xkb1 libxkbcommon-x11-0
 
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
+      - name: Install Python dependencies
         run: |
-          brew install ccache
-
-      - name: Restore cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cache/Nuitka
-            ~/.cache/ccache
-          key: cache-${{ runner.os }}-${{ hashFiles('**/*.py', 'requirements.txt') }}
-
-      - name: Install Python deps
-        run: |
+#          python -m pip install --upgrade pip
           pip install -r .github/workflows/requirements-build.txt
           pip install -r requirements.txt
 
       - name: Build (Nuitka)
         shell: bash
+        env:
+          PYTHONHASHSEED: "0"
         run: |
           set -euo pipefail
-
-          # CPU cores
+          # Определяем количество потоков (Linux/macOS)
           JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
-          echo "Using $JOBS jobs"
-
-          # ccache
-          if command -v ccache >/dev/null 2>&1; then
-            export CC="ccache gcc"
-            export CXX="ccache g++"
-            ccache -M 500M
-            ccache -s
-          fi
-
+          echo "Using $JOBS parallel jobs"
+          # 🔧 Включаем ccache (иначе он вообще не используется)
+          export CC="ccache gcc"
+          export CXX="ccache g++"
+          ccache -M 500M
+          ccache -s
+          
+          MODE="${{ matrix.mode }}"
+          EXTRA="${{ matrix.extra }}"
+          EXTRA=$(echo "$EXTRA" | tr '\n' ' ' | xargs)
           python -m nuitka \
-            --mode=${{ matrix.mode }} \
-            --jobs=$JOBS \
+            --mode="$MODE" \
             --assume-yes-for-downloads \
             --enable-plugin=pyside6 \
             --include-data-dir=assets=assets \
-            --lto=no \
+            --lto=yes \
             --output-dir=dist \
             --output-filename=RozittaParser \
             --remove-output \
-            ${{ matrix.extra }} \
+            $EXTRA \
             main.py
-
-          ls -laR dist/
-
-      - name: Fix macOS app name
-        if: runner.os == 'macOS'
-        run: |
-          APP=$(find dist -name "*.app" -print -quit)
-          NEW_APP="$(dirname "$APP")/RozittaParser.app"
-          mv "$APP" "$NEW_APP"
+          echo "---- dist ----"
+          ls -laR dist/ || true
 
       - name: Package
+        shell: bash
         run: |
-          mkdir -p upload
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            tar -I 'xz -9e' -cf upload/app-linux.tar.xz -C dist RozittaParser
-          elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            APP=$(find dist -name "*.app" -print -quit)
-            (cd "$(dirname "$APP")" && zip -r9 "$GITHUB_WORKSPACE/upload/app-macos.zip" "$(basename "$APP")")
-          fi
+          ${{ matrix.package_cmd }}
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: build-${{ matrix.label }}
+          name: binary-${{ matrix.slug }}
           path: upload/*
+          if-no-files-found: error
 
   release:
+    name: Publish to GitHub Releases
     needs: build
-    if: github.ref_type == 'tag'
+    if: >
+      success() && (
+        github.ref_type == 'tag' ||
+        (github.event_name == 'workflow_dispatch' &&
+         github.event.inputs.publish_to_release == 'true')
+      )
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v7
-        with:
-          path: release
+      - name: Проверка release_tag при ручном запуске
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          TAG="${{ github.event.inputs.release_tag }}"
+          TAG="$(echo -n "$TAG" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          if [ -z "$TAG" ]; then
+            echo "::error::Укажите тег в поле release_tag (например v1.2.3), если включена загрузка в Release."
+            exit 1
+          fi
 
-      - uses: softprops/action-gh-release@v2
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
         with:
-          tag_name: ${{ github.ref_name }}
-          files: release/**/*
+          path: release-assets
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: List release files
+        run: ls -la release-assets/
+
+      - name: Resolve release tag
+        id: meta
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+            TAG="$(echo -n "$TAG" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Rozitta Parser ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
