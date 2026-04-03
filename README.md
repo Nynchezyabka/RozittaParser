@@ -1,6 +1,6 @@
-# 🐸 Rozitta Parser
+# 🐸 Rozitta Parser 
 ## 🗺️ [Интерактивная карта проекта (с заделом на две будущих версии интерфейса)](https://nynchezyabka.github.io/RozittaParser/map.html)
-[🇬🇧 English](#rozitta-parser) | [🇷🇺 Русский](#rozitta-parser-v15)
+[English](#rozitta-parser) | [🇷🇺 Русский](#rozitta-parser-v15)
 
 > Back up and explore your Telegram chats — locally, privately, offline.
 **Rozitta Parser** is a desktop GUI app that exports messages, media, 
@@ -46,7 +46,7 @@ Requires Python 3.10–3.13. Python 3.14 requires Microsoft C++ Build Tools (see
 
 
 # 🐸 Rozitta Parser v1.5
-[🇬🇧 English](#rozitta-parser) | [🇷🇺 Русский](#rozitta-parser-v15)
+[🇬🇧 English](#rozitta-parser) | [Русский](#rozitta-parser-v15)
 
 > Сохраняйте и изучайте свои Telegram‑чаты — локально, приватно, офлайн.
 
