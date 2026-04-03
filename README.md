@@ -16,7 +16,7 @@ groups, channels, forums with topics, and private conversations.
   for NotebookLM and other AI tools
 - 📝 **DOCX** — readable documents, split by day / month / post
 - 🌐 **HTML** — clean web‑ready export with message structure
-- 🎙️ **Speech-to-Text** — transcribe voice messages and video notes 
+- 🎙️ **Speech-to-Text** — transcribe voice messages 
   via local Whisper (no cloud, no API key)
 - 🖼️ **Media archive** — photos, videos, files with folder structure
 - 🔒 **100% local** — sessions and data never leave your computer
@@ -60,7 +60,7 @@ Requires Python 3.10–3.13. Python 3.14 requires Microsoft C++ Build Tools (see
 - 🧠 **AI-Ready** — Markdown с настраиваемым размером чанка (по умолчанию 300k слов) для NotebookLM
 - 📝 **DOCX** — читаемые документы с разбивкой по дням/месяцам/постам
 - 🌐 **HTML** — чистая веб‑страница (в разработке, поля сообщений дорабатываются)
-- 🎙️ **Speech-to-Text** — расшифровка голосовых и кружочков через локальный Whisper (без облака)
+- 🎙️ **Speech-to-Text** — расшифровка голосовых через локальный Whisper (без облака)
 - 🔒 **Всё локально** — сессии и данные не покидают ваш компьютер
 
 ---
