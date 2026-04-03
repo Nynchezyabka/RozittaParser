@@ -1854,7 +1854,7 @@ class MainWindow(QMainWindow):
             period_label=getattr(collect_result, "period_label", "fullchat"),
             export_formats=self._settings_screen.get_export_formats(),
             ai_split=self._settings_screen.get_ai_split(),
-            ai_split_chunk_words=self._settings_screen.get_ai_split_chunk_words(),
+            ai_split_chunk_words=self._settings_screen.get_ai_split_chunk_words() if hasattr(self._settings_screen, 'get_ai_split_chunk_words') else 300_000,
         )
 
         worker = ExportWorker(export_params)
