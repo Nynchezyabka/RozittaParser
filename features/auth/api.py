@@ -71,10 +71,14 @@ class AuthService:
         """
         Единственное место создания TelegramClient — все воркеры используют этот метод.
         Поддерживает SOCKS5 (Tor) и MTProto (ссылки t.me/proxy).
+        Если файл сессии уже существует, не требует api_id/api_hash.
         """
+        import os
+        from telethon import TelegramClient
+
         cfg.validate()
         logger.debug("auth: build_client api_id=%s proxy=%s",
-                     cfg.api_id, cfg.proxy_type if cfg.proxy_enabled else "none")
+                    cfg.api_id, cfg.proxy_type if cfg.proxy_enabled else "none")
 
         connection_class = None
         proxy = None
@@ -111,10 +115,21 @@ class AuthService:
                 except ImportError:
                     logger.warning("auth: PySocks не установлен — pip install PySocks")
 
+        session_path = cfg.session_path
+        session_file = session_path + ".session"
+
+        api_id   = cfg.api_id_int
+        api_hash = cfg.api_hash
+
+        if os.path.exists(session_file):
+            logger.info("auth: используем существующую сессию %s", session_file)
+        else:
+            logger.info("auth: создаём новую сессию")
+
         kwargs = dict(
             session          = cfg.session_path,
-            api_id           = cfg.api_id_int,
-            api_hash         = cfg.api_hash,
+            api_id           = api_id,
+            api_hash         = api_hash,
             device_model     = "Rozitta Parser Desktop",
             system_version   = "Windows 11",
             app_version      = "3.3.0",
@@ -327,45 +342,65 @@ class AuthService:
             User если импорт успешен, None при ошибке.
 
         Raises:
-            AuthError: opentele не установлен или tdata повреждена.
+            AuthError: opentele2 не установлен или tdata повреждена.
         """
         log("🖥️ Читаю данные Telegram Desktop...")
 
         try:
-            from opentele.td import TDesktop          # type: ignore
-            from opentele.api import UseCurrentSession  # type: ignore
+            from opentele2.td import TDesktop          # type: ignore
+            from opentele2.api import UseCurrentSession  # type: ignore
+            log("   → opentele2 загружен")
         except ImportError:
             msg = (
-                "opentele не установлен. "
-                "Выполните: pip install opentele"
+                "opentele2 не установлен. "
+                "Выполните: pip install opentele2"
             )
             log(f"❌ {msg}")
             raise AuthError(msg)
 
         try:
             log(f"📂 Папка tdata: {tdata_path}")
+            log("   → Создаю объект TDesktop...")
             tdesk = TDesktop(tdata_path, passcode=passcode or None)
 
+            log("   → Проверяю загрузку tdata...")
             if not tdesk.isLoaded():
                 raise AuthError("Не удалось прочитать tdata. "
                                 "Убедитесь что Telegram Desktop закрыт.")
+            log("   → tdata загружена")
 
+            log("   → Получаю список аккаунтов...")
             accounts = tdesk.accounts
             if not accounts:
                 raise AuthError("В tdata не найдено ни одного аккаунта.")
-
             log(f"👥 Найдено аккаунтов: {len(accounts)}")
 
             # Берём первый (активный) аккаунт — аналог UseCurrentSession в TDL
             log("🔄 Конвертирую сессию в формат Telethon...")
-            client = await tdesk.ToTelethon(
-                session=session_out,
-                flag=UseCurrentSession,
-            )
+            log("   → Вызываю tdesk.ToTelethon...")
+            
+            import asyncio
+            try:
+                client = await asyncio.wait_for(
+                    tdesk.ToTelethon(session=session_out, flag=UseCurrentSession),
+                    timeout=60.0
+                )
+                log("   → ToTelethon завершён (60 сек)")
+            except asyncio.TimeoutError:
+                log("❌ Таймаут 60 сек при конвертации сессии")
+                raise AuthError("Превышено время ожидания конвертации сессии")
 
-            await client.connect()
-            me = await client.get_me()
-            await client.disconnect()
+            log("   → client.connect()...")
+            await asyncio.wait_for(client.connect(), timeout=30.0)
+            log("   → Подключено")
+
+            log("   → Получаю данные пользователя...")
+            me = await asyncio.wait_for(client.get_me(), timeout=15.0)
+            log(f"   → Получен пользователь: {me.id}")
+
+            log("   → Отключаюсь...")
+            await asyncio.wait_for(client.disconnect(), timeout=10.0)
+            log("   → Отключено")
 
             if me is None:
                 raise AuthError("Сессия импортирована, но аккаунт недоступен.")
@@ -375,8 +410,12 @@ class AuthService:
             logger.info("auth: tdata import ok user_id=%s", me.id)
             return me
 
+        except asyncio.TimeoutError as exc:
+            log(f"❌ Таймаут операции: {exc}")
+            raise AuthError(f"Превышено время ожидания: {exc}")
         except AuthError:
             raise
         except Exception as exc:
             logger.error("auth: tdata import failed: %s", exc)
+            log(f"❌ Ошибка: {exc}")
             raise AuthError(f"Ошибка импорта tdata: {exc}") from exc

@@ -538,10 +538,12 @@ class AuthScreen(QWidget):
             _refresh_proxy_ui(),
         ))
         self._mtproto_link_btn.clicked.connect(lambda: (
+            self._mtproto_manual_btn.setChecked(False),
             self._mtproto_link_btn.setChecked(True),
             _refresh_mtproto_mode(),
         ))
         self._mtproto_manual_btn.clicked.connect(lambda: (
+            self._mtproto_link_btn.setChecked(False),
             self._mtproto_manual_btn.setChecked(True),
             _refresh_mtproto_mode(),
         ))
@@ -738,11 +740,8 @@ class AuthScreen(QWidget):
         self._phone.setEnabled(enabled)
         self._login_btn.setEnabled(enabled)
         self._tdata_btn.setEnabled(enabled)
-        # Кнопка «Отмена» видна только пока идёт проверка сессии
-        checker_running = (
-            self._checker is not None and self._checker.isRunning()
-        )
-        self._cancel_check_btn.setVisible(not enabled and checker_running)
+        # Кнопка «Отмена» видна всегда пока форма заблокирована
+        self._cancel_check_btn.setVisible(not enabled)
 
     # ──────────────────────────────────────────────────────────────────────
     # TDATA IMPORT
@@ -897,15 +896,15 @@ class AuthScreen(QWidget):
         self.character_tip.emit("Ошибка импорта tdata")
         self.log_message.emit(f"❌ {error_msg}")
 
-        # Проверяем нужна ли установка opentele
-        if "opentele" in error_msg.lower() or "pip install" in error_msg:
+        # Проверяем нужна ли установка opentele2
+        if "opentele2" in error_msg.lower() or "pip install" in error_msg:
             self._show_install_dialog(
-                title   = "Требуется библиотека opentele",
+                title   = "Требуется библиотека opentele2",
                 text    = (
                     "Для импорта из Telegram Desktop нужна библиотека <b>opentele</b>.<br><br>"
                     "Установите её командой и перезапустите приложение:"
                 ),
-                command = "pip install opentele",
+                command = "pip install opentele2",
             )
         else:
             QMessageBox.warning(
@@ -935,22 +934,30 @@ class AuthScreen(QWidget):
                 f"🔌 Прокси {self._cfg.proxy_host}:{self._cfg.proxy_port} — "
                 "таймаут 15 сек, после чего форма разблокируется автоматически."
             )
-# добавлен слот отмены проверки сессии, который позволяет пользователю прервать долгую проверку (например, если прокси недоступен) и вернуться к форме входа.:
+
     @Slot()
     def _cancel_session_check(self) -> None:
-        """
-        Принудительно прерывает SessionCheckWorker.
-        Разблокирует форму немедленно — пользователь может войти с новыми данными.
-        """
+        """Отменяет любое текущее подключение и сбрасывает форму."""
         if self._checker is not None and self._checker.isRunning():
-            self.log_message.emit("⏹ Проверка сессии отменена пользователем.")
+            self.log_message.emit("⏹ Проверка сессии отменена.")
             self._checker.quit()
-            self._checker.wait(2000)  # ждём максимум 2 сек
+            self._checker.wait(2000)
             self._checker = None
+        if self._worker is not None and self._worker.isRunning():
+            self.log_message.emit("⏹ Подключение отменено.")
+            self._worker.quit()
+            self._worker.wait(3000)
+            self._worker = None
+        if self._tdata_worker is not None and self._tdata_worker.isRunning():
+            self._tdata_worker.quit()
+            self._tdata_worker.wait(2000)
+            self._tdata_worker = None
         self._cancel_check_btn.setVisible(False)
         self._set_controls_enabled(True)
         self._set_status("idle", "Не авторизован")
-# СТАЛО:
+        self.character_state.emit("idle")
+        self.character_tip.emit("")
+
     @Slot()
     def _on_checker_finished(self) -> None:
         self._cancel_check_btn.setVisible(False)
@@ -962,8 +969,6 @@ class AuthScreen(QWidget):
     def _on_session_restored(self, client, user) -> None:
         name = getattr(user, "first_name", "пользователь")
         self._set_status("success", f"Сессия: {name}")
-        # Форма остаётся заблокированной — повторный вход не нужен,
-        # и предотвращает гонку AuthWorker ∩ ChatsWorker за сессионный файл
         self._set_controls_enabled(False)
         self.character_state.emit("success")
         self.character_tip.emit(f"Добро пожаловать, {name}! 👋")
