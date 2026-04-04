@@ -22,9 +22,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import socket  # Добавили для патча
+from pathlib import Path
 
-import socket
 
 # Заглушить DirectWrite-предупреждения о шрифтах — должно быть ДО QApplication
 os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts=false"
@@ -40,11 +39,32 @@ from ui.main_window import create_main_window
 
 logger = logging.getLogger(__name__)
 
+def _ensure_runtime_workdir() -> None:
+    """
+    Для frozen-сборок задаёт предсказуемую рабочую папку в HOME.
+
+    На macOS запуск через Finder часто стартует из "/" (или translocation path),
+    из-за чего относительные пути вида "output" становятся недоступны для записи.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+
+    app_workdir = Path.home() / "RozittaParser"
+    app_workdir.mkdir(parents=True, exist_ok=True)
+    os.chdir(app_workdir)
+    logger.info("Runtime working directory: %s", app_workdir)
+
 
 def main() -> None:
     # ── 1. Логирование ────────────────────────────────────────────────
     # Обязательно ДО создания QApplication и любых импортов Qt-виджетов.
+    # В frozen-сборке сначала переводим cwd в writable-папку, иначе setup_logging
+    # может попытаться создать /rozitta.log и упасть при запуске из Finder.
+    _ensure_runtime_workdir()
+    # setup_logging обязательно до создания QApplication и UI.
     setup_logging(level=logging.INFO, log_file="rozitta.log")
+    if getattr(sys, "frozen", False):
+        logger.info("Runtime working directory: %s", os.getcwd())
     logger.info("Rozitta Parser starting up")
 
     # ── 2. QApplication ───────────────────────────────────────────────
