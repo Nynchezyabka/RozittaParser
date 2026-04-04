@@ -1,0 +1,5 @@
+#  Зависимости только для сборки бинарников через Nuitka (CI, dev).
+nuitka>=2.3
+ordered-set
+zstandard
+imageio

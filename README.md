@@ -1,6 +1,6 @@
-# 🐸 Rozitta Parser
-## 🗺️ [Интерактивная карта проекта](https://nynchezyabka.github.io/RozittaParser/map.html)
-English | [Русский](#-rozitta-parser-v40)
+# 🐸 Rozitta Parser 
+## 🗺️ [Интерактивная карта проекта (с заделом на две будущих версии интерфейса)](https://nynchezyabka.github.io/RozittaParser/map.html)
+[English](#rozitta-parser) | [🇷🇺 Русский](#rozitta-parser-v15)
 
 > Back up and explore your Telegram chats — locally, privately, offline.
 **Rozitta Parser** is a desktop GUI app that exports messages, media, 
@@ -16,7 +16,7 @@ groups, channels, forums with topics, and private conversations.
   for NotebookLM and other AI tools
 - 📝 **DOCX** — readable documents, split by day / month / post
 - 🌐 **HTML** — clean web‑ready export with message structure
-- 🎙️ **Speech-to-Text** — transcribe voice messages and video notes 
+- 🎙️ **Speech-to-Text** — transcribe voice messages 
   via local Whisper (no cloud, no API key)
 - 🖼️ **Media archive** — photos, videos, files with folder structure
 - 🔒 **100% local** — sessions and data never leave your computer
@@ -46,7 +46,7 @@ Requires Python 3.10–3.13. Python 3.14 requires Microsoft C++ Build Tools (see
 
 
 # 🐸 Rozitta Parser v1.5
-English | [Русский](#-rozitta-parser-v15)
+[🇬🇧 English](#rozitta-parser) | [Русский](#rozitta-parser-v15)
 
 > Сохраняйте и изучайте свои Telegram‑чаты — локально, приватно, офлайн.
 
@@ -60,7 +60,7 @@ English | [Русский](#-rozitta-parser-v15)
 - 🧠 **AI-Ready** — Markdown с настраиваемым размером чанка (по умолчанию 300k слов) для NotebookLM
 - 📝 **DOCX** — читаемые документы с разбивкой по дням/месяцам/постам
 - 🌐 **HTML** — чистая веб‑страница (в разработке, поля сообщений дорабатываются)
-- 🎙️ **Speech-to-Text** — расшифровка голосовых и кружочков через локальный Whisper (без облака)
+- 🎙️ **Speech-to-Text** — расшифровка голосовых через локальный Whisper (без облака)
 - 🔒 **Всё локально** — сессии и данные не покидают ваш компьютер
 
 ---
@@ -157,12 +157,12 @@ Rozitta Parser предназначена для **личного использ
 
 ## 📋 Планы на следующие версии
 
-- Доработка HTML экспорта (все поля сообщений)
-- Исправление импорта tdata через прокси
+- Доработка списка активных участников с возможностью экспорта в отдельный файл
+- Экспорт постов с комментариями отдельными файлами
+- STT видео и кружочков
 - Тестирование на macOS и Linux
 - Английская версия интерфейса
 - Лайт-версия для начинающих пользователей
-- Отображение списка активных участников
 - Обновление интерактивной карты проекта
 
 ---
