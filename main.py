@@ -54,6 +54,30 @@ def _ensure_runtime_workdir() -> None:
     os.chdir(app_workdir)
     logger.info("Runtime working directory: %s", app_workdir)
 
+def _resolve_icon_path() -> str | None:
+    """Ищет иконку приложения в наиболее вероятных местах (dev/frozen)."""
+    roots = [Path(__file__).parent]
+    if getattr(sys, "frozen", False):
+        roots.extend([
+            Path(sys.executable).resolve().parent,          # .../Contents/MacOS
+            Path(sys.executable).resolve().parents[1],      # .../Contents
+            Path(sys.executable).resolve().parents[1] / "Resources",  # .../Contents/Resources
+        ])
+
+    candidates = (
+        Path("assets/rozitta_idle.icns"),
+        Path("assets/rozitta_idle.ico"),
+        Path("assets/rozitta_idle.png"),
+        Path("rozitta_idle.icns"),
+        Path("rozitta_idle.ico"),
+        Path("rozitta_idle.png"),
+    )
+    for root in roots:
+        for rel in candidates:
+            p = (root / rel).resolve()
+            if p.exists():
+                return str(p)
+    return None
 
 def main() -> None:
     # ── 1. Логирование ────────────────────────────────────────────────
@@ -72,6 +96,12 @@ def main() -> None:
     app.setApplicationName("Rozitta Parser")
     app.setApplicationVersion("3.3")
     app.setOrganizationName("Rozitta")
+    icon_path = _resolve_icon_path()
+    if icon_path:
+        app.setWindowIcon(QIcon(icon_path))
+        logger.info("Application icon loaded: %s", icon_path)
+    else:
+        logger.warning("Application icon not found")
 
     # ── 3. Конфигурация ───────────────────────────────────────────────
     try:
