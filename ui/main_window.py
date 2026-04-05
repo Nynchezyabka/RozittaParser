@@ -827,11 +827,7 @@ class SettingsPanel(QWidget):
         # Теги участников
         for user in users:
             uid  = user.get("id", 0)
-            name = (
-                user.get("username")
-                or user.get("first_name")
-                or str(uid)
-            )
+            name = user.get("name", str(uid))
             tag = UserTag(name, user_id=uid, is_all=False, selected=False)
             self._tags_layout.addWidget(tag)
             self._user_tags.append(tag)
