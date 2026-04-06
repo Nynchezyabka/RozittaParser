@@ -86,6 +86,13 @@ source .venv/bin/activate     # Linux/macOS
 pip install -r requirements.txt
 python main.py
 ```
+**Для macOS:**  
+Откройте **Терминал** и выполните команду:
+
+```bash
+xattr -cr RozittaParser-macOS-Intel-x64.app
+```
+На некоторых версиях macOS может открыться стандартно: в настройках безопасности нажать на кнопку "всё равно открыть".
 
 **Требуется Python 3.10–3.13.** Python 3.14 требует установки Microsoft C++ Build Tools (см. [issue #35](https://github.com/Nynchezyabka/RozittaParser/issues/35)).
 
