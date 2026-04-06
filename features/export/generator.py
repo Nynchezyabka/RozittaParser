@@ -150,6 +150,67 @@ def _topic_suffix(topic_id: Optional[int]) -> str:
     return f"_topic{topic_id}" if topic_id is not None else ""
 
 
+def _apply_user_filter(
+    rows: List[tuple],
+    user_ids: List[int],
+    mode: str,
+) -> List[tuple]:
+    """
+    Фильтрует строки сообщений по участникам.
+
+    Вызывается внутри генераторов когда задан user_ids.
+    Работает поверх уже загруженного списка строк (без повторного запроса к БД).
+
+    Режимы:
+        "messages-only" — оставить только сообщения от user_ids.
+        "all-threads"   — оставить все сообщения в тредах (цепочках ответов),
+                          где хотя бы одно сообщение принадлежит user_ids.
+                          Алгоритм (1-уровневый, покрывает ~99% реальных чатов):
+                            1. Для каждого сообщения от user_ids вычислить
+                               «корень треда»: reply_to_msg_id (если есть) или
+                               message_id самого сообщения.
+                            2. Включить все сообщения, чей message_id или
+                               reply_to_msg_id совпадает с найденным корнем.
+
+    Args:
+        rows:     Список строк из DBManager.get_messages() (полный, без фильтра).
+        user_ids: Список ID участников для фильтрации.
+        mode:     "messages-only" | "all-threads".
+
+    Returns:
+        Отфильтрованный список строк (тот же тип tuple).
+    """
+    if not user_ids or not rows:
+        return rows
+
+    uid_set = set(user_ids)
+
+    if mode == "messages-only":
+        return [r for r in rows if r[_COL_USER_ID] in uid_set]
+
+    # ── "all-threads" ──────────────────────────────────────────────────────
+    # Шаг 1: собрать корни тредов с участием нужных пользователей
+    thread_roots: set[int] = set()
+    for r in rows:
+        if r[_COL_USER_ID] not in uid_set:
+            continue
+        reply_to = r[_COL_REPLY_TO]
+        if reply_to:
+            thread_roots.add(reply_to)
+        else:
+            thread_roots.add(r[_COL_MESSAGE_ID])
+
+    if not thread_roots:
+        return []
+
+    # Шаг 2: включить все сообщения из этих тредов
+    return [
+        r for r in rows
+        if r[_COL_MESSAGE_ID] in thread_roots
+        or r[_COL_REPLY_TO] in thread_roots
+    ]
+
+
 # ==============================================================================
 # DocxGenerator
 # ==============================================================================
@@ -189,12 +250,20 @@ class DocxGenerator:
         split_mode:       str           = "none",
         topic_id:         Optional[int] = None,
         user_id:          Optional[int] = None,
+        user_ids:         Optional[List[int]] = None,
+        user_filter_mode: str           = "messages-only",
         include_comments: bool          = False,
         period_label:     str           = "fullchat",
         log:              _LogCallback  = None,
     ) -> List[str]:
         """
         Главный метод: генерирует DOCX в соответствии с split_mode.
+
+        Args:
+            user_ids:         Список ID участников (None = все).
+            user_filter_mode: "messages-only" — только сообщения участников;
+                              "all-threads"   — все треды с их участием.
+            user_id:          Устаревший однозначный фильтр (backward compat).
 
         Returns:
             Список путей к созданным DOCX-файлам. Пустой список при ошибке.
@@ -227,24 +296,43 @@ class DocxGenerator:
         self._log(f"📄 Генерация DOCX (режим: {split_mode})...")
         logger.info(
             "export: generate chat_id=%s split=%s topic=%s user=%s comments=%s",
-            chat_id, split_mode, topic_id, user_id, include_comments,
+            chat_id, split_mode, topic_id, user_ids or user_id, include_comments,
         )
+
+        # Backward compat: если user_ids не задан, строим из user_id
+        effective_user_ids = user_ids or ([user_id] if user_id else None)
 
         try:
             if split_mode == "post":
+                # all-threads неприменимо к split_mode=post — используем user_id
+                post_uid = effective_user_ids[0] if (
+                    effective_user_ids and user_filter_mode == "messages-only"
+                ) else None
                 files = self._generate_by_posts(
                     chat_id          = chat_id,
                     topic_id         = topic_id,
-                    user_id          = user_id,
+                    user_id          = post_uid,
                     include_comments = include_comments,
                 )
             else:
-                messages = self._db.get_messages(
-                    chat_id          = chat_id,
-                    topic_id         = topic_id,
-                    user_id          = user_id,
-                    include_comments = include_comments,
-                )
+                # all-threads или несколько участников → fetch all + фильтр в Python
+                if effective_user_ids and (
+                    user_filter_mode == "all-threads" or len(effective_user_ids) > 1
+                ):
+                    messages = self._db.get_messages(
+                        chat_id          = chat_id,
+                        topic_id         = topic_id,
+                        include_comments = include_comments,
+                    )
+                    messages = _apply_user_filter(messages, effective_user_ids, user_filter_mode)
+                else:
+                    single_uid = effective_user_ids[0] if effective_user_ids else None
+                    messages = self._db.get_messages(
+                        chat_id          = chat_id,
+                        topic_id         = topic_id,
+                        user_id          = single_uid,
+                        include_comments = include_comments,
+                    )
                 if not messages:
                     raise EmptyDataError(chat_id, topic_id)
 
@@ -754,16 +842,22 @@ class JsonGenerator:
         chat_id:              int,
         chat_title:           str,
         *,
-        topic_id:             Optional[int]  = None,      # ← задача 2
-        user_id:              Optional[int]  = None,
-        include_comments:     bool           = False,
-        ai_split:             bool           = False,
-        period_label:         str            = "fullchat", # ← задача 3
-        ai_split_chunk_words: int            = 300_000,    # ← задача 4
-        log:                  _LogCallback   = lambda _: None,
+        topic_id:             Optional[int]       = None,
+        user_id:              Optional[int]       = None,
+        user_ids:             Optional[List[int]] = None,
+        user_filter_mode:     str                 = "messages-only",
+        include_comments:     bool                = False,
+        ai_split:             bool                = False,
+        period_label:         str                 = "fullchat",
+        ai_split_chunk_words: int                 = 300_000,
+        log:                  _LogCallback        = lambda _: None,
     ) -> List[str]:
         """
         Основная точка входа. Строит JSON и сохраняет на диск.
+
+        Args:
+            user_ids:         Список ID участников (None = все).
+            user_filter_mode: "messages-only" | "all-threads".
 
         Имя файла:
             <chat>_topic{N}_{period}_history.json   (с topic_id)
@@ -780,12 +874,21 @@ class JsonGenerator:
         os.makedirs(self._output_dir, exist_ok=True)
 
         log("📋 Загружаю сообщения из БД для JSON-экспорта...")
-        rows = self._db.get_messages(
-            chat_id,
-            topic_id         = topic_id,
-            user_id          = user_id,
-            include_comments = include_comments,
-        )
+        effective_uids = user_ids or ([user_id] if user_id else None)
+        if effective_uids and (user_filter_mode == "all-threads" or len(effective_uids) > 1):
+            rows = self._db.get_messages(
+                chat_id,
+                topic_id         = topic_id,
+                include_comments = include_comments,
+            )
+            rows = _apply_user_filter(rows, effective_uids, user_filter_mode)
+        else:
+            rows = self._db.get_messages(
+                chat_id,
+                topic_id         = topic_id,
+                user_id          = effective_uids[0] if effective_uids else None,
+                include_comments = include_comments,
+            )
 
         if not rows:
             raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
@@ -893,16 +996,22 @@ class MarkdownGenerator:
         chat_id:              int,
         chat_title:           str,
         *,
-        topic_id:             Optional[int]  = None,      # ← задача 2
-        user_id:              Optional[int]  = None,
-        include_comments:     bool           = False,
-        ai_split:             bool           = False,
+        topic_id:             Optional[int]       = None,
+        user_id:              Optional[int]       = None,
+        user_ids:             Optional[List[int]] = None,
+        user_filter_mode:     str                 = "messages-only",
+        include_comments:     bool                = False,
+        ai_split:             bool                = False,
         period_label:         str,
-        ai_split_chunk_words: int            = 300_000,    # ← задача 4
-        log:                  _LogCallback   = lambda _: None,
+        ai_split_chunk_words: int                 = 300_000,
+        log:                  _LogCallback        = lambda _: None,
     ) -> List[str]:
         """
         Основная точка входа. Строит Markdown и сохраняет на диск.
+
+        Args:
+            user_ids:         Список ID участников (None = все).
+            user_filter_mode: "messages-only" | "all-threads".
 
         Имя файла:
             <chat>_topic{N}_{period}_history.md   (с topic_id)
@@ -918,12 +1027,21 @@ class MarkdownGenerator:
         os.makedirs(self._output_dir, exist_ok=True)
 
         log("📋 Загружаю сообщения из БД для Markdown-экспорта...")
-        rows = self._db.get_messages(
-            chat_id,
-            topic_id         = topic_id,
-            user_id          = user_id,
-            include_comments = include_comments,
-        )
+        effective_uids = user_ids or ([user_id] if user_id else None)
+        if effective_uids and (user_filter_mode == "all-threads" or len(effective_uids) > 1):
+            rows = self._db.get_messages(
+                chat_id,
+                topic_id         = topic_id,
+                include_comments = include_comments,
+            )
+            rows = _apply_user_filter(rows, effective_uids, user_filter_mode)
+        else:
+            rows = self._db.get_messages(
+                chat_id,
+                topic_id         = topic_id,
+                user_id          = effective_uids[0] if effective_uids else None,
+                include_comments = include_comments,
+            )
 
         if not rows:
             raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
@@ -1168,16 +1286,22 @@ class HtmlGenerator:
         chat_id:              int,
         chat_title:           str,
         *,
-        topic_id:             Optional[int]  = None,
-        user_id:              Optional[int]  = None,
-        include_comments:     bool           = False,
-        ai_split:             bool           = False,
-        period_label:         str            = "fullchat",
-        ai_split_chunk_words: int            = 300_000,
-        log:                  _LogCallback   = lambda _: None,
+        topic_id:             Optional[int]       = None,
+        user_id:              Optional[int]       = None,
+        user_ids:             Optional[List[int]] = None,
+        user_filter_mode:     str                 = "messages-only",
+        include_comments:     bool                = False,
+        ai_split:             bool                = False,
+        period_label:         str                 = "fullchat",
+        ai_split_chunk_words: int                 = 300_000,
+        log:                  _LogCallback        = lambda _: None,
     ) -> List[str]:
         """
         Основная точка входа. Строит HTML и сохраняет на диск.
+
+        Args:
+            user_ids:         Список ID участников (None = все).
+            user_filter_mode: "messages-only" | "all-threads".
 
         Имя файла:
             <chat>_topic{N}_{period}_history.html   (с topic_id)
@@ -1194,12 +1318,21 @@ class HtmlGenerator:
         os.makedirs(self._output_dir, exist_ok=True)
 
         log("📋 Загружаю сообщения из БД для HTML-экспорта...")
-        rows = self._db.get_messages(
-            chat_id,
-            topic_id         = topic_id,
-            user_id          = user_id,
-            include_comments = include_comments,
-        )
+        effective_uids = user_ids or ([user_id] if user_id else None)
+        if effective_uids and (user_filter_mode == "all-threads" or len(effective_uids) > 1):
+            rows = self._db.get_messages(
+                chat_id,
+                topic_id         = topic_id,
+                include_comments = include_comments,
+            )
+            rows = _apply_user_filter(rows, effective_uids, user_filter_mode)
+        else:
+            rows = self._db.get_messages(
+                chat_id,
+                topic_id         = topic_id,
+                user_id          = effective_uids[0] if effective_uids else None,
+                include_comments = include_comments,
+            )
 
         if not rows:
             raise EmptyDataError(f"Нет сообщений для чата {chat_id}")

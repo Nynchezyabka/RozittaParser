@@ -346,6 +346,9 @@ class SettingsPanel(QWidget):
         self._split_mode:   str             = "none"
         self._split_buttons: list[SplitModeButton] = []
         self._parsing:      bool            = False
+        # Хранилище участников для refresh без повторного запроса к Telegram
+        self._raw_users:    list[dict]      = []
+        self._member_counts: dict           = {}   # {user_id: msg_count}
         self._build()
         if cfg:
             self._restore_from_cfg(cfg)
@@ -596,6 +599,30 @@ class SettingsPanel(QWidget):
         self._load_members_btn.clicked.connect(self._on_load_members_clicked)
         layout.addWidget(self._load_members_btn)
 
+        # Кнопка экспорта списка участников в MD
+        self._export_members_btn = QPushButton("📋  Экспортировать список")
+        self._export_members_btn.setEnabled(False)
+        self._export_members_btn.setFixedHeight(34)
+        self._export_members_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._export_members_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {OVERLAY2_HEX};
+                border: 1px solid {BORDER_HEX};
+                border-radius: {RADIUS_MD}px;
+                color: {TEXT_SECONDARY};
+                font-size: 12px;
+            }}
+            QPushButton:hover:enabled {{
+                background-color: {OVERLAY_HEX};
+                color: {TEXT_PRIMARY};
+            }}
+            QPushButton:disabled {{
+                color: rgba(255,255,255,0.25);
+            }}
+        """)
+        self._export_members_btn.clicked.connect(self._on_export_members_clicked)
+        layout.addWidget(self._export_members_btn)
+
         # Контейнер тегов (прокручиваемый)
         self._tags_scroll = QScrollArea()
         self._tags_scroll.setFixedHeight(56)
@@ -800,6 +827,35 @@ class SettingsPanel(QWidget):
         if self._current_chat:
             self.load_members_requested.emit(self._current_chat)
 
+    def _on_export_members_clicked(self) -> None:
+        """Экспортирует список участников в Markdown-файл (синхронно, без воркера)."""
+        import os
+        from features.export.participants import export_participants_md
+
+        if not self._current_chat or not self._raw_users:
+            self.log_message.emit("⚠️ Нет участников для экспорта — загрузите список")
+            return
+
+        chat_title  = self._current_chat.get("title", "chat")
+        output_dir  = str(self._cfg.output_dir) if self._cfg else "output"
+
+        # Передаём счётчики если они есть (будет добавлена колонка и сортировка)
+        counts = self._member_counts if self._member_counts else None
+
+        try:
+            path = export_participants_md(
+                users      = self._raw_users,
+                chat_title = chat_title,
+                output_dir = output_dir,
+                counts     = counts,
+            )
+            suffix = f" (с кол-вом сообщений)" if counts else ""
+            self.log_message.emit(
+                f"✅ Список участников сохранён{suffix}: {os.path.basename(path)}"
+            )
+        except Exception as exc:
+            self.log_message.emit(f"❌ Ошибка экспорта участников: {exc}")
+
     # ──────────────────────────────────────────────────────────────────────
     # ПУБЛИЧНЫЙ API (совместим с ParseSettingsScreen)
     # ──────────────────────────────────────────────────────────────────────
@@ -812,7 +868,94 @@ class SettingsPanel(QWidget):
         self._load_members_btn.setEnabled(True)
 
     def populate_members(self, users: list[dict]) -> None:
-        # Очистить старые теги
+        """
+        Получает список участников от MembersWorker, сохраняет и отображает.
+
+        Сразу пытается загрузить счётчики из локальной БД (если она уже есть
+        от предыдущего парсинга). После парсинга вызови refresh_member_counts()
+        чтобы пересортировать список с актуальными данными.
+        """
+        self._raw_users = list(users)
+        # Загружаем счётчики из БД (может вернуть пустой dict если БД ещё нет)
+        self._member_counts = self._load_member_counts()
+        self._rebuild_member_tags()
+        self.log_message.emit(f"Загружено участников: {len(users)}")
+        self._export_members_btn.setEnabled(bool(users))
+
+    def refresh_member_counts(self) -> None:
+        """
+        Обновляет счётчики сообщений из локальной БД и пересортирует теги.
+
+        Вызывается из MainWindow._on_parse_finished() после завершения парсинга.
+        Если список участников ещё не загружен — no-op.
+        """
+        if not self._raw_users:
+            return
+        new_counts = self._load_member_counts()
+        if new_counts == self._member_counts:
+            return  # ничего не изменилось
+        self._member_counts = new_counts
+        # Запомним выбранные теги по user_id чтобы восстановить после пересборки
+        selected_ids = {
+            tag.user_id for tag in self._user_tags
+            if not tag.is_all and tag.isChecked()
+        }
+        self._rebuild_member_tags(restore_selected=selected_ids)
+        if new_counts:
+            top_user = max(new_counts, key=new_counts.get)
+            top_count = new_counts[top_user]
+            self.log_message.emit(
+                f"📊 Статистика обновлена: {len(new_counts)} активных участников, "
+                f"топ — {top_count} сообщ."
+            )
+
+    def _load_member_counts(self) -> dict:
+        """
+        Читает счётчики сообщений из локальной SQLite БД для текущего чата.
+        Возвращает пустой dict если БД не существует или чат не выбран.
+        """
+        if not self._current_chat or not self._cfg:
+            return {}
+        try:
+            import os
+            from core.utils import sanitize_filename
+            from config import DB_FILENAME
+            from features.export.participants import get_user_message_counts
+
+            chat_title = self._current_chat.get("title", "")
+            chat_id    = self._current_chat.get("id")
+            if not chat_title or not chat_id:
+                return {}
+            db_path = os.path.join(
+                str(self._cfg.output_dir),
+                sanitize_filename(chat_title),
+                DB_FILENAME,
+            )
+            return get_user_message_counts(db_path, chat_id)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).debug(
+                "SettingsPanel._load_member_counts: %s", exc
+            )
+            return {}
+
+    def _rebuild_member_tags(
+        self,
+        restore_selected: "set[int] | None" = None,
+    ) -> None:
+        """
+        Перестраивает виджеты тегов участников.
+
+        Если self._member_counts не пуст — добавляет к имени счётчик и
+        сортирует по убыванию активности.
+
+        Args:
+            restore_selected: Множество user_id чьи теги нужно оставить
+                              выбранными (используется при refresh).
+        """
+        from features.export.participants import enrich_and_sort_users
+
+        # Очистить старые виджеты
         self._user_tags.clear()
         while self._tags_layout.count():
             item = self._tags_layout.takeAt(0)
@@ -824,20 +967,34 @@ class SettingsPanel(QWidget):
         self._tags_layout.addWidget(all_tag)
         self._user_tags.append(all_tag)
 
-        # Теги участников
-        for user in users:
+        # Обогащаем и сортируем если есть счётчики
+        has_counts = bool(self._member_counts)
+        if has_counts:
+            display_users = enrich_and_sort_users(self._raw_users, self._member_counts)
+        else:
+            display_users = self._raw_users
+
+        for user in display_users:
             uid  = user.get("id", 0)
-            name = (
+            base_name = (
                 user.get("username")
+                or user.get("name")
                 or user.get("first_name")
                 or str(uid)
             )
-            tag = UserTag(name, user_id=uid, is_all=False, selected=False)
+            # Добавляем счётчик в отображаемое имя если есть данные
+            if has_counts:
+                count     = user.get("msg_count", self._member_counts.get(uid, 0))
+                label     = f"{base_name} ({count:,})" if count else base_name
+            else:
+                label = base_name
+
+            is_selected = (restore_selected is not None and uid in restore_selected)
+            tag = UserTag(label, user_id=uid, is_all=False, selected=is_selected)
             self._tags_layout.addWidget(tag)
             self._user_tags.append(tag)
 
         self._tags_layout.addStretch(1)
-        self.log_message.emit(f"Загружено участников: {len(users)}")
 
     def get_params(self) -> Optional[ParseParams]:
         if self._current_chat is None:
@@ -1745,6 +1902,9 @@ class MainWindow(QMainWindow):
         count = getattr(result, "messages_count", "?")
         self._log.append_success(f"✅ Парсинг завершён: {count} сообщений")
 
+        # Обновить счётчики участников если список уже загружен
+        self._settings_screen.refresh_member_counts()
+
         # Запускаем STT только если хотя бы один чип активен
         params = self._settings_screen.get_params()
         stt_enabled = params and (params.stt_voice or params.stt_videomessage or params.stt_video)
@@ -1849,6 +2009,10 @@ class MainWindow(QMainWindow):
         params = self._settings_screen.get_params()
         split_mode = params.split_mode if params else "none"
 
+        # Участники: передаём список и режим из SettingsPanel
+        user_ids_export         = params.user_ids         if params else None
+        user_filter_mode_export = params.user_filter_mode if params else "messages-only"
+
         chat_title = (
             getattr(collect_result, "chat_title", None)
             or chat.get("title", "export")
@@ -1865,6 +2029,8 @@ class MainWindow(QMainWindow):
             chat_title=chat_title,
             split_mode=split_mode,
             topic_id=chat.get("selected_topic_id"),
+            user_ids=user_ids_export,
+            user_filter_mode=user_filter_mode_export,
             include_comments=params.include_comments if params else False,
             output_dir=chat_dir,
             db_path=db_path,
@@ -1893,6 +2059,7 @@ class MainWindow(QMainWindow):
         self._log.append_success(f"✅ Экспорт завершён: {count} файл(ов)")
         for p in paths:
             self._log.append_success(f"   📄 {p}")
+            self._greeting_sound.play()
         self._set_status("online", "Авторизован")
         self._show_toast(f"Готово! Создано {count} файл(ов)", "success")
         self._set_step(3)

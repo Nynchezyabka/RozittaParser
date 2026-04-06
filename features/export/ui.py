@@ -39,7 +39,7 @@ features/export/ui.py — ExportWorker: QThread-обёртка над DocxGenera
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
 from PySide6.QtCore import QThread, Signal
@@ -78,20 +78,31 @@ class ExportParams:
     """
     chat_id:          int
     chat_title:       str
-    period_label:     str           = "fullchat"
-    split_mode:       str           = "none"
-    topic_id:         Optional[int] = None
-    user_id:          Optional[int] = None
-    include_comments: bool          = False
-    output_dir:       str           = "output"
-    db_path:          str           = "output/telegram_archive.db"
-    export_formats:   list          = None  # ["docx"] | ["json"] | ["docx","json","html","md"]
-    ai_split:         bool          = False  # разбивать MD/JSON на чанки по 300k слов
-    ai_split_chunk_words: int = 300_000
+    period_label:     str                 = "fullchat"
+    split_mode:       str                 = "none"
+    topic_id:         Optional[int]       = None
+    # user_id: устаревший однозначный фильтр (backward compat).
+    user_id:          Optional[int]       = None
+    # user_ids: список выбранных участников (поддерживает несколько).
+    user_ids:         Optional[List[int]] = None
+    # user_filter_mode:
+    #   "messages-only" → экспортировать только сообщения выбранных участников
+    #   "all-threads"   → экспортировать целые цепочки ответов с их участием
+    user_filter_mode: str                 = "messages-only"
+    include_comments: bool                = False
+    output_dir:       str                 = "output"
+    db_path:          str                 = "output/telegram_archive.db"
+    export_formats:   list                = None  # ["docx"] | ["json"] | ["docx","json","html","md"]
+    ai_split:         bool                = False  # разбивать MD/JSON/HTML на чанки
+    ai_split_chunk_words: int             = 300_000
 
     def __post_init__(self):
         if self.export_formats is None:
             self.export_formats = ["docx"]
+        # Backward compat: заполнить user_id из user_ids при single-user messages-only
+        if self.user_id is None and self.user_ids and self.user_filter_mode == "messages-only":
+            if len(self.user_ids) == 1:
+                self.user_id = self.user_ids[0]
 
 
 # ==============================================================================
@@ -154,9 +165,14 @@ class ExportWorker(QThread):
         p = self._params
         formats = p.export_formats or ["docx"]
         logger.info(
-            "ExportWorker: started chat_id=%s split=%s topic=%s formats=%s",
-            p.chat_id, p.split_mode, p.topic_id, formats,
+            "ExportWorker: started chat_id=%s split=%s topic=%s formats=%s user_ids=%s mode=%s",
+            p.chat_id, p.split_mode, p.topic_id, formats, p.user_ids, p.user_filter_mode,
         )
+
+        # Логируем фильтр участников если задан
+        if p.user_ids:
+            mode_label = "цепочки с участием" if p.user_filter_mode == "all-threads" else "только сообщения"
+            self._log(f"👤 Фильтр участников ({mode_label}): {len(p.user_ids)} чел.")
 
         self._log(f"📄 Экспорт (режим: {p.split_mode}, форматы: {', '.join(f.upper() for f in formats)})...")
         self._log(f"🗄️ Читаем из БД: {p.db_path}")
@@ -175,6 +191,8 @@ class ExportWorker(QThread):
                         split_mode       = p.split_mode,
                         topic_id         = p.topic_id,
                         user_id          = p.user_id,
+                        user_ids         = p.user_ids,
+                        user_filter_mode = p.user_filter_mode,
                         include_comments = p.include_comments,
                         period_label     = p.period_label,
                         log              = self._log,
@@ -185,14 +203,16 @@ class ExportWorker(QThread):
                 if "json" in formats:
                     jgen = JsonGenerator(db=db, output_dir=p.output_dir)
                     json_paths = jgen.generate(
-                        chat_id          = p.chat_id,
-                        chat_title       = p.chat_title,
-                        topic_id         = p.topic_id,
-                        user_id          = p.user_id,
-                        include_comments = p.include_comments,
-                        ai_split         = p.ai_split,
-                        period_label     = p.period_label,
-                        log              = self._log,
+                        chat_id              = p.chat_id,
+                        chat_title           = p.chat_title,
+                        topic_id             = p.topic_id,
+                        user_id              = p.user_id,
+                        user_ids             = p.user_ids,
+                        user_filter_mode     = p.user_filter_mode,
+                        include_comments     = p.include_comments,
+                        ai_split             = p.ai_split,
+                        period_label         = p.period_label,
+                        log                  = self._log,
                         ai_split_chunk_words = p.ai_split_chunk_words,
                     )
                     all_files.extend(json_paths)
@@ -201,15 +221,17 @@ class ExportWorker(QThread):
                 if "md" in formats:
                     mdgen = MarkdownGenerator(db=db, output_dir=p.output_dir)
                     md_paths = mdgen.generate(
-                        chat_id          = p.chat_id,
-                        chat_title       = p.chat_title,
-                        topic_id         = p.topic_id,
-                        user_id          = p.user_id,
-                        include_comments = p.include_comments,
-                        ai_split         = p.ai_split,
-                        period_label     = p.period_label,
+                        chat_id              = p.chat_id,
+                        chat_title           = p.chat_title,
+                        topic_id             = p.topic_id,
+                        user_id              = p.user_id,
+                        user_ids             = p.user_ids,
+                        user_filter_mode     = p.user_filter_mode,
+                        include_comments     = p.include_comments,
+                        ai_split             = p.ai_split,
+                        period_label         = p.period_label,
                         ai_split_chunk_words = p.ai_split_chunk_words,
-                        log              = self._log,
+                        log                  = self._log,
                     )
                     all_files.extend(md_paths)
 
@@ -221,6 +243,8 @@ class ExportWorker(QThread):
                         chat_title           = p.chat_title,
                         topic_id             = p.topic_id,
                         user_id              = p.user_id,
+                        user_ids             = p.user_ids,
+                        user_filter_mode     = p.user_filter_mode,
                         include_comments     = p.include_comments,
                         ai_split             = p.ai_split,
                         period_label         = p.period_label,
