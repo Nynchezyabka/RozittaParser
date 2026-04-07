@@ -698,7 +698,6 @@ class CollapsibleSection(QWidget):
         root.setContentsMargins(0, 0, 0, 4)
         root.setSpacing(3)
 
-        # self._hdr = SectionHeaderWidget(chat_type, count=0, expanded=True)
         self._hdr = SectionHeaderWidget(chat_type, count=0, expanded=False)
         self._hdr.toggled.connect(lambda exp: self._body.setVisible(exp))
         root.addWidget(self._hdr)
