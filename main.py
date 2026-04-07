@@ -89,7 +89,7 @@ def main() -> None:
     setup_logging(level=logging.INFO, log_file="rozitta.log")
     if getattr(sys, "frozen", False):
         logger.info("Runtime working directory: %s", os.getcwd())
-    logger.info("Rozitta Parser starting up")
+    # logger.info("Rozitta Parser starting up")
 
     # ── 2. QApplication ───────────────────────────────────────────────
     app = QApplication(sys.argv)
@@ -145,6 +145,7 @@ def main() -> None:
         window = create_main_window(cfg, db)
         window.show()
         logger.info("MainWindow shown, entering Qt event loop")
+        logger.qwaq('Кваканье')
         exit_code = app.exec()
     except Exception as exc:
         logger.exception("Unhandled exception in main window")

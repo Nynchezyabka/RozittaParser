@@ -988,12 +988,6 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._set_step(0)
 
-        from datetime import datetime
-        logger.info("")
-        logger.info("=" * 70)
-        logger.info("  ROZITTA PARSER — ЗАПУСК  %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        logger.info("=" * 70)
-        logger.info("")
         logger.info("MainWindow initialized (v4.0 redesign)")
 
     # ──────────────────────────────────────────────────────────────────────
@@ -1889,6 +1883,7 @@ class MainWindow(QMainWindow):
         self._log.append_success(f"✅ Экспорт завершён: {count} файл(ов)")
         for p in paths:
             self._log.append_success(f"   📄 {p}")
+        self._greeting_sound.play()
         self._set_status("online", "Авторизован")
         self._show_toast(f"Готово! Создано {count} файл(ов)", "success")
         self._set_step(3)

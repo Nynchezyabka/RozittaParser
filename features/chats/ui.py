@@ -901,7 +901,7 @@ class ChatsScreen(QWidget):
         self._chats_widget.populate(chats)
         self._status.setText(f"{len(chats)} чатов")
         self._set_loading(False)
-        self.log_message.emit(f"✅ Загружено {len(chats)} чатов")
+        # self.log_message.emit(f"✅ Загружено {len(chats)} чатов")
         self.character_state.emit("success")
 
     def inject_topics(self, topics: dict) -> None:

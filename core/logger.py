@@ -41,7 +41,8 @@ from typing import Optional
 DEFAULT_LOG_FILE    = "rozitta_parser.log"
 DEFAULT_MAX_BYTES   = 5 * 1024 * 1024   # 5 MB на файл
 DEFAULT_BACKUP_COUNT = 3                  # хранить 3 ротированных файла
-ROOT_LOGGER_NAME    = "rozitta"          # корневой логгер проекта
+# ROOT_LOGGER_NAME    = "rozitta"          # корневой логгер проекта
+ROOT_LOGGER_NAME    = ""          # корневой логгер проекта
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +60,20 @@ _LEVEL_COLORS: dict[int, str] = {
     logging.CRITICAL: "\033[35m",    # magenta
 }
 
+# ---------------------------------------------------------------------------
+# Кастомный уровень QWAQ
+# ---------------------------------------------------------------------------
+
+QWAQ = 55
+logging.addLevelName(QWAQ, "QWAQ") # Регистрируем имя
+
+def qwaq(self, msg, *args, **kwargs):
+    if self.isEnabledFor(QWAQ):
+        self._log(QWAQ, msg, args, **kwargs)
+
+_LEVEL_COLORS[QWAQ] = "\033[1;4;35m"  # розовый подчёркнутый жирный текст
+
+logging.Logger.qwaq = qwaq # Патчим Logger
 
 # ---------------------------------------------------------------------------
 # Кастомные форматтеры
@@ -83,17 +98,18 @@ class _ColorConsoleFormatter(logging.Formatter):
         color = _LEVEL_COLORS.get(record.levelno, "") if self.use_color else ""
         reset = _RESET if self.use_color else ""
 
-        # Укорачиваем имя логгера: убираем ведущий 'rozitta.'
-        short_name = record.name.removeprefix(f"{ROOT_LOGGER_NAME}.")
-        if not short_name:
-            short_name = ROOT_LOGGER_NAME
+        # # Укорачиваем имя логгера: убираем ведущий 'rozitta.'
+        # short_name = record.name.removeprefix(f"{ROOT_LOGGER_NAME}.")
+        # if not short_name:
+        #     short_name = ROOT_LOGGER_NAME
 
         return self._FMT.format(
             color=color,
             time=self.formatTime(record, datefmt="%H:%M:%S"),
             level=record.levelname,
             reset=reset,
-            name=short_name,
+            # name=short_name,
+            name=record.name,
             message=record.getMessage(),
         )
 
@@ -160,19 +176,20 @@ def setup_logging(
     if root_logger.handlers:
         return root_logger
 
-    numeric_level = _to_int_level(level)
+    # numeric_level = _to_int_level(level)
     root_logger.setLevel(logging.DEBUG)   # корневой = всё; хэндлеры фильтруют
 
     # --- Консольный хэндлер ---
     if console:
         console_handler = logging.StreamHandler(sys.stderr)
-        console_handler.setLevel(numeric_level)
+        console_handler.setLevel(level)
 
         # Цвета только если stderr — настоящий терминал
-        is_tty = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
-        console_handler.setFormatter(
-            _ColorConsoleFormatter(use_color=use_color and is_tty)
-        )
+        # is_tty = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+        # console_handler.setFormatter(
+        #     _ColorConsoleFormatter(use_color=use_color and is_tty)
+        # )
+        console_handler.setFormatter(_ColorConsoleFormatter(use_color=use_color))
         root_logger.addHandler(console_handler)
 
     # --- Файловый хэндлер (RotatingFileHandler) ---
@@ -187,7 +204,7 @@ def setup_logging(
             encoding="utf-8",
             delay=False,
         )
-        file_handler.setLevel(_to_int_level(file_level))
+        file_handler.setLevel(file_level)
         file_handler.setFormatter(_FileFormatter())
         root_logger.addHandler(file_handler)
 
@@ -200,13 +217,17 @@ def setup_logging(
 
         # warnings.warn() → logging ("py.warnings" логгер → файл)
         logging.captureWarnings(True)
+        from datetime import datetime
+        root_logger.info("=" * 70)
+        root_logger.info("  ROZITTA PARSER — ЗАПУСК  %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        root_logger.info("=" * 70)
 
         root_logger.info(
             "Логирование запущено. Файл: %s (уровень: %s)",
             log_path,
-            logging.getLevelName(_to_int_level(file_level)),
+            # logging.getLevelName(_to_int_level(file_level)),
+            logging.getLevelName(file_level),
         )
-
     return root_logger
 
 
@@ -251,33 +272,33 @@ def set_level(level: int | str, handler_type: str = "console") -> None:
                       "all"     — все хэндлеры.
     """
     root_logger = logging.getLogger(ROOT_LOGGER_NAME)
-    numeric = _to_int_level(level)
+    # numeric = _to_int_level(level)
 
     for handler in root_logger.handlers:
         if handler_type == "all":
-            handler.setLevel(numeric)
+            handler.setLevel(level)
         elif handler_type == "console" and isinstance(handler, logging.StreamHandler) \
                 and not isinstance(handler, logging.FileHandler):
-            handler.setLevel(numeric)
+            handler.setLevel(level)
         elif handler_type == "file" and isinstance(handler, logging.FileHandler):
-            handler.setLevel(numeric)
+            handler.setLevel(level)
 
 
 # ---------------------------------------------------------------------------
 # Вспомогательные функции
 # ---------------------------------------------------------------------------
 
-def _to_int_level(level: int | str) -> int:
-    """Приводит уровень лога к int (принимает строку или int)."""
-    if isinstance(level, int):
-        return level
-    numeric = logging.getLevelName(level.upper())
-    if not isinstance(numeric, int):
-        raise ValueError(
-            f"Неизвестный уровень логирования: {level!r}. "
-            f"Допустимые: DEBUG, INFO, WARNING, ERROR, CRITICAL."
-        )
-    return numeric
+# def _to_int_level(level: int | str) -> int:
+#     """Приводит уровень лога к int (принимает строку или int)."""
+#     if isinstance(level, int):
+#         return level
+#     numeric = logging.getLevelName(level.upper())
+#     if not isinstance(numeric, int):
+#         raise ValueError(
+#             f"Неизвестный уровень логирования: {level!r}. "
+#             f"Допустимые: DEBUG, INFO, WARNING, ERROR, CRITICAL."
+#         )
+#     return numeric
 
 
 def _resolve_log_path(log_file: str, log_dir: Optional[str]) -> Path:
