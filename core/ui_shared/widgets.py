@@ -28,7 +28,7 @@ from typing import Optional
 
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve,
-    QRect, QSize, Property, QObject,
+    QRect, QSize, QPoint, Property, QObject,
 )
 from PySide6.QtGui import (
     QColor, QPainter, QPainterPath, QFont, QLinearGradient,
@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QHBoxLayout,
     QVBoxLayout, QSizePolicy, QLineEdit, QTextEdit,
     QScrollArea, QGraphicsDropShadowEffect, QApplication,
+    QLayout,
 )
 
 from core.ui_shared.styles import (
@@ -671,13 +672,111 @@ class FilterButton(QPushButton):
         return self._filter_key
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FLOW LAYOUT  — перенос дочерних виджетов на следующую строку (wrap)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class FlowLayout(QLayout):
+    """
+    Layout с переносом строк — дочерние виджеты выравниваются слева направо
+    и переходят на следующую строку когда не помещаются.
+
+    Используется для секции тегов участников чтобы избежать горизонтального
+    скролла и отображать всех в виде облака тегов с вертикальной прокруткой.
+
+    Пример:
+        layout = FlowLayout(h_spacing=6, v_spacing=4)
+        layout.addWidget(tag1)
+        layout.addWidget(tag2)
+        container.setLayout(layout)
+    """
+
+    def __init__(
+        self,
+        parent=None,
+        h_spacing: int = 6,
+        v_spacing: int = 4,
+    ) -> None:
+        super().__init__(parent)
+        self._h_spacing = h_spacing
+        self._v_spacing = v_spacing
+        self._items: list = []
+
+    # ── QLayout interface ─────────────────────────────────────────────────
+
+    def addItem(self, item) -> None:
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int):
+        if 0 <= index < len(self._items):
+            return self._items[index]
+        return None
+
+    def takeAt(self, index: int):
+        if 0 <= index < len(self._items):
+            return self._items.pop(index)
+        return None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect: QRect) -> None:
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self) -> QSize:
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        size += QSize(m.left() + m.right(), m.top() + m.bottom())
+        return size
+
+    # ── Internal ──────────────────────────────────────────────────────────
+
+    def _do_layout(self, rect: QRect, test_only: bool) -> int:
+        m = self.contentsMargins()
+        effective = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        x = effective.x()
+        y = effective.y()
+        row_h = 0
+
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width() + self._h_spacing
+            if next_x - self._h_spacing > effective.right() and row_h > 0:
+                x = effective.x()
+                y += row_h + self._v_spacing
+                next_x = x + hint.width() + self._h_spacing
+                row_h = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x = next_x
+            row_h = max(row_h, hint.height())
+
+        return y + row_h - rect.y() + m.bottom()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # USER TAG  — тег участника (checkable pill)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class UserTag(QPushButton):
     """
-    Checkable тег пользователя с иконкой.
+    Checkable тег пользователя — скруглённый бейдж (pill) в розовых тонах.
     Соответствует .user-tag из прототипа.
 
     Пример:
@@ -703,6 +802,9 @@ class UserTag(QPushButton):
         self.setCheckable(True)
         self.setChecked(selected)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Фиксированная высота → border-radius = половина = идеальный pill
+        self.setFixedHeight(26)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.toggled.connect(self._refresh)
         self._refresh(selected)
 
@@ -715,30 +817,35 @@ class UserTag(QPushButton):
         return self._is_all
 
     def _refresh(self, checked: bool) -> None:
+        # border-radius: 13px = половина height(26) → идеальный pill
         if checked:
             self.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {ACCENT_PINK};
-                    border: 1px solid {ACCENT_PINK};
-                    border-radius: 20px;
-                    padding: 3px 12px;
+                    border: 1.5px solid {ACCENT_PINK};
+                    border-radius: 13px;
+                    padding: 0 12px;
                     color: {BG_PRIMARY};
                     font-size: {FONT_SIZE_SMALL}px;
                     font-weight: 600;
+                    min-width: 48px;
                 }}
             """)
         else:
             self.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {ACCENT_SOFT_PINK};
-                    border: 1px solid {ACCENT_PINK};
-                    border-radius: 20px;
-                    padding: 3px 12px;
+                    border: 1px solid rgba(255,107,201,0.5);
+                    border-radius: 13px;
+                    padding: 0 12px;
                     color: {TEXT_SECONDARY};
                     font-size: {FONT_SIZE_SMALL}px;
+                    min-width: 48px;
                 }}
                 QPushButton:hover {{
-                    background-color: rgba(255,107,201,0.25);
+                    background-color: rgba(255,107,201,0.22);
+                    border-color: {ACCENT_PINK};
+                    color: {TEXT_PRIMARY};
                 }}
             """)
 

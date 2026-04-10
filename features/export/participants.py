@@ -1,20 +1,24 @@
 """
-features/export/participants.py — Экспорт списка участников в Markdown.
+features/export/participants.py — Экспорт списка участников.
 
-Не требует QThread — синхронный, быстрый.
-Вызывается напрямую из SettingsPanel по кнопке.
+Поддерживает два формата:
+  - DOCX (рекомендуемый): таблица с активными ссылками на профили Telegram.
+  - MD (резервный): простой текстовый список для просмотра/копирования.
 
-Нет импортов Qt. Нет Telethon. Только stdlib + core.utils.
+Нет импортов Qt. Нет Telethon. Только stdlib + python-docx + core.utils.
 
 Публичный API:
     get_user_message_counts(db_path, chat_id) → dict[int, int]
-        Читает количество сообщений на пользователя прямо из SQLite.
+        Читает счётчики из локальной SQLite (резерв если API недоступен).
 
     enrich_and_sort_users(users, counts) → list[dict]
         Добавляет msg_count и сортирует по убыванию активности.
 
+    export_participants_docx(users, chat_title, output_dir, counts) → str
+        Создаёт DOCX с таблицей и кликабельными ссылками на профили.
+
     export_participants_md(users, chat_title, output_dir, counts) → str
-        Генерирует MD-файл со списком участников.
+        Создаёт MD-файл (резервный формат).
 """
 
 from __future__ import annotations
@@ -31,27 +35,18 @@ logger = logging.getLogger(__name__)
 
 
 # ==============================================================================
-# Подсчёт сообщений из локальной БД
+# Счётчики из локальной БД (резервный источник)
 # ==============================================================================
 
 def get_user_message_counts(db_path: str, chat_id: int) -> Dict[int, int]:
     """
-    Возвращает словарь {user_id: количество_сообщений} из локальной SQLite БД.
+    Возвращает {user_id: msg_count} из локальной SQLite.
 
-    Читает данные напрямую через sqlite3 (не через DBManager) чтобы не создавать
-    зависимости от Qt и не мешать WAL-логике воркеров.
-
-    Args:
-        db_path: Путь к файлу telegram_archive.db.
-        chat_id: ID чата (нормализованный, как в таблице messages).
-
-    Returns:
-        Словарь user_id → кол-во сообщений. Пустой словарь если БД не существует
-        или возникла ошибка (не бросает исключений).
+    Используется как fallback если get_user_stats недоступен.
+    Основной источник — поле message_count в словарях от MembersWorker.
     """
     if not db_path or not os.path.exists(db_path):
         return {}
-
     try:
         conn = sqlite3.connect(db_path, timeout=5, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -68,11 +63,8 @@ def get_user_message_counts(db_path: str, chat_id: int) -> Dict[int, int]:
             """,
             (chat_id,),
         )
-        result: Dict[int, int] = {int(row[0]): int(row[1]) for row in cursor.fetchall()}
+        result = {int(r[0]): int(r[1]) for r in cursor.fetchall()}
         conn.close()
-        logger.debug(
-            "participants: loaded counts for %d users (chat_id=%s)", len(result), chat_id
-        )
         return result
     except Exception as exc:
         logger.warning("participants: get_user_message_counts failed: %s", exc)
@@ -80,47 +72,188 @@ def get_user_message_counts(db_path: str, chat_id: int) -> Dict[int, int]:
 
 
 # ==============================================================================
-# Вспомогательные функции
+# Утилиты
 # ==============================================================================
 
 def _display_name(user: dict) -> str:
-    """Возвращает отображаемое имя пользователя из словаря."""
     uid = user.get("id", 0)
     return (
-        user.get("username")
-        or user.get("name")
+        user.get("name")
+        or user.get("username")
         or user.get("first_name")
         or str(uid)
     )
 
 
+def _msg_count(user: dict, counts: Optional[Dict[int, int]]) -> int:
+    """Возвращает счётчик сообщений: сначала из поля словаря, потом из counts."""
+    # get_user_stats уже возвращает message_count в словаре
+    mc = user.get("message_count")
+    if mc is not None:
+        return int(mc)
+    if counts:
+        return counts.get(user.get("id", 0), 0)
+    return 0
+
+
 def enrich_and_sort_users(
     users:  List[dict],
-    counts: Dict[int, int],
+    counts: Optional[Dict[int, int]] = None,
 ) -> List[dict]:
     """
-    Добавляет поле msg_count к каждому пользователю и сортирует по убыванию.
+    Добавляет поле msg_count и сортирует: по убыванию активности, затем по имени.
 
-    Args:
-        users:  Список словарей от MembersWorker.
-        counts: Словарь {user_id: msg_count} из get_user_message_counts().
-
-    Returns:
-        Новый список с полем msg_count, отсортированный:
-        1. По msg_count DESC (самые активные вверху).
-        2. По имени ASC (алфавитно для одинакового count).
+    Источник счётчика (в порядке приоритета):
+      1. user["message_count"]  — поле от ChatsService.get_user_stats()
+      2. counts[user_id]        — из локальной БД (get_user_message_counts)
+      3. 0                      — нет данных
     """
-    enriched: List[dict] = []
-    for user in users:
-        uid = user.get("id", 0)
-        enriched.append({**user, "msg_count": counts.get(uid, 0)})
-
+    enriched = [{**u, "msg_count": _msg_count(u, counts)} for u in users]
     enriched.sort(key=lambda u: (-u["msg_count"], _display_name(u).lower()))
     return enriched
 
 
 # ==============================================================================
-# Экспорт в Markdown
+# DOCX экспорт
+# ==============================================================================
+
+def export_participants_docx(
+    users:      List[dict],
+    chat_title: str,
+    output_dir: str,
+    counts:     Optional[Dict[int, int]] = None,
+) -> str:
+    """
+    Создаёт DOCX-файл со списком участников.
+
+    Таблица содержит:
+      - #  (порядковый номер)
+      - Имя (отображаемое, жирное)
+      - @username (кликабельная ссылка tg://user?id=... или https://t.me/username)
+      - Сообщений (если есть данные)
+
+    Строки отсортированы по убыванию активности.
+
+    Returns:
+        Абсолютный путь к созданному .docx файлу.
+    """
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from features.export import xml_magic
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    now        = datetime.now()
+    date_str   = now.strftime("%Y-%m-%d %H:%M")
+    file_date  = now.strftime("%Y-%m-%d_%H-%M")
+    safe_title = sanitize_filename(chat_title)
+    filename   = f"{safe_title}_participants_{file_date}.docx"
+    filepath   = os.path.join(output_dir, filename)
+
+    has_counts = any(_msg_count(u, counts) > 0 for u in users)
+    sorted_users = enrich_and_sort_users(users, counts)
+    total_msgs   = sum(u["msg_count"] for u in sorted_users)
+
+    doc = Document()
+
+    # ── Стиль документа ───────────────────────────────────────────────────
+    style = doc.styles["Normal"]
+    style.font.name  = "Calibri"
+    style.font.size  = Pt(11)
+
+    # ── Заголовок ─────────────────────────────────────────────────────────
+    title_p = doc.add_heading(f"Участники: {chat_title}", level=1)
+    title_p.runs[0].font.color.rgb = RGBColor(0xFF, 0x6B, 0xC9)  # ACCENT_PINK
+
+    # ── Метаданные ────────────────────────────────────────────────────────
+    meta_p = doc.add_paragraph()
+    meta_p.add_run(f"Дата выгрузки: ").bold = False
+    meta_p.add_run(date_str).bold = True
+    meta_p.add_run(f"   •   Участников: ").bold = False
+    meta_p.add_run(str(len(sorted_users))).bold = True
+    if has_counts and total_msgs:
+        meta_p.add_run("   •   Сообщений в архиве: ").bold = False
+        meta_p.add_run(f"{total_msgs:,}").bold = True
+    meta_p.runs[0].font.color.rgb = RGBColor(0xCC, 0xCC, 0xCC)
+
+    doc.add_paragraph()  # пустая строка
+
+    # ── Таблица ───────────────────────────────────────────────────────────
+    col_count = 4 if has_counts else 3
+    table = doc.add_table(rows=1, cols=col_count)
+    table.style = "Table Grid"
+
+    # Заголовки
+    hdr_cells = table.rows[0].cells
+    headers = ["#", "Имя", "Ссылка / @username"]
+    if has_counts:
+        headers.append("Сообщений")
+
+    for i, text in enumerate(headers):
+        p = hdr_cells[i].paragraphs[0]
+        run = p.add_run(text)
+        run.bold = True
+        run.font.color.rgb = RGBColor(0xFF, 0x95, 0x00)  # ACCENT_ORANGE
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if i in (0, col_count - 1) else WD_ALIGN_PARAGRAPH.LEFT
+
+    # Ширина столбцов
+    col_widths = [Cm(1.0), Cm(5.5), Cm(7.5), Cm(2.5)][:col_count]
+    for i, cell in enumerate(hdr_cells):
+        cell.width = col_widths[i]
+
+    # Строки участников
+    for idx, user in enumerate(sorted_users, start=1):
+        uid      = user.get("id", 0)
+        name     = _display_name(user)
+        username = user.get("username") or ""
+        count    = user.get("msg_count", 0)
+
+        row_cells = table.add_row().cells
+
+        # #
+        p_num = row_cells[0].paragraphs[0]
+        p_num.add_run(str(idx))
+        p_num.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Имя
+        p_name = row_cells[1].paragraphs[0]
+        r = p_name.add_run(name)
+        r.bold = True
+
+        # Ссылка
+        p_link = row_cells[2].paragraphs[0]
+        if username:
+            # Ссылка по username: открывается в браузере и в Telegram
+            url        = f"https://t.me/{username}"
+            link_text  = f"@{username}"
+        else:
+            # Ссылка по ID: открывает чат в Telegram Desktop/Mobile
+            url       = f"tg://user?id={uid}"
+            link_text = f"tg://user?id={uid}"
+
+        xml_magic.add_external_hyperlink(p_link, url, link_text)
+
+        # Сообщений
+        if has_counts:
+            p_cnt = row_cells[3].paragraphs[0]
+            p_cnt.add_run(f"{count:,}" if count else "—")
+            p_cnt.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    # Ширина столбцов — устанавливаем для каждой строки
+    for row in table.rows:
+        for i, cell in enumerate(row.cells):
+            cell.width = col_widths[i]
+
+    doc.save(filepath)
+    logger.info("participants: docx exported %d users → %s", len(sorted_users), filepath)
+    return filepath
+
+
+# ==============================================================================
+# MD экспорт (резервный)
 # ==============================================================================
 
 def export_participants_md(
@@ -130,33 +263,8 @@ def export_participants_md(
     counts:     Optional[Dict[int, int]] = None,
 ) -> str:
     """
-    Создаёт Markdown-файл со списком участников чата.
-
-    Если передан словарь counts:
-      - Добавляет колонку «Сообщений».
-      - Сортирует список по убыванию активности.
-      - Показывает суммарную статистику.
-
-    Формат файла (с counts):
-        # Участники: <chat_title>
-        Дата выгрузки: YYYY-MM-DD HH:MM
-        Всего участников: N  |  Сообщений в архиве: M
-
-        | # | Имя | Username | ID | Сообщений |
-        |--:|-----|----------|----|----------:|
-        | 1 | ... | @...     | .. |       420 |
-
-    Args:
-        users:      Список словарей пользователей (id, username, name, ...).
-        chat_title: Название чата (для заголовка и имени файла).
-        output_dir: Папка назначения (создаётся автоматически).
-        counts:     Опциональный {user_id: msg_count}.
-
-    Returns:
-        Абсолютный путь к созданному файлу.
-
-    Raises:
-        OSError: если не удалось записать файл.
+    Создаёт Markdown-файл со списком участников (резервный формат).
+    Для полноценного просмотра используйте export_participants_docx().
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -167,62 +275,46 @@ def export_participants_md(
     filename   = f"{safe_title}_participants_{file_date}.md"
     filepath   = os.path.join(output_dir, filename)
 
-    has_counts = bool(counts)
+    sorted_users = enrich_and_sort_users(users, counts)
+    has_counts   = any(u["msg_count"] > 0 for u in sorted_users)
+    total_msgs   = sum(u["msg_count"] for u in sorted_users)
 
-    # Сортируем и обогащаем если есть счётчики
-    if has_counts:
-        users = enrich_and_sort_users(users, counts)
-        total_msgs = sum(u.get("msg_count", 0) for u in users)
-        stats_line = (
-            f"Всего участников: **{len(users)}**  |  "
-            f"Сообщений в архиве: **{total_msgs:,}**"
-        )
-    else:
-        stats_line = f"Всего участников: **{len(users)}**"
+    stats_line = f"Всего участников: **{len(sorted_users)}**"
+    if has_counts and total_msgs:
+        stats_line += f"  |  Сообщений в архиве: **{total_msgs:,}**"
 
     lines: list[str] = [
-        f"# Участники: {chat_title}",
-        "",
-        f"Дата выгрузки: {date_str}  ",
-        stats_line,
-        "",
-        "---",
-        "",
-        "## Список участников",
-        "",
+        f"# Участники: {chat_title}", "",
+        f"Дата выгрузки: {date_str}  ", stats_line, "",
+        "---", "", "## Список участников", "",
     ]
 
-    # Заголовок таблицы
     if has_counts:
-        lines += [
-            "| # | Имя | Username | ID | Сообщений |",
-            "|--:|-----|----------|----|----------:|",
-        ]
+        lines += ["| # | Имя | @username | Ссылка | Сообщений |",
+                  "|--:|-----|-----------|--------|----------:|"]
     else:
-        lines += [
-            "| # | Имя | Username | ID |",
-            "|--:|-----|----------|-----|",
-        ]
+        lines += ["| # | Имя | @username | Ссылка |",
+                  "|--:|-----|-----------|--------|"]
 
-    # Строки таблицы
-    for idx, user in enumerate(users, start=1):
-        uid      = user.get("id", "")
-        name     = _display_name(user)
+    for idx, user in enumerate(sorted_users, start=1):
+        uid      = user.get("id", 0)
+        name     = _display_name(user).replace("|", "\\|")
         username = user.get("username") or ""
+        count    = user.get("msg_count", 0)
 
-        name_md     = name.replace("|", "\\|")
-        username_md = f"@{username}" if username else "—"
+        uname_md = f"@{username}" if username else "—"
+        if username:
+            link_md = f"[открыть](https://t.me/{username})"
+        else:
+            link_md = f"[открыть](tg://user?id={uid})"
 
         if has_counts:
-            msg_count = user.get("msg_count", counts.get(uid, 0) if uid else 0)
-            lines.append(f"| {idx} | {name_md} | {username_md} | {uid} | {msg_count:,} |")
+            lines.append(f"| {idx} | {name} | {uname_md} | {link_md} | {count:,} |")
         else:
-            lines.append(f"| {idx} | {name_md} | {username_md} | {uid} |")
-
-    content = "\n".join(lines) + "\n"
+            lines.append(f"| {idx} | {name} | {uname_md} | {link_md} |")
 
     with open(filepath, "w", encoding="utf-8") as fh:
-        fh.write(content)
+        fh.write("\n".join(lines) + "\n")
 
-    logger.info("participants: exported %d users → %s", len(users), filepath)
+    logger.info("participants: md exported %d users → %s", len(sorted_users), filepath)
     return filepath

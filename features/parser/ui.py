@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QDateEdit,
     QScrollArea, QFrame, QSizePolicy, QButtonGroup,
-    QSpacerItem,
+    QSpacerItem, QListWidget, QListWidgetItem,
 )
 
 from core.ui_shared.styles import (
@@ -239,7 +239,7 @@ class ParseSettingsScreen(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._current_chat: Optional[dict] = None
-        self._member_tags: list[UserTag] = []
+        self._raw_member_users: list[dict] = []   # оригинальный список для поиска
 
         self._build_ui()
 
@@ -495,23 +495,57 @@ class ParseSettingsScreen(QWidget):
         mode_row.addWidget(self._mode_threads)
         sub_l.addLayout(mode_row)
 
-        # Контейнер тегов пользователей
-        self._tags_container = QWidget()
-        self._tags_container.setStyleSheet("background: transparent;")
-        self._tags_layout = QHBoxLayout(self._tags_container)
-        self._tags_layout.setContentsMargins(0, 0, 0, 0)
-        self._tags_layout.setSpacing(6)
-        self._tags_layout.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        # Поле поиска участника (скрыто пока список не загружен)
+        self._member_search = QLineEdit()
+        self._member_search.setPlaceholderText("🔍  Поиск участника...")
+        self._member_search.setClearButtonEnabled(True)
+        self._member_search.setFixedHeight(30)
+        self._member_search.setStyleSheet(QSS_INPUT)
+        self._member_search.textChanged.connect(self._on_member_search_changed)
+        self._member_search.setVisible(False)
+        sub_l.addWidget(self._member_search)
+
+        # Список участников — QListWidget с чекбоксами и вертикальной прокруткой
+        self._members_list = QListWidget()
+        self._members_list.setSelectionMode(
+            QListWidget.SelectionMode.NoSelection
         )
-
-        # Тег «Все» по умолчанию
-        self._tag_all = UserTag("Все", user_id=0, is_all=True, selected=True)
-        self._tag_all.toggled.connect(self._on_tag_all_toggled)
-        self._tags_layout.addWidget(self._tag_all)
-        self._tags_layout.addStretch()
-
-        sub_l.addWidget(self._tags_container)
+        self._members_list.setMaximumHeight(200)
+        self._members_list.setMinimumHeight(32)
+        self._members_list.setVisible(False)
+        self._members_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: #1A1A1A;
+                border: 1px solid #242424;
+                border-radius: 8px;
+                outline: none;
+                padding: 4px;
+            }}
+            QListWidget::item {{
+                padding: 5px 8px;
+                border-radius: 5px;
+                color: #CCCCCC;
+                font-size: 12px;
+            }}
+            QListWidget::item:hover {{
+                background-color: #242424;
+                color: #F0F0F0;
+            }}
+            QListWidget::item:selected {{
+                background-color: transparent;
+            }}
+            QScrollBar:vertical {{
+                background: #1A1A1A; width: 5px; border-radius: 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: rgba(255,107,201,0.5); border-radius: 2px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+            }}
+        """)
+        self._members_list.itemChanged.connect(self._on_list_item_changed)
+        sub_l.addWidget(self._members_list)
 
         hint = _label(
             "ℹ️  Без выбора участников — скачиваются сообщения всех",
@@ -650,35 +684,58 @@ class ParseSettingsScreen(QWidget):
 
     def populate_members(self, users: list[dict]) -> None:
         """
-        Слот: заполнить теги участников после загрузки.
-        users = [{"id": int, "username": str, "name": str}, ...]
+        Слот: заполнить список участников после загрузки.
+        users = [{"id": int, "username": str, "name": str, "message_count": int}, ...]
 
-        Подключение в MainWindow:
-            members_worker.members_loaded.connect(settings.populate_members)
+        Сортирует по message_count DESC. Показывает поиск и список.
         """
-        # Очищаем старые теги (кроме «Все»)
-        for tag in self._member_tags:
-            self._tags_layout.removeWidget(tag)
-            tag.deleteLater()
-        self._member_tags.clear()
+        from features.export.participants import enrich_and_sort_users
 
-        # Убираем stretch перед добавлением новых
-        # (addStretch добавляем снова в конце)
-        while self._tags_layout.count() > 1:   # 0 = tag_all
-            item = self._tags_layout.takeAt(1)
-            if item.widget():
-                item.widget().deleteLater()
+        self._raw_member_users = list(users)
 
-        for user in users:
-            uid = user.get("id", 0)
-            uname = user.get("username") or user.get("name", f"id:{uid}")
-            tag = UserTag(uname, user_id=uid, selected=False)
-            tag.toggled.connect(self._on_user_tag_toggled)
-            self._tags_layout.addWidget(tag)
-            self._member_tags.append(tag)
+        has_counts = any(u.get("message_count", 0) > 0 for u in users)
+        sorted_users = enrich_and_sort_users(users) if has_counts else users
 
-        self._tags_layout.addStretch()
-        self.log_message.emit(f"Загружено участников: {len(users)}")
+        # Блокируем сигнал itemChanged чтобы не триггерить get_params
+        self._members_list.blockSignals(True)
+        self._members_list.clear()
+
+        # Строка «Все» — первой, отмечена по умолчанию
+        all_item = QListWidgetItem("✓  Все участники")
+        all_item.setData(Qt.ItemDataRole.UserRole, 0)       # user_id = 0 → «все»
+        all_item.setCheckState(Qt.CheckState.Checked)
+        all_item.setForeground(
+            __import__("PySide6.QtGui", fromlist=["QColor"]).QColor("#FF6BC9")
+        )
+        self._members_list.addItem(all_item)
+
+        for user in sorted_users:
+            uid   = user.get("id", 0)
+            uname = user.get("username") or user.get("name", "")
+            count = user.get("message_count") or user.get("msg_count", 0)
+
+            if uname:
+                label = f"@{uname}  ({count:,})" if (has_counts and count) else f"@{uname}"
+            else:
+                label = f"id:{uid}"
+
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, uid)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self._members_list.addItem(item)
+
+        self._members_list.blockSignals(False)
+
+        visible = bool(users)
+        self._member_search.setVisible(visible)
+        self._members_list.setVisible(visible)
+        if visible:
+            self._member_search.clear()
+            # Подбираем высоту: max 8 строк по ~26px
+            rows = min(self._members_list.count(), 8)
+            self._members_list.setFixedHeight(rows * 26 + 8)
+
+        self.log_message.emit(f"👥 Загружено участников: {len(users)}")
 
     # ──────────────────────────────────────────────────────────────────────
     # СБОР ПАРАМЕТРОВ
@@ -702,12 +759,22 @@ class ParseSettingsScreen(QWidget):
         d_from = self._date_from.date().toPython()
         d_to   = self._date_to.date().toPython()
 
-        # Пользователи
-        selected_ids = [
-            tag.user_id
-            for tag in self._member_tags
-            if tag.isChecked() and not tag.is_all
-        ]
+        # Пользователи — собираем отмеченные элементы из QListWidget
+        selected_ids: list[int] = []
+        all_checked = False
+        for i in range(self._members_list.count()):
+            item = self._members_list.item(i)
+            if item.checkState() != Qt.CheckState.Checked:
+                continue
+            uid = item.data(Qt.ItemDataRole.UserRole)
+            if uid == 0:                    # «Все участники»
+                all_checked = True
+                break
+            selected_ids.append(uid)
+
+        if all_checked:
+            selected_ids = []               # пустой список = нет фильтра
+
         mode_btn = self._mode_group.checkedButton()
         u_mode = mode_btn.mode if isinstance(mode_btn, _UserModeButton) else "messages-only"
 
@@ -768,16 +835,47 @@ class ParseSettingsScreen(QWidget):
             is_post = button.mode == "post"
             self._comments_row.setVisible(is_post)
 
-    def _on_tag_all_toggled(self, checked: bool) -> None:
-        """При выборе «Все» снять выделение с остальных тегов."""
-        if checked:
-            for tag in self._member_tags:
-                tag.setChecked(False)
+    def _on_member_search_changed(self, text: str) -> None:
+        """Фильтрует строки QListWidget по тексту поиска."""
+        q = text.strip().lower().lstrip("@")
+        for i in range(self._members_list.count()):
+            item = self._members_list.item(i)
+            uid = item.data(Qt.ItemDataRole.UserRole)
+            if uid == 0:            # «Все участники» — всегда виден
+                item.setHidden(False)
+                continue
+            item_text = item.text().lower().replace("@", "").replace(" ", "")
+            item.setHidden(bool(q) and q.replace(" ", "") not in item_text)
+        # Подбираем высоту под видимые строки (max 8)
+        visible_count = sum(
+            1 for i in range(self._members_list.count())
+            if not self._members_list.item(i).isHidden()
+        )
+        rows = min(visible_count, 8)
+        self._members_list.setFixedHeight(max(rows * 26 + 8, 32))
 
-    def _on_user_tag_toggled(self, checked: bool) -> None:
-        """При выборе конкретного участника снять «Все»."""
-        if checked:
-            self._tag_all.setChecked(False)
+    def _on_list_item_changed(self, item: QListWidgetItem) -> None:
+        """
+        При отметке/снятии элемента в списке:
+        - если отмечено «Все участники» → снять остальные
+        - если отмечен любой другой → снять «Все участники»
+        """
+        self._members_list.blockSignals(True)
+        uid = item.data(Qt.ItemDataRole.UserRole)
+        checked = item.checkState() == Qt.CheckState.Checked
+
+        if uid == 0 and checked:
+            # «Все» → снять всех участников
+            for i in range(1, self._members_list.count()):
+                self._members_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+        elif uid != 0 and checked:
+            # Конкретный участник → снять «Все»
+            all_item = self._members_list.item(0)
+            if all_item:
+                all_item.setCheckState(Qt.CheckState.Unchecked)
+
+        self._members_list.blockSignals(False)
+
 
     # ──────────────────────────────────────────────────────────────────────
     # СОСТОЯНИЕ КНОПОК (вызывается из MainWindow во время парсинга)
@@ -951,6 +1049,16 @@ class ParseWorker(QThread):
                 23, 59, 59, tzinfo=timezone.utc,
             )
 
+        # Фильтрация участников:
+        # "messages-only" → передаём user_ids парсеру, он пропускает чужие сообщения.
+        # "all-threads"   → передаём user_ids=None (скачиваем всё),
+        #                   фильтрация по тредам происходит на этапе экспорта
+        #                   через _apply_user_filter в generator.py.
+        collect_user_ids = (
+            p.user_ids if (p.user_ids and p.user_filter_mode == "messages-only")
+            else None
+        )
+
         return CollectParams(
             chat_id           = p.chat.get("id"),
             topic_id          = p.chat.get("selected_topic_id"),
@@ -958,7 +1066,7 @@ class ParseWorker(QThread):
             date_to           = date_to,
             media_filter      = media_filter,
             download_comments = p.include_comments,
-            user_ids          = p.user_ids if p.user_ids else None,
+            user_ids          = collect_user_ids,
             output_dir        = chat_dir,   # папка чата, не корневая
             re_download       = p.re_download,
             filter_expression = p.filter_expression,

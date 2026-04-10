@@ -323,10 +323,12 @@ class MembersWorker(QThread):
     error          = Signal(str)
 
     def __init__(self, chat: dict, cfg: AppConfig,
+                 limit: int = 50,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self._chat = chat
-        self._cfg  = cfg
+        self._chat  = chat
+        self._cfg   = cfg
+        self._limit = limit
 
     def run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -341,27 +343,99 @@ class MembersWorker(QThread):
             loop.close()
 
     async def _load(self) -> list:
-        from telethon import TelegramClient
         from features.chats.api import ChatsService
-        self.log_message.emit("👥 Загружаю участников...")
         from core.utils import build_telegram_client
+
+        chat_type      = self._chat.get("type", "")
+        linked_chat_id = self._chat.get("linked_chat_id")
+        chat_id        = self._chat.get("id")
+
         client = build_telegram_client(self._cfg)
-        # client = TelegramClient(
-        #     str(self._cfg.session_path),
-        #     self._cfg.api_id_int,
-        #     self._cfg.api_hash,
-        #     timeout=120,
-        #     connection_retries=5,
-        #     retry_delay=5,
-        #     auto_reconnect=True,
-        # )
         await client.connect()
         try:
-            service = ChatsService(client)
-            stats = await service.get_user_stats(self._chat.get("id"))
-            return stats
+            if chat_type == "channel" and linked_chat_id:
+                self.log_message.emit(
+                    f"💬 Собираю авторов комментариев из группы обсуждений "
+                    f"(лимит {self._limit})..."
+                )
+                return await self._collect_commenters(client, linked_chat_id)
+            else:
+                self.log_message.emit(f"👥 Загружаю топ-{self._limit} участников...")
+                service = ChatsService(client)
+                return await service.get_user_stats(chat_id, limit=self._limit)
         finally:
             await client.disconnect()
+
+    async def _collect_commenters(self, client, linked_chat_id: int) -> list:
+        """
+        Итерирует сообщения linked discussion group и собирает уникальных авторов
+        с подсчётом их сообщений. Это единственный способ получить список
+        реальных комментаторов — get_participants() для linked группы возвращает
+        только участников самой группы, а не авторов комментариев.
+
+        Ранний выход: как только набрали limit * 5 уникальных авторов или
+        просмотрели 10 000 сообщений — этого достаточно для построения топ-N.
+        """
+        from collections import Counter
+        from telethon.tl.types import User as TLUser
+
+        counts:    Counter = Counter()
+        user_info: dict    = {}   # uid → {id, name, username}
+        scanned = 0
+
+        try:
+            entity = await client.get_entity(linked_chat_id)
+        except Exception as exc:
+            self.log_message.emit(f"⚠️ Не удалось получить entity группы: {exc}")
+            return []
+
+        try:
+            async for msg in client.iter_messages(entity, limit=None):
+                uid = getattr(msg, "sender_id", None)
+                if uid is None:
+                    continue
+
+                counts[uid] += 1
+
+                if uid not in user_info:
+                    sender = getattr(msg, "sender", None)
+                    if sender and isinstance(sender, TLUser):
+                        first = getattr(sender, "first_name", "") or ""
+                        last  = getattr(sender, "last_name",  "") or ""
+                        uname = getattr(sender, "username",   None)
+                        name  = f"{first} {last}".strip() or str(uid)
+                    else:
+                        name  = str(uid)
+                        uname = None
+                    user_info[uid] = {"id": uid, "name": name, "username": uname}
+
+                scanned += 1
+                if scanned % 500 == 0:
+                    self.log_message.emit(
+                        f"💬 Просканировано: {scanned} сообщений, "
+                        f"уникальных авторов: {len(counts)}..."
+                    )
+
+                # Ранний выход: достаточно данных для топ-N
+                if scanned >= 10_000 or len(counts) >= self._limit * 5:
+                    break
+
+        except Exception as exc:
+            self.log_message.emit(f"⚠️ Ошибка при сборе авторов: {exc}")
+            return []
+
+        # Топ-limit по активности
+        top = counts.most_common(self._limit)
+        result = []
+        for uid, msg_count in top:
+            info = user_info.get(uid, {"id": uid, "name": str(uid), "username": None})
+            result.append({**info, "message_count": msg_count})
+
+        self.log_message.emit(
+            f"✅ Найдено {len(result)} авторов в группе обсуждений "
+            f"(просмотрено {scanned} сообщений)"
+        )
+        return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -481,6 +481,7 @@ class ParserService:
                         media_filter   = params.media_filter,
                         topic_id       = params.topic_id,
                         insert_fn      = insert_fn,
+                        user_ids       = params.user_ids,
                     )
                     self._comment_count += downloaded
                     self._msg_count     += downloaded
@@ -577,6 +578,10 @@ class ParserService:
                     min_id=0,
                     # Продолжаем с последнего известного ID при рестарте после FloodWait
                     max_id=_max_id_arg,
+                    # offset_date: начинаем итерацию с этой даты вглубь истории.
+                    # Без него верхняя граница не применяется и мы получаем
+                    # сообщения новее upper_date при первом запуске.
+                    offset_date=upper_date,
                     reverse=False,
                 ):
                     last_message_id = message.id
@@ -589,12 +594,17 @@ class ParserService:
                     # Вычисляем дату один раз
                     msg_date = ensure_aware_utc(message.date) if message.date else None
 
+                    # Service-сообщения (MessageService) могут не иметь даты —
+                    # пропускаем их явно, чтобы не нарушить цепочку date-фильтрации
+                    if msg_date is None:
+                        continue
+
                     # Фильтр верхней даты (пропускаем слишком новые)
-                    if upper_date and msg_date and msg_date > upper_date:
+                    if upper_date and msg_date > upper_date:
                         continue
 
                     # Фильтр нижней даты (iter_messages идёт от новых к старым)
-                    if cutoff_date is not None and msg_date and msg_date < cutoff_date:
+                    if cutoff_date is not None and msg_date < cutoff_date:
                         # Flush перед выходом — задачи уже созданы, ждём их
                         if _pending:
                             await self._flush_tasks(
@@ -968,42 +978,85 @@ class ParserService:
         post_id:        int,
         linked_chat_id: int,
         media_filter:   Optional[List[str]],
-        topic_id:       Optional[int] = None,
-        limit:          int           = MAX_COMMENT_LIMIT,
+        topic_id:       Optional[int]      = None,
+        limit:          int                = MAX_COMMENT_LIMIT,
         insert_fn:      Optional[Callable] = None,
+        user_ids:       Optional[List[int]] = None,
     ) -> int:
         """
-        Скачивает комментарии к посту из linked discussion группы.
+        Скачивает комментарии к посту канала через GetDiscussionMessageRequest.
 
-        Комментарии хранятся в linked группе как reply_to=post_id.
-        Сохраняются в БД с chat_id=channel_id (привязаны к каналу),
-        is_comment=1, post_id=post_id.
+        Алгоритм (из telethon_2026_report.md + Telegram API docs):
+            1. GetDiscussionMessageRequest(peer=channel, msg_id=post_id)
+               → возвращает пересланный пост внутри discussion group.
+               Последнее сообщение в списке (messages[-1]) — это корневое
+               сообщение треда в группе с её собственным message_id.
+            2. iter_messages(group_peer, reply_to=root_id)
+               → возвращает все комментарии к этому треду.
+
+        Это единственный корректный способ получить комментарии, потому что
+        ID поста в канале НЕ совпадает с ID сообщения в группе — у каждого
+        чата независимая нумерация (telethon_2026_report.md, раздел UPD).
 
         Args:
             channel_id:     ID основного канала (для сохранения в БД).
             post_id:        ID поста в канале.
-            linked_chat_id: ID linked группы комментариев (AS IS из Telethon).
-            media_filter:   Фильтр медиа (None = не скачивать).
+            linked_chat_id: ID linked discussion группы (не используется напрямую —
+                            group_peer берётся из ответа GetDiscussionMessageRequest).
+            media_filter:   Фильтр медиа.
             topic_id:       ID топика (передаётся в insert_message).
-            limit:          Максимальное число комментариев.
-            insert_fn:      Функция пакетной вставки (insert_messages_batch или
-                            upsert_messages_batch). По умолчанию insert_messages_batch.
+            limit:          Максимум комментариев к одному посту.
+            insert_fn:      Функция вставки (insert или upsert).
 
         Returns:
             Количество сохранённых комментариев.
         """
+        from telethon.tl.functions.messages import GetDiscussionMessageRequest
+
         _insert = insert_fn or self._db.insert_messages_batch
-        count = 0
-        attempts = 0
+
+        # ── Шаг 1: найти корневое сообщение треда в группе ───────────────────
+        try:
+            channel_entity = await self._client.get_entity(channel_id)
+            discussion = await self._client(GetDiscussionMessageRequest(
+                peer   = channel_entity,
+                msg_id = post_id,
+            ))
+            if not discussion or not discussion.messages:
+                logger.debug(
+                    "parser: GetDiscussionMessageRequest: no messages for post_id=%s", post_id
+                )
+                return 0
+
+            # Последнее сообщение в списке = пересланный пост (корень треда в группе)
+            root_msg   = discussion.messages[-1]
+            root_id    = root_msg.id
+            group_peer = root_msg.peer_id
+            logger.debug(
+                "parser: discussion root: channel_post=%s → group_msg=%s", post_id, root_id
+            )
+
+        except Exception as exc:
+            logger.warning(
+                "parser: GetDiscussionMessageRequest failed post_id=%s: %s", post_id, exc
+            )
+            return 0
+
+        # ── Шаг 2: итерировать комментарии через reply_to=root_id ────────────
+        count         = 0
+        attempts      = 0
         comment_batch: List[dict] = []
 
         while attempts <= _MAX_RETRIES:
             try:
                 async for comment in self._client.iter_messages(
-                    linked_chat_id,
-                    reply_to=post_id,
-                    limit=limit,
+                    group_peer,
+                    reply_to = root_id,
+                    limit    = limit,
                 ):
+                    # Фильтр по участнику — пропускаем чужие комментарии
+                    if user_ids and comment.sender_id not in user_ids:
+                        continue
                     row, media_err = await self._process_message(
                         message      = comment,
                         chat_id      = channel_id,   # привязываем к каналу
@@ -1019,10 +1072,9 @@ class ParserService:
                         comment_batch.append(row)
                     count += 1
 
-                # Batch flush всех комментариев поста
                 if comment_batch:
                     _insert(comment_batch)
-                break   # успешно завершили итерацию
+                break   # успешно
 
             except TelethonFloodWaitError as exc:
                 wait = exc.seconds + _FLOOD_BUFFER
@@ -1030,7 +1082,7 @@ class ParserService:
                     f"⏳ FloodWait при загрузке комментариев поста #{post_id}: {wait} сек..."
                 )
                 logger.warning(
-                    "parser: FloodWait %ds on get_post_replies post_id=%s",
+                    "parser: FloodWait %ds on _get_post_replies post_id=%s",
                     exc.seconds, post_id,
                 )
                 await asyncio.sleep(wait)
@@ -1039,9 +1091,9 @@ class ParserService:
 
             except Exception as exc:
                 logger.warning(
-                    "parser: get_post_replies error post_id=%s: %s", post_id, exc
+                    "parser: _get_post_replies error post_id=%s: %s", post_id, exc
                 )
-                raise  # CR-3: пробрасываем — collect_data добавит в errors и продолжит
+                raise   # CR-3: пробрасываем — collect_data добавит в errors
 
         return count
 

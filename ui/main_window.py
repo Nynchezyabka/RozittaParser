@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QSizePolicy, QProgressBar, QStackedWidget,
     QFrame, QPushButton, QApplication, QSpinBox,
-    QScrollArea, QGridLayout,
+    QScrollArea, QGridLayout, QListWidget, QListWidgetItem,
 )
 
 from config import AppConfig
@@ -62,7 +62,7 @@ from core.ui_shared.styles import (
 from core.ui_shared.widgets import (
     RozittaWidget, LogWidget,
     ModernCard, SectionTitle, ToggleSwitch,
-    MediaButton, ChipButton, SplitModeButton, UserTag,
+    MediaButton, ChipButton, SplitModeButton, UserTag, FlowLayout,
 )
 from core.ui_shared.calendar import DateRangeWidget
 from features.auth.ui import AuthScreen
@@ -575,77 +575,93 @@ class SettingsPanel(QWidget):
         mode_row.addStretch(1)
         layout.addLayout(mode_row)
 
-        # Кнопка загрузки
+        # ── Спинбокс «Топ-N участников» ──────────────────────────────────────
+        limit_row = QHBoxLayout()
+        limit_row.setSpacing(8)
+        limit_lbl = QLabel("Топ активных участников:")
+        limit_lbl.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent;"
+        )
+        self._members_limit_spin = QSpinBox()
+        self._members_limit_spin.setRange(5, 500)
+        self._members_limit_spin.setSingleStep(10)
+        self._members_limit_spin.setValue(50)
+        self._members_limit_spin.setFixedWidth(72)
+        self._members_limit_spin.setFixedHeight(28)
+        self._members_limit_spin.setStyleSheet(QSS_INPUT)
+        self._members_limit_spin.setToolTip(
+            "Количество самых активных участников для загрузки из Telegram"
+        )
+        limit_row.addWidget(limit_lbl)
+        limit_row.addWidget(self._members_limit_spin)
+        limit_row.addStretch(1)
+        layout.addLayout(limit_row)
+
+        # ── Кнопки действий ──────────────────────────────────────────────────
+        _btn_qss = f"""
+            QPushButton {{
+                background-color: {OVERLAY2_HEX};
+                border: 1px solid {BORDER_HEX};
+                border-radius: {RADIUS_MD}px;
+                color: {TEXT_SECONDARY};
+                font-size: 12px;
+            }}
+            QPushButton:hover:enabled {{
+                background-color: {OVERLAY_HEX};
+                color: {TEXT_PRIMARY};
+            }}
+            QPushButton:disabled {{ color: rgba(255,255,255,0.25); }}
+        """
+
         self._load_members_btn = QPushButton("👥  Загрузить участников")
         self._load_members_btn.setEnabled(False)
         self._load_members_btn.setFixedHeight(34)
         self._load_members_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._load_members_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {OVERLAY2_HEX};
-                border: 1px solid {BORDER_HEX};
-                border-radius: {RADIUS_MD}px;
-                color: {TEXT_SECONDARY};
-                font-size: 12px;
-            }}
-            QPushButton:hover:enabled {{
-                background-color: {OVERLAY_HEX};
-                color: {TEXT_PRIMARY};
-            }}
-            QPushButton:disabled {{
-                color: rgba(255,255,255,0.25);
-            }}
-        """)
+        self._load_members_btn.setStyleSheet(_btn_qss)
         self._load_members_btn.clicked.connect(self._on_load_members_clicked)
         layout.addWidget(self._load_members_btn)
 
-        # Кнопка экспорта списка участников в MD
-        self._export_members_btn = QPushButton("📋  Экспортировать список")
+        self._export_members_btn = QPushButton("📄  Экспортировать список (DOCX)")
         self._export_members_btn.setEnabled(False)
         self._export_members_btn.setFixedHeight(34)
         self._export_members_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._export_members_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {OVERLAY2_HEX};
-                border: 1px solid {BORDER_HEX};
-                border-radius: {RADIUS_MD}px;
-                color: {TEXT_SECONDARY};
-                font-size: 12px;
-            }}
-            QPushButton:hover:enabled {{
-                background-color: {OVERLAY_HEX};
-                color: {TEXT_PRIMARY};
-            }}
-            QPushButton:disabled {{
-                color: rgba(255,255,255,0.25);
-            }}
-        """)
+        self._export_members_btn.setStyleSheet(_btn_qss)
         self._export_members_btn.clicked.connect(self._on_export_members_clicked)
         layout.addWidget(self._export_members_btn)
 
-        # Контейнер тегов (прокручиваемый)
-        self._tags_scroll = QScrollArea()
-        self._tags_scroll.setFixedHeight(56)
-        self._tags_scroll.setWidgetResizable(True)
-        self._tags_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._tags_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self._tags_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._tags_scroll.setStyleSheet(
-            "QScrollArea { background: transparent; border: none; }"
-        )
-
-        self._tags_container = QWidget()
-        self._tags_container.setStyleSheet("background: transparent;")
-        self._tags_layout = QHBoxLayout(self._tags_container)
-        self._tags_layout.setContentsMargins(0, 4, 0, 4)
-        self._tags_layout.setSpacing(6)
-        self._tags_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self._tags_scroll.setWidget(self._tags_container)
-        layout.addWidget(self._tags_scroll)
+        # ── Список участников с чекбоксами и нативной прокруткой ─────────────
+        self._members_list = QListWidget()
+        self._members_list.setMinimumHeight(100)
+        self._members_list.setMaximumHeight(220)
+        self._members_list.setStyleSheet(f"""
+            QListWidget {{
+                background: {OVERLAY2_HEX};
+                border: 1px solid {BORDER_HEX};
+                border-radius: {RADIUS_MD}px;
+                outline: none;
+                padding: 4px;
+            }}
+            QListWidget::item {{
+                color: {TEXT_PRIMARY};
+                font-size: 12px;
+                padding: 3px 6px;
+                border-radius: 4px;
+            }}
+            QListWidget::item:hover {{
+                background: {OVERLAY_HEX};
+            }}
+            QListWidget::item:selected {{
+                background: transparent;
+            }}
+            QScrollBar:vertical {{
+                background: {OVERLAY_HEX}; width: 5px; border-radius: 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: rgba(255,107,201,0.4); border-radius: 2px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+        """)
+        layout.addWidget(self._members_list)
 
         return card
 
@@ -827,29 +843,31 @@ class SettingsPanel(QWidget):
         if self._current_chat:
             self.load_members_requested.emit(self._current_chat)
 
+    def get_members_limit(self) -> int:
+        """Возвращает значение спинбокса топ-N участников."""
+        return self._members_limit_spin.value()
+
     def _on_export_members_clicked(self) -> None:
-        """Экспортирует список участников в Markdown-файл (синхронно, без воркера)."""
+        """Экспортирует список участников в DOCX-файл (синхронно, без воркера)."""
         import os
-        from features.export.participants import export_participants_md
+        from features.export.participants import export_participants_docx
 
         if not self._current_chat or not self._raw_users:
             self.log_message.emit("⚠️ Нет участников для экспорта — загрузите список")
             return
 
-        chat_title  = self._current_chat.get("title", "chat")
-        output_dir  = str(self._cfg.output_dir) if self._cfg else "output"
-
-        # Передаём счётчики если они есть (будет добавлена колонка и сортировка)
-        counts = self._member_counts if self._member_counts else None
+        chat_title = self._current_chat.get("title", "chat")
+        output_dir = str(self._cfg.output_dir) if self._cfg else "output"
+        counts     = self._member_counts if self._member_counts else None
 
         try:
-            path = export_participants_md(
+            path = export_participants_docx(
                 users      = self._raw_users,
                 chat_title = chat_title,
                 output_dir = output_dir,
                 counts     = counts,
             )
-            suffix = f" (с кол-вом сообщений)" if counts else ""
+            suffix = " (с количеством сообщений)" if counts else ""
             self.log_message.emit(
                 f"✅ Список участников сохранён{suffix}: {os.path.basename(path)}"
             )
@@ -895,11 +913,13 @@ class SettingsPanel(QWidget):
         if new_counts == self._member_counts:
             return  # ничего не изменилось
         self._member_counts = new_counts
-        # Запомним выбранные теги по user_id чтобы восстановить после пересборки
-        selected_ids = {
-            tag.user_id for tag in self._user_tags
-            if not tag.is_all and tag.isChecked()
-        }
+        # Запомним отмеченные uid для восстановления после пересборки
+        selected_ids = set()
+        for i in range(self._members_list.count()):
+            item = self._members_list.item(i)
+            uid  = item.data(Qt.ItemDataRole.UserRole)
+            if uid and uid != 0 and item.checkState() == Qt.CheckState.Checked:
+                selected_ids.add(uid)
         self._rebuild_member_tags(restore_selected=selected_ids)
         if new_counts:
             top_user = max(new_counts, key=new_counts.get)
@@ -944,71 +964,72 @@ class SettingsPanel(QWidget):
         restore_selected: "set[int] | None" = None,
     ) -> None:
         """
-        Перестраивает виджеты тегов участников.
+        Перестраивает список участников в QListWidget с чекбоксами.
 
-        Если self._member_counts не пуст — добавляет к имени счётчик и
-        сортирует по убыванию активности.
+        Сортировка по убыванию активности:
+          - Источник 1: поле message_count в _raw_users (от get_user_stats)
+          - Источник 2: _member_counts из локальной БД (после парсинга)
+        Отображает @username + счётчик: «@anna (42)»
 
         Args:
-            restore_selected: Множество user_id чьи теги нужно оставить
-                              выбранными (используется при refresh).
+            restore_selected: set user_id которые нужно оставить отмеченными.
         """
-        from features.export.participants import enrich_and_sort_users
-
-        # Очистить старые виджеты
         self._user_tags.clear()
-        while self._tags_layout.count():
-            item = self._tags_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        self._members_list.blockSignals(True)
+        self._members_list.clear()
 
-        # Тег «Все»
-        all_tag = UserTag("Все", user_id=0, is_all=True, selected=True)
-        self._tags_layout.addWidget(all_tag)
-        self._user_tags.append(all_tag)
+        # ── Пункт «Все» ────────────────────────────────────────────────────
+        all_item = QListWidgetItem("👥  Все участники")
+        all_item.setData(Qt.ItemDataRole.UserRole, 0)   # uid=0 → «все»
+        all_item.setCheckState(Qt.CheckState.Checked)
+        self._members_list.addItem(all_item)
 
-        # Обогащаем и сортируем если есть счётчики
-        has_counts = bool(self._member_counts)
-        if has_counts:
-            display_users = enrich_and_sort_users(self._raw_users, self._member_counts)
-        else:
-            display_users = self._raw_users
+        from features.export.participants import enrich_and_sort_users
+        display_users = enrich_and_sort_users(self._raw_users, self._member_counts or None)
+        has_counts = any(u.get("msg_count", 0) > 0 for u in display_users)
 
         for user in display_users:
-            uid  = user.get("id", 0)
+            uid       = user.get("id", 0)
             base_name = (
-                user.get("username")
-                or user.get("name")
+                user.get("name")
+                or user.get("username")
                 or user.get("first_name")
                 or str(uid)
             )
-            # Добавляем счётчик в отображаемое имя если есть данные
+            uname   = user.get("username")
+            display = f"@{uname}" if uname else base_name
+
             if has_counts:
-                count     = user.get("msg_count", self._member_counts.get(uid, 0))
-                label     = f"{base_name} ({count:,})" if count else base_name
+                count = user.get("msg_count", 0)
+                label = f"{display}  ({count:,})" if count else display
             else:
-                label = base_name
+                label = display
 
-            is_selected = (restore_selected is not None and uid in restore_selected)
-            tag = UserTag(label, user_id=uid, is_all=False, selected=is_selected)
-            self._tags_layout.addWidget(tag)
-            self._user_tags.append(tag)
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, uid)
+            is_sel = (restore_selected is not None and uid in restore_selected)
+            item.setCheckState(
+                Qt.CheckState.Checked if is_sel else Qt.CheckState.Unchecked
+            )
+            self._members_list.addItem(item)
 
-        self._tags_layout.addStretch(1)
+        self._members_list.blockSignals(False)
 
     def get_params(self) -> Optional[ParseParams]:
         if self._current_chat is None:
             return None
 
-        # Выбранные user_ids (без «Все»-тега)
+        # Выбранные user_ids из QListWidget
         user_ids: list[int] = []
         all_selected = True
-        for tag in self._user_tags:
-            if tag.is_all:
-                if not tag.isChecked():
+        for i in range(self._members_list.count()):
+            item = self._members_list.item(i)
+            uid  = item.data(Qt.ItemDataRole.UserRole)
+            if uid == 0:   # пункт «Все»
+                if item.checkState() != Qt.CheckState.Checked:
                     all_selected = False
-            elif tag.isChecked():
-                user_ids.append(tag.user_id)
+            elif item.checkState() == Qt.CheckState.Checked:
+                user_ids.append(uid)
         if all_selected:
             user_ids = []
 
@@ -1815,12 +1836,13 @@ class MainWindow(QMainWindow):
 
     def _on_load_members(self, chat: dict) -> None:
         from features.chats.ui import MembersWorker
-        worker = MembersWorker(chat, self._cfg)
+        limit = self._settings_screen.get_members_limit()
+        worker = MembersWorker(chat, self._cfg, limit=limit)
         worker.members_loaded.connect(self._settings_screen.populate_members, Qt.UniqueConnection)
         worker.log_message.connect(self._log.append_info,                     Qt.UniqueConnection)
         worker.error.connect(self._on_worker_error,                           Qt.UniqueConnection)
         self._start_worker(worker)
-        self._rozetta.set_tip("Загружаю участников...")
+        self._rozetta.set_tip(f"Загружаю топ-{limit} участников...")
 
     # ──────────────────────────────────────────────────────────────────────
     # СЛОТЫ: ПАРСИНГ

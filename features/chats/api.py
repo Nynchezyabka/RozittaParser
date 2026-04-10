@@ -550,11 +550,15 @@ class ChatsService:
         log=None,
     ) -> List[Dict]:
         """
-        Собирает топ активных участников чата по количеству сообщений.
+        Собирает топ активных участников/комментаторов чата по количеству сообщений.
 
-        Статистика строится на основе последних 1000 сообщений.
-        Полная альтернатива — get_participants() + итерация, но она
-        требует прав администратора. Данный метод работает без привилегий.
+        Логика выбора источника сканирования (из telethon_2026_report.md):
+          - Канал (broadcast): сканируем linked discussion group — именно там хранятся
+            комментарии к постам. iter_messages(channel) даёт только авторов постов.
+          - Группа с linked_chat_id: это discussion group канала — предупреждаем
+            пользователя, что список включает только прямых участников группы,
+            а комментаторы постов видны при выборе канала.
+          - Обычная группа / форум: сканируем напрямую.
 
         Args:
             chat_id: ID чата (любой формат).
@@ -575,48 +579,105 @@ class ChatsService:
             logger.warning("chats: get_user_stats get_entity failed: %s", exc)
             return []
 
-        # Счётчик: {user_id: count}
-        counts: Dict[int, int] = {}
-        # Кэш имён: {user_id: display_name}
-        names: Dict[int, str] = {}
+        is_broadcast = isinstance(entity, Channel) and entity.broadcast
+        is_megagroup  = isinstance(entity, Channel) and entity.megagroup
+
+        # ── Определяем сущность для сканирования ─────────────────────────────
+        scan_entity   = entity
+        entity_label  = "участников"
+
+        if is_broadcast:
+            # Для канала ищем linked discussion group — там комментаторы
+            linked_id = await self.get_linked_group(chat_id, log=_log)
+            if linked_id:
+                try:
+                    scan_entity  = await self._client.get_entity(linked_id)
+                    entity_label = "комментаторов"
+                    _log(
+                        "💬 Канал: анализируем группу обсуждений "
+                        f"(linked_id={linked_id}) для поиска комментаторов..."
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "chats: get_user_stats: can't get linked group entity: %s", exc
+                    )
+                    _log(
+                        "⚠️ Не удалось получить группу обсуждений — "
+                        "показываем авторов постов канала."
+                    )
+            else:
+                _log(
+                    "ℹ️ У канала нет группы обсуждений — "
+                    "статистика по авторам постов канала."
+                )
+
+        elif is_megagroup:
+            # Проверяем: это discussion group канала?
+            try:
+                full = await self._client(GetFullChannelRequest(channel=entity))
+                linked_channel_id = getattr(full.full_chat, "linked_chat_id", None)
+                if linked_channel_id:
+                    _log(
+                        "⚠️ Эта группа является группой обсуждений канала. "
+                        "Список включает только тех, кто писал прямо в группу. "
+                        "Чтобы увидеть комментаторов постов — выберите канал."
+                    )
+            except Exception:
+                pass  # не критично, просто не предупреждаем
+
+        # ── Сканирование сообщений ────────────────────────────────────────────
+        # Сканируем достаточно сообщений чтобы покрыть топ-N с запасом
+        scan_limit: int = min(limit * 40, 5000)
+
+        counts:    Dict[int, int]          = {}
+        names:     Dict[int, str]          = {}
+        usernames: Dict[int, Optional[str]] = {}
 
         try:
-            async for message in self._client.iter_messages(entity, limit=1000):
+            _log(f"🔍 Сканирую последние {scan_limit} сообщений...")
+            async for message in self._client.iter_messages(
+                scan_entity, limit=scan_limit
+            ):
                 sender_id = getattr(message, "sender_id", None)
                 if sender_id is None:
                     continue
 
                 counts[sender_id] = counts.get(sender_id, 0) + 1
 
-                # Имя — берём из объекта сообщения, если ещё не знаем
                 if sender_id not in names:
                     sender = getattr(message, "sender", None)
                     if sender is not None:
                         if isinstance(sender, User):
-                            name = (
-                                f"{sender.first_name or ''} {sender.last_name or ''}".strip()
-                                or sender.username
-                                or str(sender_id)
-                            )
+                            first = sender.first_name or ""
+                            last  = sender.last_name  or ""
+                            name  = f"{first} {last}".strip() or sender.username or str(sender_id)
+                            uname = sender.username
                         else:
-                            name = getattr(sender, "title", str(sender_id))
-                        names[sender_id] = name
+                            name  = getattr(sender, "title", str(sender_id))
+                            uname = None
+                        names[sender_id]     = name
+                        usernames[sender_id] = uname
 
         except Exception as exc:
             logger.warning("chats: get_user_stats iter_messages failed: %s", exc)
             _log(f"⚠️ Ошибка получения статистики: {exc}")
             return []
 
-        # Сортируем и обрезаем до limit
+        # ── Сортируем и обрезаем до limit ─────────────────────────────────────
         sorted_users = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:limit]
 
         result: List[Dict] = [
-            {"id": uid, "name": names.get(uid, f"User_{uid}"), "username": None, "message_count": cnt}
+            {
+                "id":            uid,
+                "name":          names.get(uid, f"User_{uid}"),
+                "username":      usernames.get(uid),
+                "message_count": cnt,
+            }
             for uid, cnt in sorted_users
         ]
 
-        _log(f"📊 Топ {len(result)} активных участников получен")
-        logger.info("chats: get_user_stats → %d users", len(result))
+        _log(f"📊 Топ {len(result)} активных {entity_label} получен")
+        logger.info("chats: get_user_stats → %d users (label=%s)", len(result), entity_label)
         return result
 
     # ------------------------------------------------------------------
