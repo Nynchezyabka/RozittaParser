@@ -88,15 +88,15 @@ def _font(size: int, weight: int = QFont.Weight.Normal) -> QFont:
 class PasswordLineEdit(QWidget):
     """
     Поле ввода пароля с кнопкой показа/скрытия (иконка глаза).
-    Эмитирует text_changed(str) — как стандартный QLineEdit.
+    Эмитирует textChanged(str) — как стандартный QLineEdit.
 
     Пример:
         field = PasswordLineEdit(placeholder="ваш hash")
-        field.text_changed.connect(on_hash_changed)
+        field.textChanged.connect(on_hash_changed)
         value = field.text()
     """
 
-    text_changed = Signal(str)
+    textChanged = Signal(str)
 
     def __init__(self, placeholder: str = "", parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -111,7 +111,7 @@ class PasswordLineEdit(QWidget):
         self._edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._edit.setPlaceholderText(placeholder)
         self._edit.setStyleSheet(QSS_INPUT)
-        self._edit.text_changed.connect(self.text_changed)
+        self._edit.textChanged.connect(self.textChanged)
 
         self._toggle_btn = QPushButton("👁")
         self._toggle_btn.setFixedSize(36, 36)

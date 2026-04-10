@@ -660,8 +660,8 @@ class CollapsibleSection(QWidget):
         root.setSpacing(3)
 
         self._hdr = SectionHeaderWidget(chat_type, count=0, expanded=False)
-        # self._hdr.toggled.connect(lambda exp: self._body.setVisible(exp))
-        self._hdr.toggled.connect(self._body.setVisible)
+        self._hdr.toggled.connect(lambda exp: self._body.setVisible(exp))
+        # self._hdr.toggled.connect(self._body.setVisible)
         root.addWidget(self._hdr)
 
         self._body = QWidget()
