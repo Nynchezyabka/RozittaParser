@@ -32,7 +32,7 @@ import asyncio
 import logging
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal, Slot, QThread
+from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel,
@@ -52,9 +52,7 @@ from core.ui_shared.styles import (
 )
 from core.ui_shared.widgets import SectionTitle
 
-
 logger = logging.getLogger(__name__)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # КОНСТАНТЫ ТИПОВ ЧАТОВ
@@ -62,31 +60,31 @@ logger = logging.getLogger(__name__)
 
 _TYPE_STYLES: dict[str, dict] = {
     "channel": {
-        "icon":     "📢",
-        "label":    "Каналы",
-        "accent":   ACCENT_ORANGE,
-        "icon_bg":  "rgba(255,149,0,0.2)",
+        "icon": "📢",
+        "label": "Каналы",
+        "accent": ACCENT_ORANGE,
+        "icon_bg": "rgba(255,149,0,0.2)",
         "badge_bg": ACCENT_SOFT_ORANGE,
     },
     "group": {
-        "icon":     "👥",
-        "label":    "Группы",
-        "accent":   ACCENT_PINK,
-        "icon_bg":  "rgba(255,107,201,0.2)",
+        "icon": "👥",
+        "label": "Группы",
+        "accent": ACCENT_PINK,
+        "icon_bg": "rgba(255,107,201,0.2)",
         "badge_bg": ACCENT_SOFT_PINK,
     },
     "forum": {
-        "icon":     "💬",
-        "label":    "Форумы",
-        "accent":   ACCENT_PINK,
-        "icon_bg":  "rgba(255,107,201,0.2)",
+        "icon": "💬",
+        "label": "Форумы",
+        "accent": ACCENT_PINK,
+        "icon_bg": "rgba(255,107,201,0.2)",
         "badge_bg": ACCENT_SOFT_PINK,
     },
     "private": {
-        "icon":     "👤",
-        "label":    "Диалоги",
-        "accent":   "#0096FF",
-        "icon_bg":  "rgba(0,150,255,0.2)",
+        "icon": "👤",
+        "label": "Диалоги",
+        "accent": "#0096FF",
+        "icon_bg": "rgba(0,150,255,0.2)",
         "badge_bg": "rgba(0,150,255,0.15)",
     },
 }
@@ -121,16 +119,16 @@ class ChatsWorker(QThread):
         character_state(str)
     """
 
-    chats_loaded    = Signal(list)
-    log_message     = Signal(str)
-    error           = Signal(str)
+    chats_loaded = Signal(list)
+    log_message = Signal(str)
+    error = Signal(str)
     character_state = Signal(str)
 
     def __init__(self, cfg: AppConfig,
                  force_refresh: bool = False,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self._cfg           = cfg
+        self._cfg = cfg
         self._force_refresh = force_refresh
 
     def run(self) -> None:
@@ -147,21 +145,11 @@ class ChatsWorker(QThread):
             loop.close()
 
     async def _load(self) -> list:
-        from telethon import TelegramClient
         from features.chats.api import ChatsService
         from core.utils import build_telegram_client
 
         self.character_state.emit("process")
         self.log_message.emit("📥 Загружаю список чатов...")
-        # client = TelegramClient(
-        #     str(self._cfg.session_path),
-        #     self._cfg.api_id_int,
-        #     self._cfg.api_hash,
-        #     timeout=120,
-        #     connection_retries=5,
-        #     retry_delay=5,
-        #     auto_reconnect=True,
-        # )
         client = build_telegram_client(self._cfg)
 
         await client.connect()
@@ -171,10 +159,10 @@ class ChatsWorker(QThread):
             import os
             cache_db = os.path.join(self._cfg.output_dir, "dialogs_cache.db")
             chats = await service.get_dialogs(
-                limit          = 500,
-                log            = self.log_message.emit,
-                cache_db_path  = cache_db,
-                force_refresh  = self._force_refresh,
+                limit=500,
+                log=self.log_message.emit,
+                cache_db_path=cache_db,
+                force_refresh=self._force_refresh,
             )
             self.character_state.emit("success")
             return chats
@@ -195,16 +183,16 @@ class TopicsWorker(QThread):
         character_state(str)
     """
 
-    topics_loaded   = Signal(object)
-    log_message     = Signal(str)
-    error           = Signal(str)
+    topics_loaded = Signal(object)
+    log_message = Signal(str)
+    error = Signal(str)
     character_state = Signal(str)
 
     def __init__(self, chat_id: int, cfg: AppConfig,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._chat_id = chat_id
-        self._cfg     = cfg
+        self._cfg = cfg
 
     def run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -219,21 +207,12 @@ class TopicsWorker(QThread):
             loop.close()
 
     async def _load(self) -> dict:
-        from telethon import TelegramClient
         from features.chats.api import ChatsService
         self.log_message.emit("📁 Загружаю ветки форума...")
         from core.utils import build_telegram_client
 
         client = build_telegram_client(self._cfg)
-        # client = TelegramClient(
-        #     str(self._cfg.session_path),
-        #     self._cfg.api_id_int,
-        #     self._cfg.api_hash,
-        #     timeout=120,
-        #     connection_retries=5,
-        #     retry_delay=5,
-        #     auto_reconnect=True,
-        # )
+
         await client.connect()
         try:
             service = ChatsService(client)
@@ -255,14 +234,14 @@ class LinkedGroupWorker(QThread):
         log_message(str)
     """
 
-    linked_found = Signal(object)   # chat dict с заполненным linked_chat_id
-    log_message  = Signal(str)
+    linked_found = Signal(object)  # chat dict с заполненным linked_chat_id
+    log_message = Signal(str)
 
     def __init__(self, chat: dict, cfg: AppConfig,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._chat = chat
-        self._cfg  = cfg
+        self._cfg = cfg
 
     def run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -275,18 +254,11 @@ class LinkedGroupWorker(QThread):
             loop.close()
 
     async def _check(self) -> None:
-        from telethon import TelegramClient
         from features.chats.api import ChatsService
         from core.utils import build_telegram_client
 
         client = build_telegram_client(self._cfg)
-        # client = TelegramClient(
-        #     str(self._cfg.session_path),
-        #     self._cfg.api_id_int,
-        #     self._cfg.api_hash,
-        #     timeout=30,
-        #     connection_retries=3,
-        # )
+
         await client.connect()
         try:
             service = ChatsService(client)
@@ -297,7 +269,7 @@ class LinkedGroupWorker(QThread):
             if linked_id:
                 updated = dict(self._chat)
                 updated["linked_chat_id"] = linked_id
-                updated["has_comments"]   = True
+                updated["has_comments"] = True
                 self.linked_found.emit(updated)
                 logger.debug("LinkedGroupWorker: %s → linked=%s",
                              self._chat.get("title"), linked_id)
@@ -306,7 +278,6 @@ class LinkedGroupWorker(QThread):
 
 
 class MembersWorker(QThread):
-
     """
     Загружает список участников чата через ChatsService.get_user_stats().
 
@@ -319,14 +290,14 @@ class MembersWorker(QThread):
     """
 
     members_loaded = Signal(list)
-    log_message    = Signal(str)
-    error          = Signal(str)
+    log_message = Signal(str)
+    error = Signal(str)
 
     def __init__(self, chat: dict, cfg: AppConfig,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._chat = chat
-        self._cfg  = cfg
+        self._cfg = cfg
 
     def run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -341,20 +312,10 @@ class MembersWorker(QThread):
             loop.close()
 
     async def _load(self) -> list:
-        from telethon import TelegramClient
         from features.chats.api import ChatsService
         self.log_message.emit("👥 Загружаю участников...")
         from core.utils import build_telegram_client
         client = build_telegram_client(self._cfg)
-        # client = TelegramClient(
-        #     str(self._cfg.session_path),
-        #     self._cfg.api_id_int,
-        #     self._cfg.api_hash,
-        #     timeout=120,
-        #     connection_retries=5,
-        #     retry_delay=5,
-        #     auto_reconnect=True,
-        # )
         await client.connect()
         try:
             service = ChatsService(client)
@@ -383,19 +344,19 @@ class ChatItemWidget(QWidget):
         topics_clicked(int)  — кнопка «ветки» нажата (только forum)
     """
 
-    clicked        = Signal(object)   # chat dict
-    dclicked       = Signal(object)   # chat dict
-    topics_clicked = Signal(object)   # chat_id (object — Telegram ID > 2^31)
+    clicked = Signal(object)  # chat dict
+    dclicked = Signal(object)  # chat dict
+    topics_clicked = Signal(object)  # chat_id (object — Telegram ID > 2^31)
 
     def __init__(self, chat: dict, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._chat = chat
-        self._sel  = False
-        self._hov  = False
+        self._sel = False
+        self._hov = False
 
         ctype = chat.get("type", "private")
         s = _TYPE_STYLES.get(ctype, _TYPE_STYLES["private"])
-        self._accent  = s["accent"]
+        self._accent = s["accent"]
         self._icon_bg = s["icon_bg"]
 
         self.setMouseTracking(True)
@@ -560,8 +521,8 @@ class ChatItemWidget(QWidget):
     def matches(self, q: str) -> bool:
         """Фильтрация по поисковому запросу (case-insensitive)."""
         return (
-            q in (self._chat.get("title") or "").lower()
-            or q in (self._chat.get("username") or "").lower()
+                q in (self._chat.get("title") or "").lower()
+                or q in (self._chat.get("username") or "").lower()
         )
 
     @property
@@ -599,7 +560,7 @@ class SectionHeaderWidget(QWidget):
     Клик → toggle тела секции. Эмитирует toggled(bool).
     """
 
-    toggled = Signal(bool)   # True = развёрнуто
+    toggled = Signal(bool)  # True = развёрнуто
 
     def __init__(self, chat_type: str, count: int = 0,
                  expanded: bool = True,
@@ -684,15 +645,15 @@ class CollapsibleSection(QWidget):
     Одна секция на тип чата (Каналы / Группы / Форумы / Диалоги).
     """
 
-    item_clicked   = Signal(object)   # chat dict
-    item_dclicked  = Signal(object)   # chat dict
-    topics_clicked = Signal(object)   # chat_id (object — Telegram ID > 2^31)
+    item_clicked = Signal(object)  # chat dict
+    item_dclicked = Signal(object)  # chat dict
+    topics_clicked = Signal(object)  # chat_id (object — Telegram ID > 2^31)
 
     def __init__(self, chat_type: str,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._items:  list[ChatItemWidget]     = []
-        self._sel_w:  Optional[ChatItemWidget] = None
+        self._items: list[ChatItemWidget] = []
+        self._sel_w: Optional[ChatItemWidget] = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 4)
@@ -700,6 +661,7 @@ class CollapsibleSection(QWidget):
 
         self._hdr = SectionHeaderWidget(chat_type, count=0, expanded=False)
         self._hdr.toggled.connect(lambda exp: self._body.setVisible(exp))
+        # self._hdr.toggled.connect(self._body.setVisible)
         root.addWidget(self._hdr)
 
         self._body = QWidget()
@@ -712,7 +674,6 @@ class CollapsibleSection(QWidget):
         self._bl.setSpacing(3)
         self._body.setVisible(False)
         root.addWidget(self._body)
-
 
     def populate(self, chats: List[dict]) -> None:
         # Отключаем перерисовку на время заполнения — устраняет визуальный «фриз»
@@ -785,9 +746,9 @@ class CollapsibleChatsWidget(QScrollArea):
     Группирует входящий список по полю chat["type"].
     """
 
-    item_selected  = Signal(object)   # выбор одиночным кликом
-    item_activated = Signal(object)   # двойной клик → сразу подтвердить
-    topics_clicked = Signal(object)   # кнопка «ветки» нажата (object — Telegram ID > 2^31)
+    item_selected = Signal(object)  # выбор одиночным кликом
+    item_activated = Signal(object)  # двойной клик → сразу подтвердить
+    topics_clicked = Signal(object)  # кнопка «ветки» нажата (object — Telegram ID > 2^31)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -874,18 +835,18 @@ class ChatsScreen(QWidget):
         load_chats()             — запросить обновление (обратная совместимость)
     """
 
-    chat_selected     = Signal(object)   # полный chat dict (БЫЛО: Signal(int, str))
-    log_message       = Signal(str)
-    character_state   = Signal(str)
-    request_topics    = Signal(object)  # chat_id (object — Telegram ID > 2^31)
+    chat_selected = Signal(object)  # полный chat dict (БЫЛО: Signal(int, str))
+    log_message = Signal(str)
+    character_state = Signal(str)
+    request_topics = Signal(object)  # chat_id (object — Telegram ID > 2^31)
     refresh_requested = Signal()
 
     def __init__(self, cfg: AppConfig,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._cfg      = cfg
+        self._cfg = cfg
         self._sel_chat: Optional[dict] = None
-        self._topics:   dict           = {}
+        self._topics: dict = {}
         self._build_ui()
 
     # ──────────────────────────────────────────────────────────────────────
@@ -1123,7 +1084,7 @@ class ChatsScreen(QWidget):
     def _on_sel(self, chat: dict) -> None:
         self._sel_chat = chat
         name = chat.get("title", "?")
-        cid  = chat.get("id", "")
+        cid = chat.get("id", "")
         self._sel_lbl.setText(f"Выбрано: {name}  ({cid})")
         self._btn_open.setEnabled(True)
 
@@ -1163,7 +1124,7 @@ class ChatsScreen(QWidget):
         # Для форума добавляем выбранный топик
         if chat.get("type") == "forum":
             topic_id = self._topics_combo.currentData()
-            chat = dict(chat)    # не мутируем оригинал
+            chat = dict(chat)  # не мутируем оригинал
             chat["selected_topic_id"] = topic_id
 
         self.log_message.emit(f"✅ Выбран: {chat.get('title', '?')}")

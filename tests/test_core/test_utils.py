@@ -3,7 +3,6 @@ tests/test_core/test_utils.py
 
 Тесты: finalize_telegram_id, sanitize_filename, is_image_path, DownloadTracker.
 """
-import os
 import pytest
 from core.utils import (
     finalize_telegram_id,

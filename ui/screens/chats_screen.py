@@ -38,7 +38,6 @@ from features.chats.ui import ChatsWorker, TopicsWorker
 
 logger = logging.getLogger(__name__)
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Константы (совпадают с HTML-макетом Rozitta_prototype.html)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -72,7 +71,7 @@ _TYPE_STYLES: dict = {
 _SECTION_ORDER = ("channel", "group", "forum", "private")
 
 _TEXT_TITLE = "#F0F0F0"
-_TEXT_META  = "#CCCCCC"
+_TEXT_META = "#CCCCCC"
 
 
 def _fmt(n: int) -> str:
@@ -95,19 +94,19 @@ class ChatItemWidget(QWidget):
     прямо в stylesheet РОДИТЕЛЯ. Qt CSS-каскад гарантирует видимость текста
     при любом динамическом изменении фона через setStyleSheet().
     """
-    clicked        = Signal(object)  # chat dict
-    dclicked       = Signal(object)  # chat dict
-    topics_clicked = Signal(int)     # chat_id
+    clicked = Signal(object)  # chat dict
+    dclicked = Signal(object)  # chat dict
+    topics_clicked = Signal(int)  # chat_id
 
     def __init__(self, chat: dict, parent=None) -> None:
         super().__init__(parent)
         self._chat = chat
-        self._sel  = False
-        self._hov  = False
+        self._sel = False
+        self._hov = False
 
         ctype = chat.get("type", "private")
         s = _TYPE_STYLES.get(ctype, _TYPE_STYLES["private"])
-        self._accent  = s["accent"]
+        self._accent = s["accent"]
         self._icon_bg = s["icon_bg"]
 
         self.setMouseTracking(True)
@@ -280,8 +279,8 @@ class ChatItemWidget(QWidget):
 
     def matches(self, q: str) -> bool:
         return (
-            q in (self._chat.get("title") or "").lower()
-            or q in (self._chat.get("username") or "").lower()
+                q in (self._chat.get("title") or "").lower()
+                or q in (self._chat.get("username") or "").lower()
         )
 
 
@@ -364,8 +363,8 @@ class SectionHeaderWidget(QWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class CollapsibleSection(QWidget):
-    item_clicked   = Signal(object)
-    item_dclicked  = Signal(object)
+    item_clicked = Signal(object)
+    item_dclicked = Signal(object)
     topics_clicked = Signal(int)
 
     def __init__(self, chat_type: str, parent=None) -> None:
@@ -378,7 +377,7 @@ class CollapsibleSection(QWidget):
         root.setSpacing(3)
 
         self._hdr = SectionHeaderWidget(chat_type, count=0, expanded=True)
-        self._hdr.toggled.connect(lambda exp: self._body.setVisible(exp))
+        self._hdr.toggled.connect(self._body.setVisible)
         root.addWidget(self._hdr)
 
         self._body = QWidget()
@@ -443,7 +442,7 @@ class CollapsibleSection(QWidget):
 
 class CollapsibleChatsWidget(QScrollArea):
     """QScrollArea с 4 коллапсируемыми секциями."""
-    item_selected  = Signal(dict)
+    item_selected = Signal(dict)
     item_activated = Signal(dict)
     topics_clicked = Signal(int)
 
@@ -524,17 +523,17 @@ class ChatsScreen(QWidget):
         log_message(str)
         character_state(str)
     """
-    chat_selected   = Signal(int, str)    # chat_id, chat_title (совместимо с MW)
-    log_message     = Signal(str)
+    chat_selected = Signal(int, str)  # chat_id, chat_title (совместимо с MW)
+    log_message = Signal(str)
     character_state = Signal(str)
 
     def __init__(self, cfg: AppConfig, parent=None) -> None:
         super().__init__(parent)
-        self._cfg            = cfg
-        self._chats_worker:  Optional[ChatsWorker]  = None
+        self._cfg = cfg
+        self._chats_worker: Optional[ChatsWorker] = None
         self._topics_worker: Optional[TopicsWorker] = None
-        self._sel_chat:      Optional[dict]         = None
-        self._topics:        Dict[int, str]         = {}
+        self._sel_chat: Optional[dict] = None
+        self._topics: Dict[int, str] = {}
         self._build_ui()
 
     # ── Public API ────────────────────────────────────────────────────
@@ -692,7 +691,7 @@ class ChatsScreen(QWidget):
     def _on_sel(self, chat: dict) -> None:
         self._sel_chat = chat
         name = chat.get("title", "?")
-        cid  = chat.get("id", "")
+        cid = chat.get("id", "")
         self._sel_lbl.setText(f"Выбрано: {name}  ({cid})")
         self._btn_open.setEnabled(True)
         # Форум — подставляем топики если уже загружены
@@ -724,7 +723,7 @@ class ChatsScreen(QWidget):
         """Запускает TopicsWorker для загрузки веток форума."""
         if self._topics_worker and self._topics_worker.isRunning():
             return
-        self.log_message.emit(f"📁 Загрузка веток форума...")
+        self.log_message.emit("📁 Загрузка веток форума...")
         self._topics_combo.clear()
         self._topics_frame.setVisible(True)
         self._topics_worker = TopicsWorker(self._cfg, chat_id)
@@ -748,7 +747,7 @@ class ChatsScreen(QWidget):
         chat = self._sel_chat or self._chats_widget.get_selected_chat()
         if not chat:
             return
-        chat_id    = chat.get("id")
+        chat_id = chat.get("id")
         chat_title = chat.get("title", "?")
         self.log_message.emit(f"✅ Выбран: {chat_title}")
         self.chat_selected.emit(chat_id, chat_title)

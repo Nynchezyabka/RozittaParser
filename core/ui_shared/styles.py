@@ -21,50 +21,52 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QWidget
 
+from PySide6.QtWidgets import QApplication
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ЦВЕТОВЫЕ КОНСТАНТЫ
 # Источник: :root { } из Rozitta_prototype.html
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Фоны
-BG_PRIMARY        = "#2B2B2B"          # --bg-primary
-BG_SURFACE        = "rgba(255,255,255,0.05)"   # --surface (glassmorphism)
-BG_SURFACE_HOVER  = "rgba(255,255,255,0.08)"   # --surface-hover
-BG_DARK_OVERLAY   = "rgba(0,0,0,0.3)"          # фон полей ввода
-BG_DARK_OVERLAY2  = "rgba(0,0,0,0.2)"          # фон секций
-BG_DARK_OVERLAY3  = "rgba(0,0,0,0.1)"          # фон списка чатов
+BG_PRIMARY = "#2B2B2B"  # --bg-primary
+BG_SURFACE = "rgba(255,255,255,0.05)"  # --surface (glassmorphism)
+BG_SURFACE_HOVER = "rgba(255,255,255,0.08)"  # --surface-hover
+BG_DARK_OVERLAY = "rgba(0,0,0,0.3)"  # фон полей ввода
+BG_DARK_OVERLAY2 = "rgba(0,0,0,0.2)"  # фон секций
+BG_DARK_OVERLAY3 = "rgba(0,0,0,0.1)"  # фон списка чатов
 
 # Qt не поддерживает rgba() напрямую — используем аналоги через QColor
 # Для QSS виджетов применяются hex-эквиваленты с opacity через alpha
-SURFACE_HEX       = "#0D0D0D"          # ~rgba(255,255,255,0.05) на #2B2B2B
-SURFACE_HOVER_HEX = "#141414"          # ~rgba(255,255,255,0.08) на #2B2B2B
-OVERLAY_HEX       = "#1A1A1A"          # rgba(0,0,0,0.3) на #2B2B2B → ~#1F1F1F
-OVERLAY2_HEX      = "#242424"          # rgba(0,0,0,0.2) на #2B2B2B
+SURFACE_HEX = "#0D0D0D"  # ~rgba(255,255,255,0.05) на #2B2B2B
+SURFACE_HOVER_HEX = "#141414"  # ~rgba(255,255,255,0.08) на #2B2B2B
+OVERLAY_HEX = "#1A1A1A"  # rgba(0,0,0,0.3) на #2B2B2B → ~#1F1F1F
+OVERLAY2_HEX = "#242424"  # rgba(0,0,0,0.2) на #2B2B2B
 
 # Акценты
-ACCENT_ORANGE       = "#FF9500"        # --accent-orange
-ACCENT_PINK         = "#FF6BC9"        # --accent-pink
-ACCENT_SOFT_ORANGE  = "#3D2400"        # --accent-soft-orange (rgba(255,149,0,0.15))
-ACCENT_SOFT_PINK    = "#3D1A30"        # --accent-soft-pink   (rgba(255,107,201,0.15))
+ACCENT_ORANGE = "#FF9500"  # --accent-orange
+ACCENT_PINK = "#FF6BC9"  # --accent-pink
+ACCENT_SOFT_ORANGE = "#3D2400"  # --accent-soft-orange (rgba(255,149,0,0.15))
+ACCENT_SOFT_PINK = "#3D1A30"  # --accent-soft-pink   (rgba(255,107,201,0.15))
 
 # Акценты для hover
-ACCENT_ORANGE_HOVER = "#E08600"        # btn-primary:hover
-ACCENT_PINK_HOVER   = "#FF45BB"        # accent-pink hover
+ACCENT_ORANGE_HOVER = "#E08600"  # btn-primary:hover
+ACCENT_PINK_HOVER = "#FF45BB"  # accent-pink hover
 
 # Семантические цвета
-COLOR_ERROR   = "#FF4D4D"             # --error
-COLOR_WARNING = "#FFAA00"             # --warning
-COLOR_SUCCESS = "#00C853"             # --success
-COLOR_DM      = "#0066FF"             # dm/диалог синий
+COLOR_ERROR = "#FF4D4D"  # --error
+COLOR_WARNING = "#FFAA00"  # --warning
+COLOR_SUCCESS = "#00C853"  # --success
+COLOR_DM = "#0066FF"  # dm/диалог синий
 
 # Текст
-TEXT_PRIMARY   = "#F0F0F0"            # --text-primary
-TEXT_SECONDARY = "#CCCCCC"            # --text-secondary
-TEXT_DISABLED  = "#888888"            # disabled состояния
+TEXT_PRIMARY = "#F0F0F0"  # --text-primary
+TEXT_SECONDARY = "#CCCCCC"  # --text-secondary
+TEXT_DISABLED = "#888888"  # disabled состояния
 
 # Границы
-BORDER_LIGHT = "rgba(255,255,255,0.1)"   # --border-light
-BORDER_HEX   = "#1A1A1A"                 # hex-аналог для QSS
+BORDER_LIGHT = "rgba(255,255,255,0.1)"  # --border-light
+BORDER_HEX = "#1A1A1A"  # hex-аналог для QSS
 
 # Специальные
 TRANSPARENT = "transparent"
@@ -73,48 +75,48 @@ TRANSPARENT = "transparent"
 # РАЗМЕРНЫЕ КОНСТАНТЫ
 # ══════════════════════════════════════════════════════════════════════════════
 
-RADIUS_LG  = 16    # --radius (большие карточки, панели)
-RADIUS_MD  = 10    # --radius-sm (кнопки, инпуты, мелкие элементы)
-RADIUS_SM  = 8     # дополнительный уровень для иконок
-RADIUS_XS  = 6     # теги, бейджи
+RADIUS_LG = 16  # --radius (большие карточки, панели)
+RADIUS_MD = 10  # --radius-sm (кнопки, инпуты, мелкие элементы)
+RADIUS_SM = 8  # дополнительный уровень для иконок
+RADIUS_XS = 6  # теги, бейджи
 
-PADDING_LG  = 20   # карточки
-PADDING_MD  = 12   # секции
-PADDING_SM  = 8    # элементы списка
-PADDING_XS  = 4    # иконки
+PADDING_LG = 20  # карточки
+PADDING_MD = 12  # секции
+PADDING_SM = 8  # элементы списка
+PADDING_XS = 4  # иконки
 
 FONT_FAMILY = "Inter"
-FONT_SIZE_H1    = 20   # заголовок приложения
-FONT_SIZE_H2    = 16   # card-title
-FONT_SIZE_BODY  = 14   # основной текст (QSS в pt, браузер в px ≈ равны)
-FONT_SIZE_SMALL = 12   # мета-информация
-FONT_SIZE_XS    = 11   # бейджи, счётчики
+FONT_SIZE_H1 = 20  # заголовок приложения
+FONT_SIZE_H2 = 16  # card-title
+FONT_SIZE_BODY = 14  # основной текст (QSS в pt, браузер в px ≈ равны)
+FONT_SIZE_SMALL = 12  # мета-информация
+FONT_SIZE_XS = 11  # бейджи, счётчики
 
 # ── Псевдонимы (calendar.py и другие legacy-потребители) ──────────────────
-PAD_SMALL    = PADDING_SM
-PAD_TINY     = PADDING_XS
-PAD_MD       = PADDING_MD
-PAD_LG       = PADDING_LG
+PAD_SMALL = PADDING_SM
+PAD_TINY = PADDING_XS
+PAD_MD = PADDING_MD
+PAD_LG = PADDING_LG
 
 RADIUS_SMALL = RADIUS_SM
-RADIUS_TINY  = RADIUS_XS
+RADIUS_TINY = RADIUS_XS
 
-FONT_BODY    = FONT_SIZE_BODY
-FONT_SMALL   = FONT_SIZE_SMALL
-FONT_TINY    = FONT_SIZE_XS
+FONT_BODY = FONT_SIZE_BODY
+FONT_SMALL = FONT_SIZE_SMALL
+FONT_TINY = FONT_SIZE_XS
 
-TEXT_LIGHT   = TEXT_SECONDARY
-TEXT_MUTED   = TEXT_DISABLED
+TEXT_LIGHT = TEXT_SECONDARY
+TEXT_MUTED = TEXT_DISABLED
 
-ACCENT_AMBER    = COLOR_WARNING   # #FFAA00 — янтарный
-ACCENT_CORAL    = COLOR_ERROR     # #FF4D4D — коралловый
-ACCENT_LAVENDER = "#9B8FD9"       # лавандовый
+ACCENT_AMBER = COLOR_WARNING  # #FFAA00 — янтарный
+ACCENT_CORAL = COLOR_ERROR  # #FF4D4D — коралловый
+ACCENT_LAVENDER = "#9B8FD9"  # лавандовый
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PALETTE — QSS строки для QPalette (применяется к QApplication)
 # ══════════════════════════════════════════════════════════════════════════════
 
-APPLICATION_STYLE_FUSION = "Fusion"   # базовый стиль Qt для кастомизации
+APPLICATION_STYLE_FUSION = "Fusion"  # базовый стиль Qt для кастомизации
 
 # ══════════════════════════════════════════════════════════════════════════════
 # QSS БЛОКИ
@@ -686,12 +688,13 @@ QSS_CHAT_ITEM_SELECTED = f"""
 
 # ── Иконки типов чатов (цвет фона и текста) ───────────────────────────────
 CHAT_ICON_COLORS: dict[str, tuple[str, str]] = {
-    "channel": (f"rgba(255,149,0,0.2)", ACCENT_ORANGE),
-    "group":   (f"rgba(255,107,201,0.2)", ACCENT_PINK),
-    "forum":   (f"rgba(255,107,201,0.2)", ACCENT_PINK),
-    "private": (f"rgba(0,200,83,0.2)", COLOR_SUCCESS),
-    "dm":      (f"rgba(0,102,255,0.2)", COLOR_DM),
+    "channel": ("rgba(255,149,0,0.2)", ACCENT_ORANGE),
+    "group": ("rgba(255,107,201,0.2)", ACCENT_PINK),
+    "forum": ("rgba(255,107,201,0.2)", ACCENT_PINK),
+    "private": ("rgba(0,200,83,0.2)", COLOR_SUCCESS),
+    "dm": ("rgba(0,102,255,0.2)", COLOR_DM),
 }
+
 
 def chat_icon_qss(chat_type: str) -> str:
     """Возвращает QSS для иконки QLabel по типу чата."""
@@ -709,6 +712,7 @@ def chat_icon_qss(chat_type: str) -> str:
             qproperty-alignment: AlignCenter;
         }}
     """
+
 
 # ── Бейдж (relation badge) ────────────────────────────────────────────────
 QSS_BADGE_PINK = f"""
@@ -829,35 +833,35 @@ QSS_DATE_EDIT = f"""
 
 # Реестр именованных стилей
 _STYLE_REGISTRY: dict[str, str] = {
-    "main_window":        QSS_MAIN_WINDOW,
-    "card":               QSS_CARD,
-    "input":              QSS_INPUT,
-    "combobox":           QSS_COMBOBOX,
-    "button":             QSS_BUTTON_BASE,
-    "button_primary":     QSS_BUTTON_PRIMARY,
-    "button_secondary":   QSS_BUTTON_SECONDARY,
-    "button_icon":        QSS_BUTTON_ICON,
-    "chat_list":          QSS_CHAT_LIST,
-    "scroll_area":        QSS_SCROLL_AREA,
-    "log_output":         QSS_LOG_OUTPUT,
-    "label_title":        QSS_LABEL_TITLE,
-    "label_section":      QSS_LABEL_SECTION,
-    "label_secondary":    QSS_LABEL_SECONDARY,
-    "label_hint":         QSS_LABEL_HINT,
-    "media_button":       QSS_MEDIA_BUTTON,
-    "chip_inactive":      QSS_CHIP_INACTIVE,
-    "chip_active":        QSS_CHIP_ACTIVE,
-    "user_tag":           QSS_USER_TAG,
-    "toggle":             QSS_TOGGLE,
-    "separator":          QSS_SEPARATOR,
-    "filter_button":      QSS_FILTER_BUTTON,
-    "chat_item_normal":   QSS_CHAT_ITEM_NORMAL,
+    "main_window": QSS_MAIN_WINDOW,
+    "card": QSS_CARD,
+    "input": QSS_INPUT,
+    "combobox": QSS_COMBOBOX,
+    "button": QSS_BUTTON_BASE,
+    "button_primary": QSS_BUTTON_PRIMARY,
+    "button_secondary": QSS_BUTTON_SECONDARY,
+    "button_icon": QSS_BUTTON_ICON,
+    "chat_list": QSS_CHAT_LIST,
+    "scroll_area": QSS_SCROLL_AREA,
+    "log_output": QSS_LOG_OUTPUT,
+    "label_title": QSS_LABEL_TITLE,
+    "label_section": QSS_LABEL_SECTION,
+    "label_secondary": QSS_LABEL_SECONDARY,
+    "label_hint": QSS_LABEL_HINT,
+    "media_button": QSS_MEDIA_BUTTON,
+    "chip_inactive": QSS_CHIP_INACTIVE,
+    "chip_active": QSS_CHIP_ACTIVE,
+    "user_tag": QSS_USER_TAG,
+    "toggle": QSS_TOGGLE,
+    "separator": QSS_SEPARATOR,
+    "filter_button": QSS_FILTER_BUTTON,
+    "chat_item_normal": QSS_CHAT_ITEM_NORMAL,
     "chat_item_selected": QSS_CHAT_ITEM_SELECTED,
-    "badge_pink":         QSS_BADGE_PINK,
-    "badge_orange":       QSS_BADGE_ORANGE,
-    "topic_link":         QSS_TOPIC_LINK,
-    "progress":           QSS_PROGRESS,
-    "date_edit":          QSS_DATE_EDIT,
+    "badge_pink": QSS_BADGE_PINK,
+    "badge_orange": QSS_BADGE_ORANGE,
+    "topic_link": QSS_TOPIC_LINK,
+    "progress": QSS_PROGRESS,
+    "date_edit": QSS_DATE_EDIT,
 }
 
 
@@ -910,30 +914,29 @@ def setup_application_style(app: "QApplication") -> None:
         app = QApplication(sys.argv)
         setup_application_style(app)
     """
-    from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QPalette, QColor
 
     app.setStyle(APPLICATION_STYLE_FUSION)
 
     # Базовая тёмная палитра для всего приложения
     palette = QPalette()
-    palette.setColor(QPalette.ColorRole.Window,          QColor(BG_PRIMARY))
-    palette.setColor(QPalette.ColorRole.WindowText,      QColor(TEXT_PRIMARY))
-    palette.setColor(QPalette.ColorRole.Base,            QColor(OVERLAY_HEX))
-    palette.setColor(QPalette.ColorRole.AlternateBase,   QColor(OVERLAY2_HEX))
-    palette.setColor(QPalette.ColorRole.Text,            QColor(TEXT_PRIMARY))
-    palette.setColor(QPalette.ColorRole.BrightText,      QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.Button,          QColor(OVERLAY_HEX))
-    palette.setColor(QPalette.ColorRole.ButtonText,      QColor(TEXT_PRIMARY))
-    palette.setColor(QPalette.ColorRole.Highlight,       QColor(ACCENT_ORANGE))
+    palette.setColor(QPalette.ColorRole.Window, QColor(BG_PRIMARY))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Base, QColor(OVERLAY_HEX))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(OVERLAY2_HEX))
+    palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.Button, QColor(OVERLAY_HEX))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT_ORANGE))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
     palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(TEXT_SECONDARY))
-    palette.setColor(QPalette.ColorRole.Link,            QColor(ACCENT_ORANGE))
-    palette.setColor(QPalette.ColorRole.LinkVisited,     QColor(ACCENT_PINK))
+    palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT_ORANGE))
+    palette.setColor(QPalette.ColorRole.LinkVisited, QColor(ACCENT_PINK))
 
     # Отключённые виджеты
     palette.setColor(QPalette.ColorGroup.Disabled,
-                     QPalette.ColorRole.Text,       QColor(TEXT_DISABLED))
+                     QPalette.ColorRole.Text, QColor(TEXT_DISABLED))
     palette.setColor(QPalette.ColorGroup.Disabled,
                      QPalette.ColorRole.ButtonText, QColor(TEXT_DISABLED))
 

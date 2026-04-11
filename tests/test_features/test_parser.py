@@ -4,7 +4,6 @@ tests/test_features/test_parser.py
 Тесты: CollectParams (BUG-4 user_ids), фильтрация sender_id.
 Не использует реальный Telegram — только датаклассы и логику.
 """
-import pytest
 from features.parser.api import CollectParams
 
 

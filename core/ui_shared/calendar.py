@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 ui_shared/calendar.py
 Виджет выбора диапазона дат.
@@ -9,7 +7,7 @@ ui_shared/calendar.py
   - Убраны inline-цвета, используются константы
   - Сигнатура и логика DateRangeWidget сохранены полностью
 """
-
+from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, date as date_type
 from typing import Optional, Tuple

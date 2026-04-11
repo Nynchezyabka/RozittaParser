@@ -27,12 +27,10 @@ from __future__ import annotations
 
 import re
 import logging
-from typing import Optional
 
 import docx
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
 from docx.text.paragraph import Paragraph
 
 logger = logging.getLogger(__name__)

@@ -5,7 +5,8 @@ SocksiPy + urllib2 handler
 version: 0.3
 author: e<e@tr0ll.in>
 
-This module provides a Handler which you can use with urllib2 to allow it to tunnel your connection through a socks.sockssocket socket, with out monkey patching the original socket...
+This module provides a Handler which you can use with urllib2 to allow it to tunnel your connection through a socks.
+sockssocket socket, with out monkey patching the original socket...
 """
 import socket
 import ssl
@@ -13,16 +14,18 @@ import ssl
 try:
     import urllib2
     import httplib
-except ImportError: # Python 3
+except ImportError:  # Python 3
     import urllib.request as urllib2
     import http.client as httplib
 
-import socks # $ pip install PySocks
+import socks  # $ pip install PySocks
+
 
 def merge_dict(a, b):
     d = a.copy()
     d.update(b)
     return d
+
 
 def is_ip(s):
     try:
@@ -32,12 +35,15 @@ def is_ip(s):
             socket.inet_aton(s)
         else:
             return False
-    except:
+    except Exception as e:
+        print(e)
         return False
     else:
         return True
 
+
 socks4_no_rdns = set()
+
 
 class SocksiPyConnection(httplib.HTTPConnection):
     def __init__(self, proxytype, proxyaddr, proxyport=None, rdns=True, username=None, password=None, *args, **kwargs):
@@ -64,6 +70,7 @@ class SocksiPyConnection(httplib.HTTPConnection):
                     raise
         self.sock = sock
 
+
 class SocksiPyConnectionS(httplib.HTTPSConnection):
     def __init__(self, proxytype, proxyaddr, proxyport=None, rdns=True, username=None, password=None, *args, **kwargs):
         self.proxyargs = (proxytype, proxyaddr, proxyport, rdns, username, password)
@@ -80,6 +87,7 @@ class SocksiPyConnectionS(httplib.HTTPSConnection):
                 self.sock.close()
                 raise
 
+
 class SocksiPyHandler(urllib2.HTTPHandler, urllib2.HTTPSHandler):
     def __init__(self, *args, **kwargs):
         self.args = args
@@ -91,6 +99,7 @@ class SocksiPyHandler(urllib2.HTTPHandler, urllib2.HTTPSHandler):
             kw = merge_dict(self.kw, kwargs)
             conn = SocksiPyConnection(*self.args, host=host, port=port, timeout=timeout, **kw)
             return conn
+
         return self.do_open(build, req)
 
     def https_open(self, req):
@@ -98,10 +107,13 @@ class SocksiPyHandler(urllib2.HTTPHandler, urllib2.HTTPSHandler):
             kw = merge_dict(self.kw, kwargs)
             conn = SocksiPyConnectionS(*self.args, host=host, port=port, timeout=timeout, **kw)
             return conn
+
         return self.do_open(build, req)
+
 
 if __name__ == "__main__":
     import sys
+
     try:
         port = int(sys.argv[1])
     except (ValueError, IndexError):

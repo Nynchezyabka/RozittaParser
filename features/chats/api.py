@@ -23,7 +23,6 @@ features/chats/api.py — Работа со списком чатов, фору�
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Dict, List, Optional
 
@@ -33,16 +32,12 @@ from telethon.tl.types import (
     Channel,
     Chat,
     User,
-    InputChannel,
 )
 from telethon.utils import get_peer_id
 
 from config import FORUM_TOPICS_PAGE_SIZE, MAX_USER_STATS_LIMIT
 from core.exceptions import (
     ChatNotFoundError,
-    FloodWaitError,
-    ForumTopicsError,
-    LinkedGroupNotFoundError,
     TelegramError,
 )
 from core.utils import finalize_telegram_id, TelegramEntityType

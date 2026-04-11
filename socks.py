@@ -1,4 +1,5 @@
 from base64 import b64encode
+
 try:
     from collections.abc import Callable
 except ImportError:
@@ -14,7 +15,6 @@ import struct
 import sys
 
 __version__ = "1.7.1"
-
 
 if os.name == "nt" and sys.version_info < (3, 0):
     try:
@@ -36,7 +36,6 @@ _orgsocket = _orig_socket = socket.socket
 
 
 def set_self_blocking(function):
-
     @functools.wraps(function)
     def wrapper(*args, **kwargs):
         self = args[0]
@@ -46,16 +45,19 @@ def set_self_blocking(function):
                 self.setblocking(True)
             return function(*args, **kwargs)
         except Exception as e:
+            print(e)
             raise
         finally:
             # set orgin blocking
             if _is_blocking == 0:
                 self.setblocking(False)
+
     return wrapper
 
 
 class ProxyError(IOError):
     """Socket_err contains original socket.error exception."""
+
     def __init__(self, msg, socket_err=None):
         self.msg = msg
         self.socket_err = socket_err
@@ -89,6 +91,7 @@ class SOCKS4Error(ProxyError):
 
 class HTTPError(ProxyError):
     pass
+
 
 SOCKS4_ERRORS = {
     0x5B: "Request rejected or failed",
@@ -133,6 +136,7 @@ def get_default_proxy():
     """Returns the default proxy, set by set_default_proxy."""
     return socksocket.default_proxy
 
+
 getdefaultproxy = get_default_proxy
 
 
@@ -146,6 +150,7 @@ def wrap_module(module):
         module.socket.socket = socksocket
     else:
         raise GeneralProxyError("No default proxy specified")
+
 
 wrapmodule = wrap_module
 
@@ -213,6 +218,7 @@ def create_connection(dest_pair,
 
 class _BaseSocket(socket.socket):
     """Allows Python 2 delegated methods such as send() to be overridden."""
+
     def __init__(self, *pos, **kw):
         _orig_socket.__init__(self, *pos, **kw)
 
@@ -226,6 +232,8 @@ class _BaseSocket(socket.socket):
 
 def _makemethod(name):
     return lambda self, *pos, **kw: self._savedmethods[name](*pos, **kw)
+
+
 for name in ("sendto", "send", "recvfrom", "recv"):
     method = getattr(_BaseSocket, name, None)
 
@@ -721,10 +729,10 @@ class socksocket(_BaseSocket):
         self.proxy_peername = addr, dest_port
 
     _proxy_negotiators = {
-                           SOCKS4: _negotiate_SOCKS4,
-                           SOCKS5: _negotiate_SOCKS5,
-                           HTTP: _negotiate_HTTP
-                         }
+        SOCKS4: _negotiate_SOCKS4,
+        SOCKS5: _negotiate_SOCKS5,
+        HTTP: _negotiate_HTTP
+    }
 
     @set_self_blocking
     def connect(self, dest_pair, catch_errors=None):
@@ -795,7 +803,7 @@ class socksocket(_BaseSocket):
                 printable_type = PRINTABLE_PROXY_TYPES[proxy_type]
 
                 msg = "Error connecting to {} proxy {}".format(printable_type,
-                                                                    proxy_server)
+                                                               proxy_server)
                 log.debug("%s due to: %s", msg, error)
                 raise ProxyConnectionError(msg, error)
             else:
@@ -818,7 +826,7 @@ class socksocket(_BaseSocket):
                 # Protocol error while negotiating with proxy
                 self.close()
                 raise
-                
+
     @set_self_blocking
     def connect_ex(self, dest_pair):
         """ https://docs.python.org/3/library/socket.html#socket.socket.connect_ex

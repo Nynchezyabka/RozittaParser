@@ -28,36 +28,33 @@ from typing import Optional
 
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve,
-    QRect, QSize, Property, QObject,
+    QRect, Property, QObject,
 )
 from PySide6.QtGui import (
-    QColor, QPainter, QPainterPath, QFont, QLinearGradient,
-    QFontDatabase, QTextCursor, QIcon,
+    QColor, QPainter, QPainterPath, QFont, QLinearGradient,QTextCursor, QIcon,
 )
 from PySide6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QHBoxLayout,
     QVBoxLayout, QSizePolicy, QLineEdit, QTextEdit,
-    QScrollArea, QGraphicsDropShadowEffect, QApplication,
+    QGraphicsDropShadowEffect, QApplication,
 )
 
 from core.ui_shared.styles import (
     # Цвета
     BG_PRIMARY, ACCENT_ORANGE, ACCENT_PINK, ACCENT_SOFT_ORANGE,
-    ACCENT_SOFT_PINK, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED,
+    ACCENT_SOFT_PINK, TEXT_PRIMARY, TEXT_SECONDARY,
     OVERLAY_HEX, OVERLAY2_HEX, BORDER_HEX,
     COLOR_SUCCESS, COLOR_ERROR, COLOR_WARNING,
     # Размеры
-    RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XS,
-    FONT_FAMILY, FONT_SIZE_H1, FONT_SIZE_H2, FONT_SIZE_BODY,
+    RADIUS_LG, RADIUS_MD, RADIUS_XS,
+    FONT_FAMILY, FONT_SIZE_H1, FONT_SIZE_BODY,
     FONT_SIZE_SMALL, FONT_SIZE_XS,
     # QSS блоки
-    QSS_BUTTON_PRIMARY, QSS_BUTTON_SECONDARY, QSS_BUTTON_BASE,
-    QSS_BUTTON_ICON, QSS_INPUT, QSS_LOG_OUTPUT, QSS_PROGRESS,
-    QSS_FILTER_BUTTON, QSS_SCROLL_AREA,
+    QSS_BUTTON_SECONDARY, QSS_BUTTON_BASE,
+    QSS_BUTTON_ICON, QSS_INPUT, QSS_LOG_OUTPUT,
+    QSS_FILTER_BUTTON,
     QSS_STEPPER_NUMBER_ACTIVE, QSS_STEPPER_NUMBER_INACTIVE,
-    QSS_STEPPER_STEP_ACTIVE, QSS_STEPPER_STEP_INACTIVE,
-    # Утилиты
-    apply_style,
+    QSS_STEPPER_STEP_INACTIVE,
 )
 
 
