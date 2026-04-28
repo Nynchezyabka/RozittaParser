@@ -392,6 +392,7 @@ class AuthScreen(QWidget):
                     color: {TEXT_SECONDARY};
                     font-size: 11px;
                     padding: 0 8px;
+                    outline: none;
                 }}
                 QPushButton:checked {{
                     background: {ACCENT_ORANGE};
@@ -450,6 +451,7 @@ class AuthScreen(QWidget):
                     color: {TEXT_SECONDARY};
                     font-size: 10px;
                     padding: 0 6px;
+                    outline: none;
                 }}
                 QPushButton:checked {{
                     background: {OVERLAY_HEX};
