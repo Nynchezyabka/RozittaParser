@@ -45,8 +45,7 @@ from PySide6.QtWidgets import (
 from core.ui_shared.styles import (
     ACCENT_ORANGE, ACCENT_PINK, ACCENT_SOFT_PINK,
     TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED,
-    OVERLAY_HEX, OVERLAY2_HEX, BORDER_HEX,
-    RADIUS_LG, RADIUS_MD, RADIUS_XS,
+    OVERLAY_HEX, OVERLAY2_HEX, BORDER_HEX, RADIUS_MD, RADIUS_XS,
     FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_SMALL, FONT_SIZE_XS,
     QSS_INPUT, QSS_BUTTON_SECONDARY, QSS_DATE_EDIT, QSS_SCROLL_AREA,
 )
@@ -868,7 +867,6 @@ class ParseWorker(QThread):
     async def _collect(self):
         """Вызывает ParserService.collect_data() с параметрами из ParseParams."""
         import os
-        from telethon import TelegramClient
         from features.parser.api import ParserService
         from core.database import DBManager
         from core.utils import sanitize_filename

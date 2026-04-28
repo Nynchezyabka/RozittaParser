@@ -37,7 +37,7 @@ import logging
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize, QUrl
-from PySide6.QtGui import QCloseEvent, QFont, QColor
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtMultimedia import QSoundEffect
 
 from PySide6.QtWidgets import (
@@ -908,7 +908,6 @@ class LogoutWorker(QThread):
         self._cfg = cfg
 
     def run(self) -> None:
-        import asyncio, os
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(self._do_logout())
@@ -918,7 +917,6 @@ class LogoutWorker(QThread):
             loop.close()
 
     async def _do_logout(self) -> None:
-        import os
         from telethon import TelegramClient
 
         import gc
@@ -936,12 +934,12 @@ class LogoutWorker(QThread):
             try:
                 await client.disconnect()
             except Exception:
-                pass
+                logging.exception()
             # Явно закрываем SQLite-соединение session-файла
             try:
                 client.session.close()
             except Exception:
-                pass
+                logging.exception()
             del client
             gc.collect()
 
