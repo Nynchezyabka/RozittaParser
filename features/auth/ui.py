@@ -400,10 +400,10 @@ class AuthScreen(QWidget):
                 }}
             """)
         is_mtproto = getattr(self._cfg, "proxy_type", "socks5") == "mtproto"
-        self._proxy_socks5_btn.setChecked(not is_mtproto)
-        self._proxy_mtproto_btn.setChecked(is_mtproto)
-        type_row.addWidget(self._proxy_socks5_btn)
+        self._proxy_socks5_btn.setChecked(is_mtproto)
+        self._proxy_mtproto_btn.setChecked(not is_mtproto)
         type_row.addWidget(self._proxy_mtproto_btn)
+        type_row.addWidget(self._proxy_socks5_btn)
         type_row.addStretch()
         pfl.addLayout(type_row)
 
@@ -412,7 +412,7 @@ class AuthScreen(QWidget):
         host_row.setSpacing(6)
         self._proxy_host_auth = QLineEdit(getattr(self._cfg, "proxy_host", "127.0.0.1"))
         self._proxy_host_auth.setPlaceholderText("127.0.0.1")
-        self._proxy_host_auth.setFixedHeight(28)
+        self._proxy_host_auth.setFixedHeight(36)
         self._proxy_host_auth.setStyleSheet(QSS_INPUT)
         self._proxy_port_auth = QSpinBox()
         self._proxy_port_auth.setRange(1, 65535)
@@ -430,7 +430,7 @@ class AuthScreen(QWidget):
             if is_mtproto and getattr(self._cfg, "proxy_secret", "") else ""
         )
         self._proxy_link_edit.setPlaceholderText("https://t.me/proxy?server=...&port=...&secret=...")
-        self._proxy_link_edit.setFixedHeight(28)
+        self._proxy_link_edit.setFixedHeight(36)
         self._proxy_link_edit.setStyleSheet(QSS_INPUT)
         pfl.addWidget(self._proxy_link_edit)
 
@@ -476,14 +476,14 @@ class AuthScreen(QWidget):
             getattr(self._cfg, "proxy_host", "127.0.0.1") if is_mtproto else ""
         )
         self._mtproto_host.setPlaceholderText("Host (например: proxy.example.com)")
-        self._mtproto_host.setFixedHeight(28)
+        self._mtproto_host.setFixedHeight(36)
         self._mtproto_host.setStyleSheet(QSS_INPUT)
         self._mtproto_port = QSpinBox()
         self._mtproto_port.setRange(1, 65535)
         self._mtproto_port.setValue(
             getattr(self._cfg, "proxy_port", 443) if is_mtproto else 443
         )
-        self._mtproto_port.setFixedHeight(28)
+        self._mtproto_port.setFixedHeight(36)
         self._mtproto_port.setFixedWidth(72)
         self._mtproto_port.setStyleSheet(QSS_INPUT)
         _mp_host_row.addWidget(self._mtproto_host, 1)
@@ -494,7 +494,7 @@ class AuthScreen(QWidget):
             getattr(self._cfg, "proxy_secret", "") if is_mtproto else ""
         )
         self._mtproto_secret.setPlaceholderText("Secret (hex или base64)")
-        self._mtproto_secret.setFixedHeight(28)
+        self._mtproto_secret.setFixedHeight(36)
         self._mtproto_secret.setStyleSheet(QSS_INPUT)
         mtproto_mfl.addWidget(self._mtproto_secret)
 

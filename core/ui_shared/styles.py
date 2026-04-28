@@ -172,6 +172,10 @@ QSS_INPUT = f"""
     QLineEdit::placeholder {{
         color: {TEXT_SECONDARY};
     }}
+    QSpinBox {{
+        color: {TEXT_PRIMARY};
+        background-color: {OVERLAY_HEX};
+    }}
 """
 
 # ── ComboBox ──────────────────────────────────────────────────────────────
