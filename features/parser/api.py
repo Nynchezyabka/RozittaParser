@@ -947,7 +947,7 @@ class ParserService:
             try:
                 result = await asyncio.wait_for(
                     message.download_media(file=target_path),
-                    timeout=120.0,
+                    timeout=1200.0,
                 )
             except asyncio.TimeoutError:
                 logger.warning(
