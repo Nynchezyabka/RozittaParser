@@ -934,12 +934,12 @@ class LogoutWorker(QThread):
             try:
                 await client.disconnect()
             except Exception:
-                logging.exception()
+                logging.exception('Исключение в _do_logout.')
             # Явно закрываем SQLite-соединение session-файла
             try:
                 client.session.close()
             except Exception:
-                logging.exception()
+                logging.exception('Исключение при закрытии сессии в _do_logout.')
             del client
             gc.collect()
 

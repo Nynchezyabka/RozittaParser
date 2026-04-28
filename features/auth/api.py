@@ -62,7 +62,7 @@ class AuthService:
             if host and secret:
                 return {"type": "mtproto", "host": host, "port": port, "secret": secret}
         except Exception:
-            logging.exception()
+            logging.exception('Исключение в parse_proxy_link.')
         return None
 
     @staticmethod
@@ -257,7 +257,7 @@ class AuthService:
             await client.connect()
             return await client.is_user_authorized()
         except Exception:
-            logging.exception()
+            logging.exception('Исключение в check_session')
             return False
         finally:
             if client:
