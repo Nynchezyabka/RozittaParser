@@ -15,8 +15,7 @@ from typing import Optional, Tuple
 from PySide6.QtCore import Qt, QDate, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QCalendarWidget, QDateEdit, QStackedWidget,
-    QSlider,
+    QPushButton, QDateEdit, QStackedWidget, QSlider,
 )
 
 from core.ui_shared import styles

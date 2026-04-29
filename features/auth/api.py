@@ -28,7 +28,6 @@ from core.exceptions import (
     SessionExpiredError,
     PhoneCodeInvalidError,
     FloodWaitError,
-    ConfigError,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,7 +62,7 @@ class AuthService:
             if host and secret:
                 return {"type": "mtproto", "host": host, "port": port, "secret": secret}
         except Exception:
-            pass
+            logging.exception('Исключение в parse_proxy_link.')
         return None
 
     @staticmethod
@@ -73,8 +72,6 @@ class AuthService:
         Поддерживает SOCKS5 (Tor) и MTProto (ссылки t.me/proxy).
         Если файл сессии уже существует, не требует api_id/api_hash.
         """
-        import os
-        from telethon import TelegramClient
 
         cfg.validate()
         logger.debug("auth: build_client api_id=%s proxy=%s",
@@ -260,6 +257,7 @@ class AuthService:
             await client.connect()
             return await client.is_user_authorized()
         except Exception:
+            logging.exception('Исключение в check_session')
             return False
         finally:
             if client:
@@ -379,7 +377,6 @@ class AuthService:
             log("🔄 Конвертирую сессию в формат Telethon...")
             log("   → Вызываю tdesk.ToTelethon...")
             
-            import asyncio
             try:
                 client = await asyncio.wait_for(
                     tdesk.ToTelethon(session=session_out, flag=UseCurrentSession),
