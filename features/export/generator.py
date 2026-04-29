@@ -36,6 +36,7 @@ features/export/generator.py — Генерация DOCX / JSON / MD / HTML из
 
 from __future__ import annotations
 
+from datetime import datetime
 import html as html_lib
 import json
 import logging
@@ -191,6 +192,8 @@ class DocxGenerator:
         user_id:          Optional[int] = None,
         include_comments: bool          = False,
         period_label:     str           = "fullchat",
+        date_from:        Optional[datetime] = None,
+        date_to:          Optional[datetime] = None,
         log:              _LogCallback  = None,
     ) -> List[str]:
         """
@@ -230,6 +233,14 @@ class DocxGenerator:
             chat_id, split_mode, topic_id, user_id, include_comments,
         )
 
+        # Преобразуем datetime → str для SQLite (поле date хранится как TEXT)
+        date_from_str: Optional[str] = (
+            date_from.strftime("%Y-%m-%d %H:%M:%S") if date_from else None
+        )
+        date_to_str: Optional[str] = (
+            date_to.strftime("%Y-%m-%d %H:%M:%S") if date_to else None
+        )
+
         try:
             if split_mode == "post":
                 files = self._generate_by_posts(
@@ -237,6 +248,8 @@ class DocxGenerator:
                     topic_id         = topic_id,
                     user_id          = user_id,
                     include_comments = include_comments,
+                    date_from        = date_from_str,
+                    date_to          = date_to_str,
                 )
             else:
                 messages = self._db.get_messages(
@@ -244,6 +257,8 @@ class DocxGenerator:
                     topic_id         = topic_id,
                     user_id          = user_id,
                     include_comments = include_comments,
+                    date_from        = date_from_str,
+                    date_to          = date_to_str,
                 )
                 if not messages:
                     raise EmptyDataError(chat_id, topic_id)
@@ -358,6 +373,8 @@ class DocxGenerator:
         topic_id:         Optional[int],
         user_id:          Optional[int],
         include_comments: bool,
+        date_from:        Optional[str] = None,
+        date_to:          Optional[str] = None,
     ) -> List[str]:
         """Режим "post" — по одному файлу на каждый пост."""
         posts = self._db.get_messages(
@@ -365,6 +382,8 @@ class DocxGenerator:
             topic_id         = topic_id,
             user_id          = user_id,
             include_comments = False,
+            date_from        = date_from,
+            date_to          = date_to,
         )
         if not posts:
             raise EmptyDataError(chat_id, topic_id)
@@ -754,12 +773,14 @@ class JsonGenerator:
         chat_id:              int,
         chat_title:           str,
         *,
-        topic_id:             Optional[int]  = None,      # ← задача 2
+        topic_id:             Optional[int]  = None,      
         user_id:              Optional[int]  = None,
         include_comments:     bool           = False,
         ai_split:             bool           = False,
-        period_label:         str            = "fullchat", # ← задача 3
-        ai_split_chunk_words: int            = 300_000,    # ← задача 4
+        period_label:         str            = "fullchat", 
+        ai_split_chunk_words: int            = 300_000,
+        date_from:            Optional[datetime] = None,
+        date_to:              Optional[datetime] = None,
         log:                  _LogCallback   = lambda _: None,
     ) -> List[str]:
         """
@@ -780,11 +801,14 @@ class JsonGenerator:
         os.makedirs(self._output_dir, exist_ok=True)
 
         log("📋 Загружаю сообщения из БД для JSON-экспорта...")
+        # Преобразуем datetime → str для SQLite (поле date хранится как TEXT)
         rows = self._db.get_messages(
             chat_id,
             topic_id         = topic_id,
             user_id          = user_id,
             include_comments = include_comments,
+            date_from        = date_from.strftime("%Y-%m-%d %H:%M:%S") if date_from else None,
+            date_to          = date_to.strftime("%Y-%m-%d %H:%M:%S") if date_to else None,
         )
 
         if not rows:
@@ -893,12 +917,14 @@ class MarkdownGenerator:
         chat_id:              int,
         chat_title:           str,
         *,
-        topic_id:             Optional[int]  = None,      # ← задача 2
+        topic_id:             Optional[int]  = None,
         user_id:              Optional[int]  = None,
         include_comments:     bool           = False,
         ai_split:             bool           = False,
-        period_label:         str,
-        ai_split_chunk_words: int            = 300_000,    # ← задача 4
+        period_label:         str            = "fullchat",
+        ai_split_chunk_words: int            = 300_000,
+        date_from:            Optional[datetime] = None,
+        date_to:              Optional[datetime] = None,    
         log:                  _LogCallback   = lambda _: None,
     ) -> List[str]:
         """
@@ -918,11 +944,14 @@ class MarkdownGenerator:
         os.makedirs(self._output_dir, exist_ok=True)
 
         log("📋 Загружаю сообщения из БД для Markdown-экспорта...")
+        # Преобразуем datetime → str для SQLite (поле date хранится как TEXT)
         rows = self._db.get_messages(
             chat_id,
             topic_id         = topic_id,
             user_id          = user_id,
             include_comments = include_comments,
+            date_from        = date_from.strftime("%Y-%m-%d %H:%M:%S") if date_from else None,
+            date_to          = date_to.strftime("%Y-%m-%d %H:%M:%S") if date_to else None,
         )
 
         if not rows:
@@ -1174,6 +1203,8 @@ class HtmlGenerator:
         ai_split:             bool           = False,
         period_label:         str            = "fullchat",
         ai_split_chunk_words: int            = 300_000,
+        date_from:            Optional[datetime] = None,
+        date_to:              Optional[datetime] = None,
         log:                  _LogCallback   = lambda _: None,
     ) -> List[str]:
         """
@@ -1194,11 +1225,14 @@ class HtmlGenerator:
         os.makedirs(self._output_dir, exist_ok=True)
 
         log("📋 Загружаю сообщения из БД для HTML-экспорта...")
+        # Преобразуем datetime → str для SQLite (поле date хранится как TEXT)
         rows = self._db.get_messages(
             chat_id,
             topic_id         = topic_id,
             user_id          = user_id,
             include_comments = include_comments,
+            date_from        = date_from.strftime("%Y-%m-%d %H:%M:%S") if date_from else None,
+            date_to          = date_to.strftime("%Y-%m-%d %H:%M:%S") if date_to else None,
         )
 
         if not rows:

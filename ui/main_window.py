@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Optional
+from datetime import datetime
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize, QUrl
 from PySide6.QtGui import QCloseEvent, QFont, QColor
@@ -859,10 +860,12 @@ class SettingsPanel(QWidget):
         date_from = None
         date_to   = None
         start_dt, end_dt = self._date_widget.get_date_range()
+        date_from = None
+        date_to   = None
         if start_dt is not None:
-            date_from = start_dt.date()
+            date_from = datetime.combine(start_dt, datetime.min.time())
         if end_dt is not None:
-            date_to = end_dt.date()
+            date_to = datetime.combine(end_dt, datetime.max.time())
 
         return ParseParams(
             chat=self._current_chat,
@@ -1872,6 +1875,8 @@ class MainWindow(QMainWindow):
             export_formats=self._settings_screen.get_export_formats(),
             ai_split=self._settings_screen.get_ai_split(),
             ai_split_chunk_words=self._settings_screen.get_ai_split_chunk_words() if hasattr(self._settings_screen, 'get_ai_split_chunk_words') else 300_000,
+            date_from=params.date_from if params else None,
+            date_to=params.date_to   if params else None,
         )
 
         worker = ExportWorker(export_params)

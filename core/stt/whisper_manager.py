@@ -78,11 +78,29 @@ class WhisperManager:
 
     @classmethod
     def is_available(cls) -> bool:
-        """Проверяет, установлен ли faster-whisper (без загрузки модели)."""
+        """
+        Проверяет, установлен ли faster-whisper И может ли он быть импортирован.
+
+        find_spec() возвращает не-None даже если сам пакет сломан (например,
+        ctranslate2 отсутствует или несовместима версия). Поэтому делаем
+        пробный import и логируем реальную причину, если он падает.
+        """
         try:
-            import importlib.util
-            return importlib.util.find_spec("faster_whisper") is not None
-        except Exception:
+            import faster_whisper  # noqa: F401  # pylint: disable=import-outside-toplevel
+            return True
+        except ImportError as exc:
+            logger.warning(
+                "WhisperManager.is_available: faster_whisper import failed — %s. "
+                "Установлен пакет? pip show faster-whisper. "
+                "Зависимость ctranslate2: pip show ctranslate2.",
+                exc,
+            )
+            return False
+        except Exception as exc:
+            logger.warning(
+                "WhisperManager.is_available: неожиданная ошибка импорта faster_whisper — %s",
+                exc,
+            )
             return False
 
     @classmethod
@@ -155,8 +173,9 @@ class WhisperManager:
             from faster_whisper import WhisperModel  # type: ignore
         except ImportError as exc:
             raise STTError(
-                "faster-whisper не установлен. "
-                "Выполните: pip install faster-whisper"
+                f"faster-whisper не может быть импортирован: {exc}. "
+                "Проверьте: pip show faster-whisper  и  pip show ctranslate2. "
+                "Если ctranslate2 отсутствует: pip install ctranslate2"
             ) from exc
 
         logger.info("WhisperManager: загрузка модели '%s' (cpu/int8)...", model_size)

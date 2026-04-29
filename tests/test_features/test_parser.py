@@ -122,3 +122,175 @@ class TestCollectParamsDefaults:
         assert p.user_ids          == [111, 222]
         assert p.re_download       is True
         assert p.filter_expression == "has_media"
+
+# =============================================================================
+# Тесты фильтрации по датам (date_from / date_to)
+# =============================================================================
+
+import pytest
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock
+from features.parser.api import ParserService, CollectParams
+from core.database import DBManager
+
+
+@pytest.fixture
+def mock_client_with_dates():
+    """Мок TelegramClient, возвращающий сообщения с разными датами и корректную сущность."""
+    client = AsyncMock()
+    
+    # 1. Настраиваем get_entity, чтобы возвращал сущность с title
+    fake_entity = MagicMock()
+    fake_entity.id = 123
+    fake_entity.title = "Test Chat"
+    fake_entity.megagroup = False
+    fake_entity.broadcast = False
+    fake_entity.forum = False
+    client.get_entity = AsyncMock(return_value=fake_entity)
+    
+    # 2. Создаём сообщения
+    base = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    messages = []
+    for i in range(20):
+        msg = MagicMock()
+        msg.id = i + 1
+        msg.date = base + timedelta(days=i)
+        msg.sender_id = 123
+        msg.text = f"Message {i+1}"
+        msg.replies = None
+        msg.media = None
+        messages.append(msg)
+
+    async def iter_messages(*args, **kwargs):
+        # Возвращаем от новых к старым
+        for msg in sorted(messages, key=lambda m: m.date, reverse=True):
+            yield msg
+
+    client.iter_messages = iter_messages
+    return client
+
+
+@pytest.mark.asyncio
+async def test_date_filter_both_dates(mock_client_with_dates, tmp_path):
+    """Фильтрация: date_from = 2025-01-05, date_to = 2025-01-10"""
+    db_path = tmp_path / "test.db"
+    db = DBManager(str(db_path))
+
+    params = CollectParams(
+        chat_id=123,
+        date_from=datetime(2025, 1, 5, tzinfo=timezone.utc),
+        date_to=datetime(2025, 1, 10, tzinfo=timezone.utc),
+        media_filter=None,
+        user_ids=None,
+        filter_expression=None,
+        download_comments=False,
+        re_download=False,
+        output_dir=str(tmp_path),
+    )
+
+    service = ParserService(mock_client_with_dates, db, progress=lambda x: None)
+    await service.collect_data(params)
+
+    conn = db._get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT date FROM messages WHERE chat_id = ?", (123,))
+    rows = cur.fetchall()
+    dates = [datetime.fromisoformat(row[0]) for row in rows]
+
+    for d in dates:
+        assert params.date_from <= d <= params.date_to
+    assert len(dates) == 6
+
+
+@pytest.mark.asyncio
+async def test_date_filter_only_from(mock_client_with_dates, tmp_path):
+    """Только date_from, date_to = None"""
+    db_path = tmp_path / "test.db"
+    db = DBManager(str(db_path))
+
+    params = CollectParams(
+        chat_id=123,
+        date_from=datetime(2025, 1, 15, tzinfo=timezone.utc),
+        date_to=None,
+        media_filter=None,
+        user_ids=None,
+        filter_expression=None,
+        download_comments=False,
+        re_download=False,
+        output_dir=str(tmp_path),
+    )
+
+    service = ParserService(mock_client_with_dates, db, progress=lambda x: None)
+    await service.collect_data(params)
+
+    conn = db._get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT date FROM messages WHERE chat_id = ?", (123,))
+    rows = cur.fetchall()
+    dates = [datetime.fromisoformat(row[0]) for row in rows]
+
+    for d in dates:
+        assert d >= params.date_from
+    assert len(dates) == 6
+
+
+@pytest.mark.asyncio
+async def test_date_filter_only_to(mock_client_with_dates, tmp_path):
+    """Только date_to, date_from = None"""
+    db_path = tmp_path / "test.db"
+    db = DBManager(str(db_path))
+
+    params = CollectParams(
+        chat_id=123,
+        date_from=None,
+        date_to=datetime(2025, 1, 5, tzinfo=timezone.utc),
+        media_filter=None,
+        user_ids=None,
+        filter_expression=None,
+        download_comments=False,
+        re_download=False,
+        output_dir=str(tmp_path),
+    )
+
+    service = ParserService(mock_client_with_dates, db, progress=lambda x: None)
+    await service.collect_data(params)
+
+    conn = db._get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT date FROM messages WHERE chat_id = ?", (123,))
+    rows = cur.fetchall()
+    dates = [datetime.fromisoformat(row[0]) for row in rows]
+
+    for d in dates:
+        assert d <= params.date_to
+    assert len(dates) == 5
+
+
+@pytest.mark.asyncio
+async def test_date_filter_no_dates(mock_client_with_dates, tmp_path):
+    """Без date_from и date_to — все сообщения"""
+    db_path = tmp_path / "test.db"
+    db = DBManager(str(db_path))
+
+    params = CollectParams(
+        chat_id=123,
+        date_from=None,
+        date_to=None,
+        media_filter=None,
+        user_ids=None,
+        filter_expression=None,
+        download_comments=False,
+        re_download=False,
+        output_dir=str(tmp_path),
+    )
+
+    service = ParserService(mock_client_with_dates, db, progress=lambda x: None)
+    await service.collect_data(params)
+
+    conn = db._get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT date FROM messages WHERE chat_id = ?", (123,))
+    rows = cur.fetchall()
+    dates = [datetime.fromisoformat(row[0]) for row in rows]
+
+    assert len(dates) == 20

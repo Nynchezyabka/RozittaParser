@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable, List, Optional
 
 from PySide6.QtCore import QThread, Signal
@@ -82,6 +83,8 @@ class ExportParams:
     split_mode:       str           = "none"
     topic_id:         Optional[int] = None
     user_id:          Optional[int] = None
+    date_from: Optional[datetime] = None
+    date_to:   Optional[datetime] = None
     include_comments: bool          = False
     output_dir:       str           = "output"
     db_path:          str           = "output/telegram_archive.db"
@@ -177,6 +180,8 @@ class ExportWorker(QThread):
                         user_id          = p.user_id,
                         include_comments = p.include_comments,
                         period_label     = p.period_label,
+                        date_from        = p.date_from,
+                        date_to          = p.date_to,
                         log              = self._log,
                     )
                     all_files.extend(files)
@@ -192,6 +197,8 @@ class ExportWorker(QThread):
                         include_comments = p.include_comments,
                         ai_split         = p.ai_split,
                         period_label     = p.period_label,
+                        date_from        = p.date_from,
+                        date_to          = p.date_to,
                         log              = self._log,
                         ai_split_chunk_words = p.ai_split_chunk_words,
                     )
@@ -208,6 +215,8 @@ class ExportWorker(QThread):
                         include_comments = p.include_comments,
                         ai_split         = p.ai_split,
                         period_label     = p.period_label,
+                        date_from        = p.date_from,
+                        date_to          = p.date_to,
                         ai_split_chunk_words = p.ai_split_chunk_words,
                         log              = self._log,
                     )
@@ -224,6 +233,8 @@ class ExportWorker(QThread):
                         include_comments     = p.include_comments,
                         ai_split             = p.ai_split,
                         period_label         = p.period_label,
+                        date_from            = p.date_from,
+                        date_to              = p.date_to,
                         log                  = self._log,
                     )
                     all_files.extend(html_paths)

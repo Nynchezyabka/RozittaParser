@@ -109,6 +109,17 @@ _MEDIA_SUBFOLDERS: dict[str, str] = {
     "file":       "files",
 }
 
+# ── TeleGet — докачка больших файлов ─────────────────────────────────────────
+# Порог в байтах: файлы НИЖЕ этого лимита скачиваются стандартным
+# Telethon download_media (быстро, без лишних зависимостей).
+# Файлы ВЫШЕ лимита → TeleGet (поддерживает resume, FILE_REFERENCE_EXPIRED,
+# многопоточность внутри одного потока asyncio).
+_TELEGET_THRESHOLD_BYTES: int = 50 * 1_024 * 1_024   # 50 МБ
+# Максимальный таймаут для TeleGet-загрузок (секунды).
+# TeleGet сам восстанавливается после разрывов; этот guard нужен только
+# если процесс «завис» на уровне ОС (например, потерян сокет без TCP RST).
+_TELEGET_MAX_TIMEOUT: float = 4.0 * 3600.0             # 4 часа
+
 
 # ==============================================================================
 # Датакласс параметров сбора
@@ -224,6 +235,12 @@ class ParserService:
         self._chat_title:  str = "chat"
         self._output_dir:  str = "output"
 
+        # TeleGet загрузчик — инициализируется лениво при первом вызове
+        # _init_teleget().  None = ещё не инициализирован;
+        # False = попытка провалилась (библиотека отсутствует);
+        # объект Downloader = готов к работе.
+        self._teleget_downloader = None  # type: ignore[assignment]
+
     # ------------------------------------------------------------------
     # 1. Главный метод
     # ------------------------------------------------------------------
@@ -330,6 +347,24 @@ class ParserService:
         else:
             period_label = "fullchat"
 
+        # ── Диагностика дат ──────────────────────────────────────────────
+        self._log(
+            f"[DIAG DATE] date_from={params.date_from!r} "
+            f"({type(params.date_from).__name__}), "
+            f"date_to={params.date_to!r} ({type(params.date_to).__name__}), "
+            f"days_limit={params.days_limit}"
+        )
+        self._log(
+            f"[DIAG DATE] cutoff_date={cutoff_date!r} "
+            f"({type(cutoff_date).__name__}), "
+            f"upper_date={upper_date!r} ({type(upper_date).__name__})"
+        )
+        logger.info(
+            "parser DATE diag: cutoff=%s upper=%s date_from=%r date_to=%r days=%s",
+            cutoff_date, upper_date, params.date_from, params.date_to, params.days_limit
+        )
+        # ─────────────────────────────────────────────────────────────────
+
         depth_label = "за всё время" if cutoff_date is None else f"с {cutoff_date.strftime('%Y-%m-%d')}"
         self._log(f"📅 Глубина: {depth_label}")
         if params.topic_id:
@@ -353,10 +388,20 @@ class ParserService:
         )
 
         # --- DownloadTracker — инкрементальный режим ---
+        # Трекер отключается если задан диапазон дат: сообщения, уже
+        # находящиеся в БД, должны быть доступны через фильтр дат в БД, а не
+        # через трекер (иначе «скачанные» записи молча пропускаются при смене периода).
+        use_tracker: bool = (
+            not params.re_download
+            and params.date_from is None
+            and params.date_to is None
+        )
         tracker = DownloadTracker(params.output_dir, chat_title, normalized_id)
         if params.re_download:
             tracker.clear()
             self._log("♻️  Режим перезагрузки: трекер сброшен, начинаем заново")
+        elif not use_tracker:
+            self._log("📅 Задан диапазон дат — инкрементальный трекер отключён")
         elif tracker.count > 0:
             self._log(f"📋 Инкрементальный режим: {tracker.count} сообщений уже скачано, пропускаем")
 
@@ -413,6 +458,7 @@ class ParserService:
                     total_est           = total_est,
                     insert_fn           = insert_fn,
                     tracker             = tracker,
+                    use_tracker         = use_tracker,
                     errors              = errors,
                     posts_with_comments = posts_with_comments,
                     linked_chat_id      = linked_chat_id,
@@ -481,6 +527,7 @@ class ParserService:
                         media_filter   = params.media_filter,
                         topic_id       = params.topic_id,
                         insert_fn      = insert_fn,
+                        user_ids       = params.user_ids,
                     )
                     self._comment_count += downloaded
                     self._msg_count     += downloaded
@@ -524,6 +571,7 @@ class ParserService:
         total_est:           int,
         insert_fn:           Callable,
         tracker:             DownloadTracker,
+        use_tracker:         bool,
         errors:              List[str],
         posts_with_comments: Dict[int, int],
         linked_chat_id:      Optional[int],
@@ -563,6 +611,13 @@ class ParserService:
         while attempts <= _MAX_RETRIES:
             try:
                 _max_id_arg = last_message_id - 1 if last_message_id else 0
+                # ── Диагностика перед стартом итерации ───────────────────
+                self._log(
+                    f"[DIAG ITER] entity={getattr(entity, 'id', entity)} "
+                    f"topic={topic_id} max_id={_max_id_arg} "
+                    f"cutoff={cutoff_date} upper={upper_date} attempt={attempts}"
+                )
+                # ─────────────────────────────────────────────────────────
                 logger.debug(
                     "[DIAG] iter_messages call: entity=%s topic_id=%s max_id=%s attempt=%d",
                     getattr(entity, 'id', entity), topic_id, _max_id_arg, attempts,
@@ -589,8 +644,23 @@ class ParserService:
                     # Вычисляем дату один раз
                     msg_date = ensure_aware_utc(message.date) if message.date else None
 
+                    # ── Диагностика: каждые 50 сообщений + первые три ────
+                    if _iter_msg_count <= 3 or _iter_msg_count % 50 == 0:
+                        self._log(
+                            f"[DIAG MSG] #{_iter_msg_count} id={message.id} "
+                            f"date={msg_date} "
+                            f"upper_ok={upper_date is None or (msg_date is not None and msg_date <= upper_date)} "
+                            f"lower_ok={cutoff_date is None or (msg_date is not None and msg_date >= cutoff_date)}"
+                        )
+                    # ─────────────────────────────────────────────────────
+
                     # Фильтр верхней даты (пропускаем слишком новые)
                     if upper_date and msg_date and msg_date > upper_date:
+                        if _iter_msg_count <= 5:
+                            self._log(
+                                f"[DIAG SKIP upper] id={message.id} "
+                                f"msg_date={msg_date} > upper_date={upper_date}"
+                            )
                         continue
 
                     # Фильтр нижней даты (iter_messages идёт от новых к старым)
@@ -608,7 +678,7 @@ class ParserService:
                         continue
 
                     # Инкрементальный режим: пропускаем уже скачанные
-                    if not params.re_download and tracker.is_downloaded(message.id):
+                    if use_tracker and tracker.is_downloaded(message.id):
                         continue
 
                     # Фильтр выражений (simpleeval) — до создания задачи
@@ -773,10 +843,13 @@ class ParserService:
         last_id  = pending[-1][0]
         self._log(f"⬇️  Батч медиа: {len(tasks)} файлов (id {first_id}–{last_id})...")
         logger.debug("[DIAG] gather start: %d tasks", len(tasks))
+        # 7200 сек (2 часа) — батч из 20 задач может содержать несколько больших видео.
+        # Каждому видео даётся до ~2 часов своего таймаута (PATCH A),
+        # поэтому батч должен ждать не меньше.
         try:
             results = await asyncio.wait_for(
                 asyncio.gather(*tasks, return_exceptions=True),
-                timeout=300.0,
+                timeout=7200.0,
             )
         except asyncio.TimeoutError:
             logger.error(
@@ -902,6 +975,124 @@ class ParserService:
     # 3. Скачивание медиа (с FloodWait retry)
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # 2b. Инициализация TeleGet (lazy, один раз на экземпляр)
+    # ------------------------------------------------------------------
+
+    async def _init_teleget(self) -> object:
+        """
+        Лениво инициализирует TeleGet Downloader и возвращает его.
+
+        TeleGet API (teleget9527):
+            from teleget import Downloader
+            dl = Downloader(client)
+            await dl.start()           # запускает внутренние воркеры (опционально)
+            path = await dl.download(message, save_path=target_path)
+
+        Returns:
+            Объект Downloader если инициализация прошла успешно, иначе None.
+        """
+        if self._teleget_downloader is not None:
+            # False означает «библиотека недоступна» — не пытаемся повторно
+            return self._teleget_downloader if self._teleget_downloader is not False else None
+
+        try:
+            from teleget import Downloader  # type: ignore[import]
+            dl = Downloader(self._client)
+            # Некоторые версии TeleGet требуют явного start()
+            if hasattr(dl, "start") and asyncio.iscoroutinefunction(dl.start):
+                await dl.start()
+            self._teleget_downloader = dl
+            logger.info(
+                "parser: TeleGet Downloader инициализирован (порог >= %d МБ)",
+                _TELEGET_THRESHOLD_BYTES // (1024 * 1024),
+            )
+            return dl
+        except ImportError:
+            self._teleget_downloader = False  # type: ignore[assignment]
+            logger.warning(
+                "parser: teleget9527 не установлен — "
+                "для больших файлов используется стандартный download_media. "
+                "Установите: pip install teleget9527[all]"
+            )
+            return None
+        except Exception as exc:
+            self._teleget_downloader = False  # type: ignore[assignment]
+            logger.warning(
+                "parser: TeleGet init failed: %s — fallback to download_media", exc
+            )
+            return None
+
+    async def _teleget_download_file(
+        self,
+        message:     "Message",
+        target_path: str,
+        file_size:   int,
+    ) -> "Optional[str]":
+        """
+        Скачивает файл через TeleGet с поддержкой докачки.
+
+        Не удаляет частичные файлы при ошибке — TeleGet возобновит
+        с того же места при следующем вызове с тем же target_path.
+
+        Args:
+            message:     Telethon Message с медиа.
+            target_path: Желаемый путь (TeleGet использует его как base name).
+            file_size:   Размер файла в байтах (для логов).
+
+        Returns:
+            Реальный путь к скачанному файлу или None (вызывающий выполнит fallback).
+        """
+        dl = await self._init_teleget()
+        if dl is None:
+            return None
+
+        mb = file_size // (1024 * 1024)
+        self._log(
+            f"⬇️  TeleGet: скачивание {mb} МБ "
+            f"(msg_id={message.id}, таймаут {int(_TELEGET_MAX_TIMEOUT // 3600)} ч)"
+        )
+        logger.info(
+            "parser: TeleGet download start: msg_id=%d size=%d bytes path=%s",
+            message.id, file_size, target_path,
+        )
+
+        # TeleGet API: Downloader.download(message, save_path=…)
+        # Если ваша версия библиотеки использует другой ключ аргумента —
+        # замените save_path= на file= или path= в строке ниже:
+        try:
+            result = await asyncio.wait_for(
+                dl.download(message, save_path=target_path),
+                timeout=_TELEGET_MAX_TIMEOUT,
+            )
+            logger.info(
+                "parser: TeleGet download done: msg_id=%d -> %s",
+                message.id, result,
+            )
+            self._log(
+                f"✅ TeleGet: сохранён -> {os.path.basename(str(result or target_path))}"
+            )
+            return result or target_path
+        except asyncio.TimeoutError:
+            logger.error(
+                "parser: TeleGet timeout (%.0f ч) msg_id=%d — "
+                "частичный файл НЕ удалён, докачка при следующем запуске",
+                _TELEGET_MAX_TIMEOUT / 3600, message.id,
+            )
+            self._log(
+                f"⚠️  TeleGet: таймаут {int(_TELEGET_MAX_TIMEOUT // 3600)} ч "
+                f"(msg_id={message.id}) — частичный файл сохранён для докачки"
+            )
+            return None
+        except Exception as exc:
+            logger.warning(
+                "parser: TeleGet error msg_id=%d: %s — "
+                "частичный файл НЕ удалён, fallback на download_media",
+                message.id, exc,
+            )
+            self._log(f"⚠️  TeleGet ошибка (msg_id={message.id}): {exc} — fallback")
+            return None
+
     @async_retry(
         max_attempts = _MAX_RETRIES,
         base_delay   = _RETRY_BASE_DELAY,
@@ -918,15 +1109,23 @@ class ParserService:
         """
         Скачивает медиа сообщения на диск.
 
-        Ключевое исправление memory leak:
-            Всегда передаём `file=target_path` — Telethon пишет потоком
-            прямо на диск, не загружая весь файл в RAM.
-            НИКОГДА не вызываем download_media() без аргумента file.
+        Стратегия выбора пути загрузки
+        ──────────────────────────────
+        • Файл < _TELEGET_THRESHOLD_BYTES (50 МБ):
+              Telethon download_media + потоковая запись на диск.
+              Таймаут динамический: max(600 с, size / 512 КБ/с + 120 с).
+        • Файл >= _TELEGET_THRESHOLD_BYTES:
+              1) TeleGet (_teleget_download_file) — докачка, FILE_REFERENCE_EXPIRED,
+                 многопоточность внутри одного asyncio-потока.
+              2) Если TeleGet недоступен или вернул ошибку — fallback на Telethon.
+        • Частичные файлы НЕ удаляются ни в каком сценарии:
+              TeleGet продолжит докачку при следующем вызове с тем же путём;
+              Telethon перезапишет файл поверх при следующей попытке.
 
-        Retry-логика вынесена в декоратор @async_retry:
-            - FloodWait → sleep(seconds + _FLOOD_BUFFER), не считается попыткой
-            - OSError / RPCError → экспоненциальный backoff, макс. _MAX_RETRIES раз
-            - После исчерпания попыток → re-raise последнего (OSError | RPCError)
+        Retry-логика (декоратор @async_retry):
+            FloodWait → sleep(seconds + _FLOOD_BUFFER), не считается попыткой.
+            OSError / RPCError → экспоненциальный backoff, макс. _MAX_RETRIES раз.
+            После исчерпания попыток → re-raise последнего исключения.
 
         Args:
             message:     Telethon Message с медиа.
@@ -938,25 +1137,74 @@ class ParserService:
         Raises:
             OSError | RPCError: после _MAX_RETRIES неудачных попыток.
         """
-        # Семафор ограничивает число параллельных сетевых скачиваний
+        # ── Определяем размер файла ──────────────────────────────────────────
+        _file_size: int = 0
+        if hasattr(message.media, "document") and message.media.document:
+            _file_size = getattr(message.media.document, "size", 0) or 0
+        # Фото — всегда маленькие, динамический таймаут покроет
+
         logger.debug(
-            "[DIAG] download_media start: msg_id=%s media=%s path=%s",
-            message.id, type(message.media).__name__, target_path,
+            "[DIAG] download_media start: msg_id=%s media=%s path=%s size=%d",
+            message.id, type(message.media).__name__, target_path, _file_size,
         )
+
+        # ── Диагностика размера и порога TeleGet ─────────────────────────────
+        self._log(
+            f"[DIAG] file_size={_file_size} bytes "
+            f"({_file_size // (1024*1024)} МБ), "
+            f"threshold={_TELEGET_THRESHOLD_BYTES // (1024*1024)} МБ, "
+            f"use_teleget={_file_size >= _TELEGET_THRESHOLD_BYTES}"
+        )
+        # ─────────────────────────────────────────────────────────────────────
+
         async with self._sem:
+            # ── Путь 1: TeleGet для больших файлов ───────────────────────────
+            if _file_size >= _TELEGET_THRESHOLD_BYTES:
+                result = await self._teleget_download_file(
+                    message, target_path, _file_size
+                )
+                if result is not None:
+                    logger.debug(
+                        "[DIAG] download_media via TeleGet OK: msg_id=%s -> %s",
+                        message.id, result,
+                    )
+                    return result
+                # TeleGet вернул None (недоступен или ошибка) → fallback ниже
+                logger.debug(
+                    "[DIAG] TeleGet fallback -> download_media: msg_id=%s", message.id
+                )
+                self._log(
+                    f"⬇️  Telethon fallback: {_file_size // (1024*1024)} МБ "
+                    f"(msg_id={message.id})"
+                )
+
+            # ── Путь 2: Telethon download_media (малые файлы + fallback) ─────
+            # Динамический таймаут: 2 сек/МБ + 2 мин запаса, минимум 600 с
+            _timeout: float = max(600.0, _file_size / (512 * 1024) + 120.0)
+            logger.debug(
+                "[DIAG] download_media (telethon): msg_id=%s size=%d timeout=%.0fs",
+                message.id, _file_size, _timeout,
+            )
             try:
                 result = await asyncio.wait_for(
                     message.download_media(file=target_path),
-                    timeout=120.0,
+                    timeout=_timeout,
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    "[DIAG] download_media timeout: msg_id=%s media=%s, пропускаем",
-                    message.id, type(message.media).__name__,
+                    "[DIAG] download_media timeout: msg_id=%s size=%d timeout=%.0fs "
+                    "— частичный файл НЕ удалён",
+                    message.id, _file_size, _timeout,
                 )
+                # Частичный файл НЕ удаляем — Telethon перезапишет при retry
                 return None
-        logger.debug("[DIAG] download_media done: msg_id=%s → %s", message.id, result)
+
+        logger.debug(
+            "[DIAG] download_media done (telethon): msg_id=%s -> %s",
+            message.id, result,
+        )
         return result
+
 
     # ------------------------------------------------------------------
     # 4. Комментарии к посту
@@ -968,9 +1216,10 @@ class ParserService:
         post_id:        int,
         linked_chat_id: int,
         media_filter:   Optional[List[str]],
-        topic_id:       Optional[int] = None,
-        limit:          int           = MAX_COMMENT_LIMIT,
+        topic_id:       Optional[int]      = None,
+        limit:          int                = MAX_COMMENT_LIMIT,
         insert_fn:      Optional[Callable] = None,
+        user_ids:       Optional[List[int]] = None,
     ) -> int:
         """
         Скачивает комментарии к посту из linked discussion группы.

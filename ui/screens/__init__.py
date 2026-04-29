@@ -1,1 +1,0 @@
-# ui/screens — Application screens
