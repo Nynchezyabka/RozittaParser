@@ -1847,6 +1847,7 @@ class MainWindow(QMainWindow):
 
         chat = self._settings_screen._current_chat or {}
         params = self._settings_screen.get_params()
+        topic_name = self._settings_screen._current_chat.get("selected_topic_name")
         split_mode = params.split_mode if params else "none"
         date_from_str = str(params.date_from) if (params and params.date_from) else None
         date_to_str = str(params.date_to) if (params and params.date_to) else None

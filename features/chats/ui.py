@@ -1137,6 +1137,7 @@ class ChatsScreen(QWidget):
             topic_id = self._topics_combo.currentData()
             chat = dict(chat)  # не мутируем оригинал
             chat["selected_topic_id"] = topic_id
+            chat["selected_topic_name"] = topic_name
 
         self.log_message.emit(f"✅ Выбран: {chat.get('title', '?')}")
         self.chat_selected.emit(chat)
