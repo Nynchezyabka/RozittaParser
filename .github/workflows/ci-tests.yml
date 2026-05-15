@@ -43,16 +43,19 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-asyncio pytest-cov pytest-timeout PySide6
 
-      - name: Run tests (Linux)
+      - name: Run tests with coverage (Linux)
         if: matrix.os == 'ubuntu-latest'
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest tests/ --tb=short -q
+        run: pytest tests/ --tb=short -q --cov=. --cov-report=term-missing --cov-report=xml:coverage.xml
 
       - name: Run tests (Windows)
         if: matrix.os == 'windows-latest'
         run: pytest tests/ --tb=short -q
 
-      - name: Coverage report
-        if: always()
-        run: pytest tests/ --cov=. --cov-report=term-missing --tb=no -q || true
+      - name: Upload coverage to Codacy
+        if: matrix.os == 'ubuntu-latest'
+        uses: codacy/codacy-coverage-reporter-action@v1.3.0
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: coverage.xml
