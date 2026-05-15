@@ -848,11 +848,15 @@ class SettingsPanel(QWidget):
         self.log_message.emit(f"Загружено участников: {len(users)}")
 
     def get_params(self) -> Optional[ParseParams]:
+        print("[DEBUG] вызван get_params из main_window.py")
         if self._current_chat is None:
             return None
 
         selected_user_id = int(self._members_combo.currentData() or 0)
-        self.user_id = None if selected_user_id == 0 else selected_user_id
+        self.user_id = selected_user_id
+        selected_username = self._members_combo.currentText() if selected_user_id != 0 else None
+        if selected_username == "Все участники":
+            selected_username = None
 
         # Даты
         date_from = None
@@ -877,6 +881,7 @@ class SettingsPanel(QWidget):
             date_to              = date_to,
             user_filter_mode     = self._user_mode,
             user_id              = self.user_id,
+            username             = selected_username,
             split_mode           = self._split_mode,
             include_comments     = self._toggle_comments.isChecked(),
             re_download          = self._toggle_redownload.isChecked(),
@@ -1842,6 +1847,7 @@ class MainWindow(QMainWindow):
 
         chat = self._settings_screen._current_chat or {}
         params = self._settings_screen.get_params()
+        print(f"[DEBUG] params.username={params.username!r}")
         split_mode = params.split_mode if params else "none"
         date_from_str = str(params.date_from) if (params and params.date_from) else None
         date_to_str = str(params.date_to) if (params and params.date_to) else None
@@ -1864,6 +1870,7 @@ class MainWindow(QMainWindow):
             topic_id=chat.get("selected_topic_id"),
             topic_name=chat.get("selected_topic_name"),
             user_id=params.user_id,
+            username=params.username if params else None,
             include_comments=params.include_comments if params else False,
             output_dir=chat_dir,
             db_path=db_path,

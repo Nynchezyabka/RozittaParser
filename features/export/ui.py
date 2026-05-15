@@ -84,10 +84,11 @@ class ExportParams:
     topic_id:         Optional[int] = None
     topic_name:       Optional[str] = None
     user_id:          Optional[int] = None
+    username:         Optional[str] = None
     include_comments: bool          = False
     output_dir:       str           = "output"
     db_path:          str           = "output/telegram_archive.db"
-    export_formats:   list          = None  # ["docx"] | ["json"] | ["docx","json","html","md"]
+    export_formats:   Optional[list[str]] = None  # ["docx"] | ["json"] | ["docx","json","html","md"]
     ai_split:         bool          = False  # разбивать MD/JSON на чанки по 300k слов
     ai_split_chunk_words: int = 300_000
     date_from:            Optional[str] = None   # "YYYY-MM-DD"
@@ -174,6 +175,7 @@ class ExportWorker(QThread):
                 # ── DOCX ──────────────────────────────────────────────────
                 if "docx" in formats:
                     gen = DocxGenerator(db=db, output_dir=p.output_dir)
+                    print(f"[DEBUG] ExportParams.username={p.username!r}")
                     files = gen.generate(
                         chat_id          = p.chat_id,
                         chat_title       = p.chat_title,
@@ -181,6 +183,7 @@ class ExportWorker(QThread):
                         topic_id         = p.topic_id,
                         topic_name       = p.topic_name,
                         user_id          = p.user_id,
+                        username         = p.username,
                         include_comments = p.include_comments,
                         period_label     = p.period_label,
                         date_from        = p.date_from,
@@ -198,6 +201,7 @@ class ExportWorker(QThread):
                         topic_id         = p.topic_id,
                         topic_name       = p.topic_name,
                         user_id          = p.user_id,
+                        username         = p.username,
                         include_comments = p.include_comments,
                         ai_split         = p.ai_split,
                         period_label     = p.period_label,
@@ -217,6 +221,7 @@ class ExportWorker(QThread):
                         topic_id         = p.topic_id,
                         topic_name       = p.topic_name,
                         user_id          = p.user_id,
+                        username         = p.username,
                         include_comments = p.include_comments,
                         ai_split         = p.ai_split,
                         period_label     = p.period_label,

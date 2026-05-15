@@ -695,6 +695,7 @@ class UserTag(QPushButton):
         super().__init__(parent)
         self._user_id = user_id
         self._is_all = is_all
+        self._username  = username
 
         icon = "✓ " if is_all else "👤 "
         self.setText(icon + username)
@@ -707,6 +708,10 @@ class UserTag(QPushButton):
     @property
     def user_id(self) -> int:
         return self._user_id
+    
+    @property
+    def username(self) -> str:
+        return self._username
 
     @property
     def is_all(self) -> bool:

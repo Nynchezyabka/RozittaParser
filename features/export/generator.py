@@ -180,6 +180,7 @@ class DocxGenerator:
         self._period_label: str           = "fullchat"
         self._topic_id:     Optional[int] = None   # ← задача 1
         self._topic_name:   Optional[str] = None
+        self._username:     Optional[str] = None
         # Транскрипции: {message_id: text} — загружаются в generate()
         self._transcriptions: Dict[int, str] = {}
 
@@ -195,6 +196,7 @@ class DocxGenerator:
         topic_id:         Optional[int] = None,
         topic_name:       Optional[str] = None, #<--
         user_id:          Optional[int] = None,
+        username:         Optional[str] = None,
         include_comments: bool          = False,
         period_label:     str           = "fullchat",
         date_from:        Optional[str] = None,
@@ -224,6 +226,8 @@ class DocxGenerator:
         self._period_label = period_label
         self._topic_id     = topic_id   # ← задача 1: сохраняем для _build_path
         self._topic_name   = topic_name
+        self._username     = username
+        print(f"[DEBUG] generate() username={self._username!r}")
         os.makedirs(self._output_dir, exist_ok=True)
 
         # Загружаем все транскрипции чата одним запросом
@@ -255,7 +259,7 @@ class DocxGenerator:
                     chat_id          = chat_id,
                     topic_id         = topic_id,
                     user_id          = user_id,
-                    include_comments = include_comments,
+                      include_comments = include_comments,
                     date_from        = date_from,
                     date_to          = date_to,
                 )
@@ -720,23 +724,33 @@ class DocxGenerator:
         """
         Строит полный путь к DOCX-файлу.
 
-        Формат имени (задача 1 — topic_id добавлен):
-            <chat>_topic{N}_<kind>_<period>.docx   (если topic_id задан)
-            <chat>_<kind>_<period>.docx             (если topic_id=None)
-
+        Формат имени файла (приоритет):
+        1. Если есть topic_name:   <чат>_<topic_name>_<kind>_<period>.docx
+        2. Если есть username:     <чат>_<username>_<kind>_<period>.docx
+        3. Если есть topic_id:     <чат>_topic<N>_<kind>_<period>.docx
+        4. Иначе:                  <чат>_<kind>_<period>.docx
+        
         Args:
             kind: Тип файла ("archive", "day_2025-01-15", "post_42" и т.д.).
 
         Returns:
             Абсолютный путь к файлу.
-        """
+        
 
+        старый вариант (не удалять пока):
         safe_title = sanitize_filename(self._chat_title)
         topic_sfx  = _topic_suffix(self._topic_id)
         if self._topic_name:
             filename = f"{safe_title}_{self._topic_name}_{kind}_{self._period_label}.docx"
         else:
             filename   = f"{safe_title}{topic_sfx}_{kind}_{self._period_label}.docx"
+        return os.path.join(self._output_dir, filename)
+        """
+        safe_title   = sanitize_filename(self._chat_title)
+        topic_part   = f"_{sanitize_filename(self._topic_name)}" if self._topic_name \
+                    else (_topic_suffix(self._topic_id) if self._topic_id else "")
+        user_part    = f"_{sanitize_filename(self._username)}" if self._username else ""
+        filename     = f"{safe_title}{topic_part}{user_part}_{kind}_{self._period_label}.docx"
         return os.path.join(self._output_dir, filename)
 
     def _save_doc(self, doc: Document, file_path: str) -> None:
@@ -789,6 +803,7 @@ class JsonGenerator:
         topic_name:           Optional[str] = None,
 
         user_id:              Optional[int]  = None,
+        username:             Optional[str] = None,
         include_comments:     bool           = False,
         ai_split:             bool           = False,
         period_label:         str            = "fullchat", # ← задача 3
@@ -834,9 +849,13 @@ class JsonGenerator:
         safe_title = sanitize_filename(chat_title)
         topic_sfx  = _topic_suffix(topic_id)           # ← задача 2
         if topic_name:
-            base_name  = f"{safe_title}_{topic_name}_{period_label}_history"  # ← задача 3
+            base_name  = f"{safe_title}_{topic_name}_{period_label}"  # ← задача 3
         else:
-            base_name = f"{safe_title}{topic_sfx}_{period_label}_history"  # ← задача 3
+            base_name = f"{safe_title}{topic_sfx}_{period_label}"  # ← задача 3
+        if username:
+            base_name = f"{safe_title}_{username}_{period_label}"
+        else:
+            base_name = f"{safe_title}_{period_label}"
 
         # ── Без разбивки: один файл ────────────────────────────────────
         if not ai_split:
@@ -937,6 +956,7 @@ class MarkdownGenerator:
         topic_id:             Optional[int]  = None,      # ← задача 2
         topic_name:           Optional[str]  = None,
         user_id:              Optional[int]  = None,
+        username:             Optional[str]  = None,
         include_comments:     bool           = False,
         ai_split:             bool           = False,
         period_label:         str,
