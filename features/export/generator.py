@@ -227,7 +227,6 @@ class DocxGenerator:
         self._topic_id     = topic_id   # ← задача 1: сохраняем для _build_path
         self._topic_name   = topic_name
         self._username     = username
-        print(f"[DEBUG] generate() username={self._username!r}")
         os.makedirs(self._output_dir, exist_ok=True)
 
         # Загружаем все транскрипции чата одним запросом
@@ -307,7 +306,6 @@ class DocxGenerator:
             self._add_group_to_doc(doc, group)
 
         file_path = self._build_path("archive")
-        print(f'{file_path=}')
         self._save_doc(doc, file_path)
         self._log(f"  ✅ {os.path.basename(file_path)} ({len(messages)} сообщений)")
         return [file_path]
@@ -847,15 +845,10 @@ class JsonGenerator:
 
         stt_map:   dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
         safe_title = sanitize_filename(chat_title)
-        topic_sfx  = _topic_suffix(topic_id)           # ← задача 2
-        if topic_name:
-            base_name  = f"{safe_title}_{topic_name}_{period_label}"  # ← задача 3
-        else:
-            base_name = f"{safe_title}{topic_sfx}_{period_label}"  # ← задача 3
-        if username:
-            base_name = f"{safe_title}_{username}_{period_label}"
-        else:
-            base_name = f"{safe_title}_{period_label}"
+        topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
+                    else (_topic_suffix(topic_id) if topic_id else "")
+        user_part  = f"_{sanitize_filename(username)}" if username else ""
+        base_name  = f"{safe_title}{topic_part}{user_part}_{period_label}"
 
         # ── Без разбивки: один файл ────────────────────────────────────
         if not ai_split:
