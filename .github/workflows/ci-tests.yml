@@ -39,7 +39,7 @@ jobs:
             libxcb-xinerama0 libxcb-xfixes0 libxcb-shape0
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r .github/workflows/requirements-test.txt
 
       - name: Run tests with coverage (Linux)
         if: matrix.os == 'ubuntu-latest'
