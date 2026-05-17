@@ -1,0 +1,71 @@
+[
+  {
+    "id": 1,
+    "from_id": 111111111,
+    "date": "2025-06-01T10:00:00",
+    "message": "Привет!",
+    "out": false,
+    "media": null
+  },
+  {
+    "id": 2,
+    "from_id": 222222222,
+    "date": "2025-06-01T10:05:00",
+    "message": "Вот фото:",
+    "out": false,
+    "media": {
+      "photo": {
+        "id": 123456789,
+        "sizes": [
+          {"type": "m", "w": 320, "h": 320},
+          {"type": "x", "w": 800, "h": 800}
+        ]
+      }
+    }
+  },
+  {
+    "id": 3,
+    "from_id": 222222222,
+    "date": "2025-06-01T10:06:00",
+    "message": "И видео тоже:",
+    "out": false,
+    "media": {
+      "document": {
+        "id": 987654321,
+        "mime_type": "video/mp4",
+        "attributes": [
+          {"type": "file_name", "file_name": "video.mp4"}
+        ],
+        "size": 1024000
+      }
+    }
+  },
+  {
+    "id": 4,
+    "from_id": 333333333,
+    "date": "2025-06-01T10:10:00",
+    "message": "Голосовое сообщение",
+    "out": false,
+    "media": {
+      "voice": {
+        "id": 555555555,
+        "duration": 15,
+        "waveform": [0, 10, 20, 30, 20, 10, 0]
+      }
+    }
+  },
+  {
+    "id": 5,
+    "from_id": 333333333,
+    "date": "2025-06-01T10:11:00",
+    "message": "Кружочек",
+    "out": false,
+    "media": {
+      "video_note": {
+        "id": 666666666,
+        "duration": 30,
+        "waveform": [0, 20, 40, 30, 10, 0, 0]
+      }
+    }
+  }
+]

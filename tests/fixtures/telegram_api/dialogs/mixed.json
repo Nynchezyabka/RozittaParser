@@ -1,0 +1,40 @@
+[
+  {
+    "id": -1001234567890,
+    "entity": {
+      "id": -1001234567890,
+      "title": "Test Channel",
+      "username": "test_channel",
+      "broadcast": true,
+      "megagroup": false
+    },
+    "draft": null,
+    "pinned": false,
+    "read_outbox_max_id": 0,
+    "read_inbox_max_id": 0,
+    "unread_count": 0
+  },
+  {
+    "id": -1009876543210,
+    "entity": {
+      "id": -1009876543210,
+      "title": "Test Group",
+      "megagroup": true
+    },
+    "draft": null,
+    "pinned": true,
+    "unread_count": 5
+  },
+  {
+    "id": 1112223334,
+    "entity": {
+      "id": 1112223334,
+      "first_name": "Test",
+      "last_name": "Contact",
+      "username": "testcontact"
+    },
+    "draft": null,
+    "pinned": false,
+    "unread_count": 0
+  }
+]

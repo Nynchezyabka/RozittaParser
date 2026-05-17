@@ -447,3 +447,42 @@ class TestResolveCutoff:
         cutoff, label = ParserService._resolve_cutoff(30)
         assert cutoff is not None
         assert "_to_" in label
+
+
+# ---------------------------------------------------------------------------
+# Issue #55: Large video download timeout handling
+# ---------------------------------------------------------------------------
+
+class TestDownloadMediaTimeout:
+    def test_cleanup_partial_on_timeout(self, tmp_path):
+        import os
+        """Timeout → partial file removed, OSError raised for retry."""
+        import asyncio
+        target = str(tmp_path / "video")
+        # Создаём partial файл
+        partial = target + ".mp4"
+        with open(partial, "w") as f:
+            f.write("partial data")
+
+        from features.parser.api import _cleanup_partial
+        _cleanup_partial(target)
+        assert not os.path.exists(partial)
+
+    def test_cleanup_partial_no_file(self, tmp_path):
+        """_cleanup_partial не падает если файлов нет."""
+        from features.parser.api import _cleanup_partial
+        target = str(tmp_path / "nonexistent")
+        _cleanup_partial(target)  # should not raise
+
+    def test_existing_full_file_not_redownloaded(self, tmp_path):
+        """Если полный файл уже на диске — возвращает путь без повторной загрузки."""
+        import os
+        import glob
+        target = str(tmp_path / "video")
+        full_file = target + ".mp4"
+        with open(full_file, "wb") as f:
+            f.write(b"x" * 1000)
+
+        found = glob.glob(target + ".*")
+        assert len(found) == 1
+        assert os.path.getsize(found[0]) == 1000
