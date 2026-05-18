@@ -345,3 +345,55 @@ class TestParseProxyLink:
         link = "https://t.me/proxy?server=5.6.7.8&port=8080&secret=abc123"
         result = AuthService.parse_proxy_link(link)
         assert result["port"] == 8080
+
+
+# ---------------------------------------------------------------------------
+# Issue #11: EXE + opentele import handling
+# ---------------------------------------------------------------------------
+
+class TestDetectTdataPath:
+    def test_returns_none_when_no_tdata(self, tmp_path, monkeypatch):
+        """Если tdata папки не существует — возвращает None."""
+        monkeypatch.setenv("APPDATA", str(tmp_path))
+        result = AuthService.detect_tdata_path()
+        assert result is None
+
+    def test_finds_tdata_on_windows(self, tmp_path, monkeypatch):
+        """Находит tdata в %APPDATA%/Telegram Desktop/tdata."""
+        tdata = tmp_path / "Telegram Desktop" / "tdata"
+        tdata.mkdir(parents=True)
+        monkeypatch.setenv("APPDATA", str(tmp_path))
+        result = AuthService.detect_tdata_path()
+        assert result is not None
+        assert "tdata" in result
+
+    def test_finds_uwp_variant(self, tmp_path, monkeypatch):
+        """Находит tdata в %APPDATA%/Telegram Desktop UWP/tdata."""
+        tdata = tmp_path / "Telegram Desktop UWP" / "tdata"
+        tdata.mkdir(parents=True)
+        monkeypatch.setenv("APPDATA", str(tmp_path))
+        result = AuthService.detect_tdata_path()
+        assert result is not None
+
+
+class TestImportFromTdata:
+    @pytest.mark.asyncio
+    async def test_opentele_not_installed_raises(self, tmp_path):
+        """Если opentele2 не установлен — AuthError."""
+        import importlib
+        with patch.dict("sys.modules", {"opentele2": None, "opentele2.td": None, "opentele2.api": None}):
+            with pytest.raises(AuthError, match="opentele2"):
+                await AuthService.import_from_tdata(
+                    str(tmp_path),
+                    str(tmp_path / "test_session"),
+                )
+
+    @pytest.mark.asyncio
+    async def test_tdata_path_not_exists(self, tmp_path):
+        """Несуществующий путь — AuthError (opentele2 не установлен)."""
+        with pytest.raises(AuthError):
+            await AuthService.import_from_tdata(
+                str(tmp_path / "nonexistent_tdata"),
+                str(tmp_path / "session"),
+                log=lambda _: None,
+            )

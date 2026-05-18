@@ -1,0 +1,1 @@
+"""Telegram API fixtures loader для UI тестов."""

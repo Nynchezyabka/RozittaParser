@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "title": "Новости",
+    "icon_color": 9106502,
+    "hidden": false
+  },
+  {
+    "id": 2,
+    "title": "Обсуждения",
+    "icon_color": 16744336,
+    "hidden": false
+  },
+  {
+    "id": 3,
+    "title": "Оффтоп",
+    "icon_color": 6361484,
+    "hidden": false
+  }
+]
