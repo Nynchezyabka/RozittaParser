@@ -9,7 +9,7 @@
 | **Экспорт игнорирует выбранные даты** | [#56](https://github.com/Nynchezyabka/RozittaParser/issues/56) | `export`, `database` | `ui/main_window.py`, `features/export/ui.py`, `core/database.py` |
 | **STT не работает в .exe‑сборке** | — (создать) | `stt`, `build` | `core/stt/worker.py`, `rozitta_parser.spec` |
 | **Фильтрация сообщений по участнику не работает** | [#67](https://github.com/Nynchezyabka/RozittaParser/issues/67) | `parser` | `features/parser/api.py` |
-| **Список участников не показывает комментаторов из linked‑группы** | [#27-2](https://github.com/Nynchezyabka/RozittaParser/issues/27-2) | `parser` | `features/parser/api.py` |
+| **Список участников и комментарии к постам** — не собираются корректно из‑за спама в linked‑группе; требуется связывание пересланных постов с комментариями | [#27-2](https://github.com/Nynchezyabka/RozittaParser/issues/27-2), [#BF-2](https://github.com/Nynchezyabka/RozittaParser/issues/... ) | `parser` | `features/parser/api.py` |
 
 ### 🧱 Модули (куда смотреть)
 
