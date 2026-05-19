@@ -349,6 +349,7 @@ class SettingsPanel(QWidget):
         self._split_mode:   str             = "none"
         self._split_buttons: list[SplitModeButton] = []
         self._parsing:      bool            = False
+        self._members_cache: list = []
         self._build()
         if cfg:
             self._restore_from_cfg(cfg)
@@ -527,6 +528,16 @@ class SettingsPanel(QWidget):
         self._date_widget = DateRangeWidget()
         layout.addWidget(self._date_widget)
         return card
+
+    @property
+    def date_from(self):
+        start_dt, _ = self._date_widget.get_date_range()
+        return start_dt.date() if start_dt is not None else None
+
+    @property
+    def date_to(self):
+        _, end_dt = self._date_widget.get_date_range()
+        return end_dt.date() if end_dt is not None else None
 
     def _build_members_section(self) -> ModernCard:
         card, layout = self._card()
@@ -842,7 +853,7 @@ class SettingsPanel(QWidget):
         for user in users:
             uid = user.get("id", 0)
             name = user.get("name", str(uid))
-            self._members_combo.addItem(name, uid)
+            self._members_combo.addItem(name, user)
         self._members_combo.setEnabled(True)
         self._members_combo.setCurrentIndex(0)
         self.log_message.emit(f"Загружено участников: {len(users)}")
@@ -851,8 +862,13 @@ class SettingsPanel(QWidget):
         if self._current_chat is None:
             return None
 
-        selected_user_id = int(self._members_combo.currentData() or 0)
-        self.user_id = None if selected_user_id == 0 else selected_user_id
+        selected_data = self._members_combo.currentData()
+        if selected_data and isinstance(selected_data, dict):
+            self.user_id = selected_data.get("id") or None
+            self.username = selected_data.get("name") or None
+        else:
+            self.user_id = None
+            self.username = None
 
         # Даты
         date_from = None
@@ -1654,13 +1670,21 @@ class MainWindow(QMainWindow):
 
     def _on_load_members(self, chat: dict) -> None:
         from features.chats.ui import MembersWorker
-        worker = MembersWorker(chat, self._cfg)
+        worker = MembersWorker(
+            chat=chat,
+            cfg=self._cfg,
+            date_from=self._settings_screen.date_from,
+            date_to=self._settings_screen.date_to,
+        )
         worker.members_loaded.connect(self._settings_screen.populate_members, Qt.UniqueConnection)
+        worker.members_loaded.connect(self._cache_members, Qt.UniqueConnection)
         worker.log_message.connect(self._log.append_info, Qt.UniqueConnection)
         worker.error.connect(self._on_worker_error, Qt.UniqueConnection)
         self._start_worker(worker)
         self._rozetta.set_tip("Загружаю участников...")
 
+    def _cache_members(self, members: list) -> None:
+        self._members_cache = members
     # ──────────────────────────────────────────────────────────────────────
     # СЛОТЫ: ПАРСИНГ
     # ──────────────────────────────────────────────────────────────────────
@@ -1856,6 +1880,8 @@ class MainWindow(QMainWindow):
         else:
             chat_dir = os.path.join(str(self._cfg.output_dir), sanitize_filename(chat_title))
             db_path = os.path.join(chat_dir, DB_FILENAME)
+
+        print(f"[DEBUG] username перед экспортом: {params.username!r}")
 
         export_params = ExportParams(
             chat_id=chat.get("id"),

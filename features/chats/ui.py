@@ -238,10 +238,13 @@ class LinkedGroupWorker(QThread):
     log_message = Signal(str)
 
     def __init__(self, chat: dict, cfg: AppConfig,
-                 parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self._chat = chat
-        self._cfg = cfg
+                    date_from=None, date_to=None,
+                    parent: Optional[QWidget] = None):
+            super().__init__(parent)
+            self._chat = chat
+            self._cfg = cfg
+            self._date_from = date_from  # datetime | None
+            self._date_to = date_to      # datetime | None
 
     def run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -294,10 +297,13 @@ class MembersWorker(QThread):
     error = Signal(str)
 
     def __init__(self, chat: dict, cfg: AppConfig,
+                 date_from=None, date_to=None,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._chat = chat
         self._cfg = cfg
+        self._date_from = date_from
+        self._date_to = date_to
 
     def run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -319,11 +325,19 @@ class MembersWorker(QThread):
         await client.connect()
         try:
             service = ChatsService(client)
-            stats = await service.get_user_stats(self._chat.get("id"))
+            # Для каналов с привязанной группой комментаторы находятся
+            # в linked_chat_id, а не в самом канале.
+            target_id = self._chat.get("linked_chat_id") or self._chat.get("id")
+            if self._chat.get("linked_chat_id"):
+                self.log_message.emit("💬 Канал с группой обсуждений — сканирую привязанную группу")
+            stats = await service.get_user_stats(
+                target_id,
+                date_from=self._date_from,
+                date_to=self._date_to,
+            )
             return stats
         finally:
             await client.disconnect()
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHAT ITEM WIDGET

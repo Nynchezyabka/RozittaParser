@@ -91,6 +91,7 @@ class ParseParams:
     user_filter_mode: str = "messages-only"   # "messages-only" | "all-threads"
     user_ids: list[int] = field(default_factory=list)  # пусто = все
     user_id: int        = 0;
+    username: Optional[str] = None
 
     # Разбивка DOCX
     split_mode:         str  = "none"   # "none" | "day" | "month" | "post"
