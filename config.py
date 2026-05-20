@@ -77,8 +77,8 @@ DOCUMENTS_FOLDER_NAME = "documents"         # (зарезервировано д
 # --- Парсинг ---
 DAYS_LIMIT_ALL_TIME     = 365   # days >= этого значения → «за всё время»
 DEFAULT_DAYS_LIMIT      = 30    # значение слайдера по умолчанию
-MAX_COMMENT_LIMIT       = 1000  # максимум комментариев на пост
-MAX_USER_STATS_LIMIT    = 50    # топ активных пользователей
+MAX_COMMENT_LIMIT       = 10000  # максимум комментариев на пост
+MAX_USER_STATS_LIMIT    = 1000    # топ активных пользователей
 MESSAGES_LOG_INTERVAL   = 100   # логировать каждые N сообщений
 FORUM_TOPICS_PAGE_SIZE  = 100   # количество топиков за один запрос
 MERGE_TIME_DELTA        = 60    # максимальный интервал между сообщениями одного автора для склейки (сек)

@@ -548,6 +548,8 @@ class ChatsService:
         self,
         chat_id: int,
         limit: int = MAX_USER_STATS_LIMIT,
+        date_from=None,
+        date_to=None,
         log=None,
     ) -> List[Dict]:
         """
@@ -584,8 +586,29 @@ class ChatsService:
         # Кэш usernames: {user_id: display_name}
         usernames: Dict[int, str] = {}
 
+# NEW — добавляем pre-populate себя перед циклом:
         try:
-            async for message in self._client.iter_messages(entity, limit=1000):
+            # Telethon не возвращает sender для собственных сообщений —
+            # pre-populate чтобы текущий пользователь не терялся
+            try:
+                me = await self._client.get_me()
+                if me:
+                    me_name = (
+                        f"{me.first_name or ''} {me.last_name or ''}".strip()
+                        or me.username
+                        or str(me.id)
+                    )
+                    names[me.id] = me_name
+                    usernames[me.id] = (me.username or "").strip()
+            except Exception:
+                pass
+
+            # offset_date — Telethon начинает с этой даты назад.
+            # Если date_to не задан — с самого нового сообщения.
+            iter_kwargs = {"limit": 5000, "offset_date": date_to}
+            async for message in self._client.iter_messages(entity, **iter_kwargs):
+                if date_from and message.date.replace(tzinfo=None).date() < date_from:
+                    break  # вышли за нижнюю границу периода
                 sender_id = getattr(message, "sender_id", None)
                 if sender_id is None:
                     continue
@@ -607,6 +630,23 @@ class ChatsService:
                             name = getattr(sender, "title", str(sender_id))
                         names[sender_id] = name
                         usernames[sender_id] = username
+
+        # NEW — после цикла резолвим тех, у кого sender был None (ушедшие участники):
+            # Резолвим имена для ушедших участников (sender был None в сообщении)
+            unknown_ids = [uid for uid in counts if uid not in names]
+            for uid in unknown_ids[:50]:  # cap: не более 50 лишних запросов
+                try:
+                    ent = await self._client.get_entity(uid)
+                    if isinstance(ent, User):
+                        ent_name = (
+                            f"{ent.first_name or ''} {ent.last_name or ''}".strip()
+                            or ent.username
+                            or str(uid)
+                        )
+                        names[uid] = ent_name
+                        usernames[uid] = (ent.username or "").strip()
+                except Exception:
+                    pass  # останется User_{uid} через fallback в result
 
         except Exception as exc:
             logger.warning("chats: get_user_stats iter_messages failed: %s", exc)

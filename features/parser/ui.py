@@ -91,6 +91,7 @@ class ParseParams:
     user_filter_mode: str = "messages-only"   # "messages-only" | "all-threads"
     user_ids: list[int] = field(default_factory=list)  # пусто = все
     user_id: int        = 0;
+    username: Optional[str] = None
 
     # Разбивка DOCX
     split_mode:         str  = "none"   # "none" | "day" | "month" | "post"
@@ -716,6 +717,11 @@ class ParseSettingsScreen(QWidget):
             for tag in self._member_tags
             if tag.isChecked() and not tag.is_all
         ]
+        selected_username = next(
+            (tag.username for tag in self._member_tags
+             if tag.isChecked() and not tag.is_all),
+            None
+        )
         mode_btn = self._mode_group.checkedButton()
         u_mode = mode_btn.mode if isinstance(mode_btn, _UserModeButton) else "messages-only"
 
@@ -743,6 +749,7 @@ class ParseSettingsScreen(QWidget):
             date_to=d_to,
             user_filter_mode=u_mode,
             user_ids=selected_ids,
+            username=selected_username,
             split_mode=split_mode,
             include_comments=include_comments,
             filter_expression=filter_expr,

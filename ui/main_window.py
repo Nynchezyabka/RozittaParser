@@ -349,6 +349,7 @@ class SettingsPanel(QWidget):
         self._split_mode:   str             = "none"
         self._split_buttons: list[SplitModeButton] = []
         self._parsing:      bool            = False
+        self._members_cache: list = []
         self._build()
         if cfg:
             self._restore_from_cfg(cfg)
@@ -527,6 +528,16 @@ class SettingsPanel(QWidget):
         self._date_widget = DateRangeWidget()
         layout.addWidget(self._date_widget)
         return card
+
+    @property
+    def date_from(self):
+        start_dt, _ = self._date_widget.get_date_range()
+        return start_dt.date() if start_dt is not None else None
+
+    @property
+    def date_to(self):
+        _, end_dt = self._date_widget.get_date_range()
+        return end_dt.date() if end_dt is not None else None
 
     def _build_members_section(self) -> ModernCard:
         card, layout = self._card()
@@ -820,7 +831,7 @@ class SettingsPanel(QWidget):
     def _on_export_members_clicked(self) -> None:
         from features.export.participants import export_participants_docx
         users = self._members_cache
-        title = self._current_chat['title']
+        title = self._current_chat.get('title', 'Export') if self._current_chat else 'Export'
         filepath= export_participants_docx(users, title, f'./output/{title}')
 
         self.log_message.emit(f"Экспортировано {len(users)} участников => {filepath}")
@@ -838,11 +849,11 @@ class SettingsPanel(QWidget):
     def populate_members(self, users: list[dict]) -> None:
         self._members_cache = users.copy()
         self._members_combo.clear()
-        self._members_combo.addItem("Все участники", 0)
+        self._members_combo.addItem("Все участники", 0)  # для пункта "Все" оставляем число 0
         for user in users:
             uid = user.get("id", 0)
             name = user.get("name", str(uid))
-            self._members_combo.addItem(name, uid)
+            self._members_combo.addItem(name, user)  # ← заменили uid на user
         self._members_combo.setEnabled(True)
         self._members_combo.setCurrentIndex(0)
         self.log_message.emit(f"Загружено участников: {len(users)}")
@@ -851,8 +862,20 @@ class SettingsPanel(QWidget):
         if self._current_chat is None:
             return None
 
-        selected_user_id = int(self._members_combo.currentData() or 0)
-        self.user_id = None if selected_user_id == 0 else selected_user_id
+        selected_data = self._members_combo.currentData()
+
+        if selected_data is None:
+            self.user_id = None
+            self.username = None
+        elif isinstance(selected_data, dict):
+            # Новый вариант: данные — словарь с полями id и name
+            self.user_id = selected_data.get("id") or None
+            self.username = selected_data.get("name") or None
+        else:
+            # Старый вариант: данные — число (user_id)
+            selected_user_id = int(selected_data or 0)
+            self.user_id = None if selected_user_id == 0 else selected_user_id
+            self.username = None
 
         # Даты
         date_from = None
@@ -876,7 +899,8 @@ class SettingsPanel(QWidget):
             date_from            = date_from,
             date_to              = date_to,
             user_filter_mode     = self._user_mode,
-            user_id              = self.user_id,
+            user_id              = self.user_id or 0,
+            username             = self.username or "",
             split_mode           = self._split_mode,
             include_comments     = self._toggle_comments.isChecked(),
             re_download          = self._toggle_redownload.isChecked(),
@@ -934,12 +958,27 @@ class LogoutWorker(QThread):
             self.log_message.emit(f"⚠️ log_out error (продолжаем): {exc}")
         finally:
             try:
-                await client.disconnect()
+                # client.disconnect() may be a coroutine or a regular function depending on
+                # the client implementation. Handle both cases to avoid "None is not awaitable".
+                import inspect
+                maybe_awaitable = client.disconnect()
+                if inspect.isawaitable(maybe_awaitable):
+                    await maybe_awaitable
+                else:
+                    # If it's not awaitable, it was executed already (or is a regular function).
+                    pass
             except Exception:
                 logging.exception('Исключение в _do_logout.')
             # Явно закрываем SQLite-соединение session-файла
             try:
-                client.session.close()
+                sess = getattr(client, 'session', None)
+                if sess is not None:
+                    # sess may be a sqlite3.Connection or similar; call close() safely
+                    try:
+                        sess.close()
+                    except Exception:
+                        # In case sess doesn't support close or closing fails
+                        logging.exception('Ошибка при закрытии session-файла в _do_logout.')
             except Exception:
                 logging.exception('Исключение при закрытии сессии в _do_logout.')
             del client
@@ -1654,13 +1693,21 @@ class MainWindow(QMainWindow):
 
     def _on_load_members(self, chat: dict) -> None:
         from features.chats.ui import MembersWorker
-        worker = MembersWorker(chat, self._cfg)
+        worker = MembersWorker(
+            chat=chat,
+            cfg=self._cfg,
+            date_from=self._settings_screen.date_from,
+            date_to=self._settings_screen.date_to,
+        )
         worker.members_loaded.connect(self._settings_screen.populate_members, Qt.UniqueConnection)
+        worker.members_loaded.connect(self._cache_members, Qt.UniqueConnection)
         worker.log_message.connect(self._log.append_info, Qt.UniqueConnection)
         worker.error.connect(self._on_worker_error, Qt.UniqueConnection)
         self._start_worker(worker)
         self._rozetta.set_tip("Загружаю участников...")
 
+    def _cache_members(self, members: list) -> None:
+        self._members_cache = members
     # ──────────────────────────────────────────────────────────────────────
     # СЛОТЫ: ПАРСИНГ
     # ──────────────────────────────────────────────────────────────────────
@@ -1857,6 +1904,7 @@ class MainWindow(QMainWindow):
             chat_dir = os.path.join(str(self._cfg.output_dir), sanitize_filename(chat_title))
             db_path = os.path.join(chat_dir, DB_FILENAME)
 
+  
         export_params = ExportParams(
             chat_id=chat.get("id"),
             chat_title=chat_title,
@@ -1864,6 +1912,7 @@ class MainWindow(QMainWindow):
             topic_id=chat.get("selected_topic_id"),
             topic_name=chat.get("selected_topic_name"),
             user_id=params.user_id,
+            username=params.username if params else None,
             include_comments=params.include_comments if params else False,
             output_dir=chat_dir,
             db_path=db_path,
