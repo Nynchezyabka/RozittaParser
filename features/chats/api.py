@@ -603,8 +603,8 @@ class ChatsService:
                     )
                     names[me.id] = me_name
                     usernames[me.id] = (me.username or "").strip()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("get_participants: не удалось получить self (me): %s", exc)
 
             # offset_date — Telethon начинает с этой даты назад.
             # Если date_to не задан — с самого нового сообщения.

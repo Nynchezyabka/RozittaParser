@@ -1041,3 +1041,5 @@ class DBManager:
             return max(0, int((now - updated).total_seconds() / 60))
         except Exception:
             return None
+        
+   
