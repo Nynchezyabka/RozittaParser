@@ -166,8 +166,11 @@ class ChatsService:
                 with DBManager(cache_db_path) as _db:
                     cached = _db.load_dialogs_cache(max_age_hours=87600)
                     age    = _db.dialogs_cache_age_minutes()
+                    day    = age // 1440
+                    hour   = (age % 1440) // 60
+                    min_   = age % 60
                 if cached:
-                    age_str = f"{age} мин. назад" if age is not None else "недавно"
+                    age_str = f"{day} д. {hour} ч. {min_} мин. назад" if age is not None else "недавно"
                     _log(f"📋 Загружено {len(cached)} чатов из кэша (обновлено {age_str})")
                     _log("💡 Для обновления нажмите кнопку 🔄 Обновить чаты")
                     return cached
