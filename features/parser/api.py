@@ -41,8 +41,10 @@ from telethon import TelegramClient
 from telethon.errors import (
     BadRequestError,
     FloodWaitError as TelethonFloodWaitError,
+    MsgIdInvalidError,
     RPCError,
 )
+from telethon.tl.functions.messages import GetDiscussionMessageRequest
 from telethon.tl.types import (
     Channel,
     Chat,
@@ -477,7 +479,10 @@ class ParserService:
         # Финальный flush остатка батча в БД
         if _batch:
             insert_fn(_batch)
+            for _row in _batch:
+                tracker.mark_downloaded(_row["message_id"])
             _batch.clear()
+        tracker.save()
 
         # Сброс трекера в файл — одна запись вместо N × open/write/close в event loop
         tracker.save()
@@ -670,7 +675,8 @@ class ParserService:
                         # Быстрый путь: текстовое сообщение, нет I/O — inline
                         row = self._extract_row_sync(message, normalized_id, topic_id)
                         batch.append(row)
-                        tracker.mark_downloaded(message.id)
+                        # tracker.mark_downloaded только после реального flush в БД
+                        # (перемещено в блок flush ниже)
                         self._msg_count += 1
                         if self._msg_count % MESSAGES_LOG_INTERVAL == 0:
                             self._log(f"📨 Обработано сообщений: {self._msg_count}")
@@ -681,6 +687,9 @@ class ParserService:
                         # Периодический flush в БД — каждые _DB_BATCH_SIZE сообщений.
                         if len(batch) >= _DB_BATCH_SIZE:
                             insert_fn(batch)
+                            # Помечаем как скачанные только те, что реально записаны в БД
+                            for _row in batch:
+                                tracker.mark_downloaded(_row["message_id"])
                             batch.clear()
                             tracker.save()
 
@@ -1063,16 +1072,43 @@ class ParserService:
         attempts = 0
         comment_batch: List[dict] = []
 
+                # --- Шаг 1: резолюция root_id в группе через официальный API ---
+        # post_id — это ID в канале; у группы независимая нумерация.
+        # GetDiscussionMessageRequest переводит channel post_id → group message id.
+        try:
+            disc = await self._client(GetDiscussionMessageRequest(
+                peer=channel_id,
+                msg_id=post_id,
+            ))
+        except MsgIdInvalidError:
+            logger.debug("parser: пост #%s не имеет обсуждения", post_id)
+            return 0
+        except Exception as exc:
+            logger.warning("parser: GetDiscussionMessage failed post_id=%s: %s", post_id, exc)
+            return 0
+
+        if not disc.messages:
+            logger.debug("parser: disc.messages пусто для поста #%s", post_id)
+            return 0
+
+        # messages[-1] — это пересланная копия поста в группе (корень обсуждения)
+        root_msg_id_in_group = disc.messages[-1].id
+        logger.debug(
+            "parser: post #%s → group root_id=%s (linked_chat=%s)",
+            post_id, root_msg_id_in_group, linked_chat_id,
+        )
+
+        # --- Шаг 2: итерация комментариев по правильному root_id ---
         while attempts <= _MAX_RETRIES:
             try:
                 async for comment in self._client.iter_messages(
                         linked_chat_id,
-                        reply_to=post_id,
+                        reply_to=root_msg_id_in_group,  # ← ID в группе, не в канале
                         limit=limit,
                 ):
                     row, media_err = await self._process_message(
                         message=comment,
-                        chat_id=channel_id,  # привязываем к каналу
+                        chat_id=channel_id,
                         topic_id=topic_id,
                         media_filter=media_filter,
                         post_id=post_id,
@@ -1085,10 +1121,9 @@ class ParserService:
                         comment_batch.append(row)
                     count += 1
 
-                # Batch flush всех комментариев поста
                 if comment_batch:
                     _insert(comment_batch)
-                break  # успешно завершили итерацию
+                break
 
             except TelethonFloodWaitError as exc:
                 wait = exc.seconds + _FLOOD_BUFFER

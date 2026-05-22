@@ -800,7 +800,7 @@ class DBManager:
         Returns:
             Список уникальных post_id, ORDER BY post_id ASC.
         """
-        conditions = ["chat_id = ?", "is_comment = 0", "post_id IS NOT NULL"]
+        conditions = ["chat_id = ?", "is_comment = 1", "post_id IS NOT NULL"]
         params: List[object] = [chat_id]
 
         if topic_id is not None:
