@@ -345,7 +345,7 @@ class SettingsPanel(QWidget):
         self._cfg           = cfg
         self._current_chat: Optional[dict] = None
         self._selected_user_id: Optional[int] = None
-        self._user_mode:    str             = "messages-only"
+        self._user_mode:    str             = "messages_only"
         self._split_mode:   str             = "none"
         self._split_buttons: list[SplitModeButton] = []
         self._parsing:      bool            = False
@@ -547,8 +547,8 @@ class SettingsPanel(QWidget):
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)
 
-        self._mode_btn_messages = QPushButton("Только в теме")
-        self._mode_btn_all      = QPushButton("Все темы")
+        self._mode_btn_messages = QPushButton("Только сообщения")
+        self._mode_btn_all      = QPushButton("Все ветки")
 
         for btn in (self._mode_btn_messages, self._mode_btn_all):
             btn.setCheckable(True)
@@ -577,10 +577,10 @@ class SettingsPanel(QWidget):
 
         self._mode_btn_messages.setChecked(True)
         self._mode_btn_messages.clicked.connect(
-            lambda: self._set_user_mode("messages-only")
+            lambda: self._set_user_mode("messages_only")
         )
         self._mode_btn_all.clicked.connect(
-            lambda: self._set_user_mode("all-threads")
+            lambda: self._set_user_mode("threads")
         )
 
         mode_row.addWidget(self._mode_btn_messages)
@@ -815,8 +815,8 @@ class SettingsPanel(QWidget):
 
     def _set_user_mode(self, mode: str) -> None:
         self._user_mode = mode
-        self._mode_btn_messages.setChecked(mode == "messages-only")
-        self._mode_btn_all.setChecked(mode == "all-threads")
+        self._mode_btn_messages.setChecked(mode == "messages_only")
+        self._mode_btn_all.setChecked(mode == "threads")
 
     def _on_split_mode(self, mode: str) -> None:
         self._split_mode = mode
@@ -1913,6 +1913,7 @@ class MainWindow(QMainWindow):
             topic_name=chat.get("selected_topic_name"),
             user_id=params.user_id,
             username=params.username if params else None,
+            user_filter_mode=params.user_filter_mode if params else "none",
             include_comments=params.include_comments if params else False,
             output_dir=chat_dir,
             db_path=db_path,
