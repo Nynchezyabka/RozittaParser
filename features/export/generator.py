@@ -184,6 +184,7 @@ class DocxGenerator:
         # Транскрипции: {message_id: text} — загружаются в generate()
         self._transcriptions: Dict[int, str] = {}
 
+
     # ------------------------------------------------------------------
     # Публичный API
     # ------------------------------------------------------------------
@@ -201,6 +202,7 @@ class DocxGenerator:
         period_label:     str           = "fullchat",
         date_from:        Optional[str] = None,
         date_to:          Optional[str] = None,
+        user_filter_mode: str           = "none",
         log:              _LogCallback  = None,
     ) -> List[str]:
         """
@@ -236,6 +238,21 @@ class DocxGenerator:
                 self._log(f"🎙 STT: загружено {len(self._transcriptions)} транскрипций")
         except Exception:
             self._transcriptions = {}
+
+        # ── Thread-режим: ранний выход ───────────────────────────────
+        if user_filter_mode == "threads" and user_id is not None:
+            return self._generate_threads(
+                chat_id      = chat_id,
+                chat_title   = chat_title,
+                topic_id     = topic_id,
+                topic_name   = topic_name,
+                user_id      = user_id,
+                username     = username,
+                period_label = period_label,
+                date_from    = date_from,
+                date_to      = date_to,
+                log          = log,
+            )            
 
         self._log(f"📄 Генерация DOCX (режим: {split_mode})...")
         logger.info(
@@ -288,6 +305,78 @@ class DocxGenerator:
     # ------------------------------------------------------------------
     # Режимы генерации
     # ------------------------------------------------------------------
+
+    def _add_context_block_to_doc(self, doc, rows: list) -> None:
+        """Рендерит блок контекста (цитата): отступ + серый текст."""
+        from docx.shared import Pt, RGBColor  # noqa: PLC0415
+        for row in rows:
+            author   = row[_COL_USERNAME] or f"id_{row[_COL_USER_ID]}"
+            date_str = (row[_COL_DATE] or "")[:16]
+            # строка-заголовок
+            ph = doc.add_paragraph()
+            ph.paragraph_format.left_indent = Pt(24)
+            ph.paragraph_format.space_after = Pt(0)
+            rh = ph.add_run(f"\u21b3 {author}  {date_str}")
+            rh.font.italic    = True
+            rh.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+            # строки текста
+            for line in (row[_COL_TEXT] or "").strip().splitlines() or [""]:
+                pt = doc.add_paragraph(line)
+                pt.paragraph_format.left_indent  = Pt(24)
+                pt.paragraph_format.space_before = Pt(0)
+                pt.paragraph_format.space_after  = Pt(1)
+                for r in pt.runs:
+                    r.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+    def _generate_threads(
+        self,
+        chat_id:      int,
+        chat_title:   str,
+        topic_id:     Optional[int],
+        topic_name:   Optional[str],
+        user_id:      int,
+        username:     Optional[str],
+        period_label: str,
+        date_from:    Optional[str],
+        date_to:      Optional[str],
+        log:          "_LogCallback",
+    ) -> List[str]:
+        """Создаёт DOCX с парами (контекст → ответ) для thread-режима."""
+        from docx import Document          # noqa: PLC0415
+        from docx.shared import Pt         # noqa: PLC0415
+        from core.utils import sanitize_filename  # noqa: PLC0415
+
+        doc = Document()
+        user_label   = sanitize_filename(username or f"id_{user_id}")
+        name_parts   = [sanitize_filename(chat_title)]
+        if topic_name:
+            name_parts.append(sanitize_filename(topic_name))
+        name_parts  += [user_label, "threads", period_label]
+        out_path     = Path(self._output_dir) / ("_".join(name_parts) + ".docx")
+
+        doc.add_heading(
+            f"{chat_title} \u2014 \u0432\u0435\u0442\u043a\u0438 \u0441 {username or user_label}",
+            level=1,
+        )
+
+        pairs = self._db.get_thread_pairs(
+            chat_id, user_id,
+            topic_id=topic_id, date_from=date_from, date_to=date_to,
+        )
+        if log:
+            log(f"Thread DOCX: {len(pairs)} \u043f\u0430\u0440")
+
+        for pair in pairs:
+            if pair["context"]:
+                self._add_context_block_to_doc(doc, pair["context"])
+            self._add_group_to_doc(doc, pair["reply"])
+            sep = doc.add_paragraph("\u2500" * 42)
+            sep.paragraph_format.space_before = Pt(3)
+            sep.paragraph_format.space_after  = Pt(3)
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(out_path))
+        return [str(out_path)]
 
     def _generate_single(
         self,
@@ -811,6 +900,7 @@ class JsonGenerator:
         date_from:            Optional[str]  = None,
         date_to:              Optional[str]  = None,
         log:                  _LogCallback   = lambda _: None,
+        user_filter_mode:     str            = "messages",
     ) -> List[str]:
         """
         Основная точка входа. Строит JSON и сохраняет на диск.
@@ -829,6 +919,21 @@ class JsonGenerator:
         """
 
         os.makedirs(self._output_dir, exist_ok=True)
+
+        # ── Thread-режим: ранний выход ───────────────────────────────
+        if user_filter_mode == "threads" and user_id is not None:
+            return self._generate_threads(
+                chat_id      = chat_id,
+                chat_title   = chat_title,
+                topic_id     = topic_id,
+                topic_name   = topic_name,
+                user_id      = user_id,
+                username     = username,
+                period_label = period_label,
+                date_from    = date_from,
+                date_to      = date_to,
+                log          = log,
+            )
 
         log("📋 Загружаю сообщения из БД для JSON-экспорта...")
         rows = self._db.get_messages(
@@ -898,8 +1003,75 @@ class JsonGenerator:
 
     # ── Вспомогательные ───────────────────────────────────────────────
 
-    @staticmethod
-    def _make_record(row, stt_text: Optional[str]) -> dict:
+    def _generate_threads(
+        self,
+        chat_id:      int,
+        chat_title:   str,
+        topic_id:     Optional[int],
+        topic_name:   Optional[str],
+        user_id:      int,
+        username:     Optional[str],
+        period_label: str,
+        date_from:    Optional[str],
+        date_to:      Optional[str],
+        log:          "_LogCallback",
+    ) -> List[str]:
+        """
+        JSON-выгрузка для thread-режима.
+
+        Структура каждой записи:
+        {
+            "type": "thread_reply",
+            "context": {"parts": [record, ...]},
+            "reply": record
+        }
+        LLM-парсер различает обычные записи (type="message") и thread-пары по полю type.
+        """
+        import json  # noqa: PLC0415
+        from core.utils import sanitize_filename  # noqa: PLC0415
+
+        stt_map: dict[int, str] = {}
+        try:
+            stt_map = self._db.get_transcriptions_for_chat(chat_id)
+        except Exception:
+            pass
+
+        pairs = self._db.get_thread_pairs(
+            chat_id, user_id,
+            topic_id=topic_id, date_from=date_from, date_to=date_to,
+        )
+        if log:
+            log(f"Thread JSON: {len(pairs)} pairs")
+
+        records = [
+            {
+                "type": "thread_reply",
+                "context": {
+                    "parts": [self._make_record(r, None) for r in p["context"]],
+                },
+                "reply": {
+                    "parts": [
+                        self._make_record(r, stt_map.get(r[_COL_MESSAGE_ID]))
+                        for r in p["reply"]
+                    ],
+                },
+            }
+            for p in pairs
+        ]
+
+        user_label = sanitize_filename(username or f"id_{user_id}")
+        name_parts = [sanitize_filename(chat_title)]
+        if topic_name:
+            name_parts.append(sanitize_filename(topic_name))
+        name_parts += [user_label, "threads", period_label]
+        out_path = Path(self._output_dir) / ("_".join(name_parts) + ".json")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return [str(out_path)]
+
+    def _make_record(self, row, stt_text: Optional[str]) -> dict:
         return {
             "message_id": row[_COL_MESSAGE_ID],
             "date":       row[_COL_DATE] or None,
@@ -959,6 +1131,7 @@ class MarkdownGenerator:
         date_from:            Optional[str]  = None,
         date_to:              Optional[str]  = None,
         log:                  _LogCallback   = lambda _: None,
+        user_filter_mode:     str            = "messages",       
     ) -> List[str]:
         """
         Основная точка входа. Строит Markdown и сохраняет на диск.
@@ -976,6 +1149,21 @@ class MarkdownGenerator:
         """
 
         os.makedirs(self._output_dir, exist_ok=True)
+
+        # ── Thread-режим: ранний выход ───────────────────────────────
+        if user_filter_mode == "threads" and user_id is not None:
+            return self._generate_threads(
+                chat_id      = chat_id,
+                chat_title   = chat_title,
+                topic_id     = topic_id,
+                topic_name   = topic_name,
+                user_id      = user_id,
+                username     = username,
+                period_label = period_label,
+                date_from    = date_from,
+                date_to      = date_to,
+                log          = log,
+            )
 
         log("📋 Загружаю сообщения из БД для Markdown-экспорта...")
         rows = self._db.get_messages(
@@ -1050,8 +1238,81 @@ class MarkdownGenerator:
 
     # ── Вспомогательные ───────────────────────────────────────────────
 
-    @staticmethod
-    def _format_message(row, stt_text: Optional[str]) -> str:
+    def _format_thread_pair(self, pair: dict, stt_map: dict) -> str:
+        """
+        Форматирует пару (контекст + ответ) в Markdown.
+
+        Контекст оборачивается в blockquote (> ...) — стандарт CommonMark,
+        понятен LLM-инструментам. Метка [контекст] позволяет LLM различить
+        роли сообщений без дополнительных инструкций.
+        """
+        blocks: list = []
+        for row in pair["context"]:
+            raw = self._format_message(row, None).rstrip()
+            # снимаем горизонтальный разделитель, если _format_message его добавляет
+            raw = raw.rstrip("-").rstrip("\u2500").strip()
+            quoted = "\n".join(
+                f"> {ln}" if ln.strip() else ">"
+                for ln in raw.splitlines()
+            )
+            blocks.append(f"> **[\u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442]**\n{quoted}")
+        reply_parts = [
+            self._format_message(r, stt_map.get(r[_COL_MESSAGE_ID]))
+            for r in pair["reply"]
+        ]
+        reply_block = "\n".join(reply_parts)
+        blocks.append(reply_block)
+        return "\n\n".join(blocks)
+
+    def _generate_threads(
+        self,
+        chat_id:      int,
+        chat_title:   str,
+        topic_id:     Optional[int],
+        topic_name:   Optional[str],
+        user_id:      int,
+        username:     Optional[str],
+        period_label: str,
+        date_from:    Optional[str],
+        date_to:      Optional[str],
+        log:          "_LogCallback",
+    ) -> List[str]:
+        """Markdown-выгрузка для thread-режима."""
+        from core.utils import sanitize_filename  # noqa: PLC0415
+
+        stt_map: dict[int, str] = {}
+        try:
+            stt_map = self._db.get_transcriptions_for_chat(chat_id)
+        except Exception:
+            pass
+
+        pairs = self._db.get_thread_pairs(
+            chat_id, user_id,
+            topic_id=topic_id, date_from=date_from, date_to=date_to,
+        )
+        if log:
+            log(f"Thread MD: {len(pairs)} pairs")
+
+        user_label = sanitize_filename(username or f"id_{user_id}")
+        name_parts = [sanitize_filename(chat_title)]
+        if topic_name:
+            name_parts.append(sanitize_filename(topic_name))
+        name_parts += [user_label, "threads", period_label]
+        out_path = Path(self._output_dir) / ("_".join(name_parts) + ".md")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        user_display = username or user_label
+        header = (
+            f"# {chat_title} \u2014 \u0432\u0435\u0442\u043a\u0438 "
+            f"\u0441 {user_display}\n\n"
+        )
+        content = "\n\n---\n\n".join(
+            self._format_thread_pair(p, stt_map) for p in pairs
+        )
+        out_path.write_text(header + content, encoding="utf-8")
+        return [str(out_path)]
+
+    def _format_message(self, row, stt_text: Optional[str]) -> str:
         """Форматирует одно сообщение в Markdown-блок."""
 
         raw_date = row[_COL_DATE] or ""

@@ -85,8 +85,9 @@ class ExportParams:
     topic_id:         Optional[int] = None
     topic_name:       Optional[str] = None
     user_id:          Optional[int] = None
-    username:         Optional[str] = None
-    include_comments: bool          = False
+    username:          Optional[str] = None
+    user_filter_mode:  str           = "none"   # "none" | "messages_only" | "threads"
+    include_comments:  bool          = False
     output_dir:       str           = "output"
     db_path:          str           = "output/telegram_archive.db"
     export_formats:   Optional[list[str]] = None  # ["docx"] | ["json"] | ["docx","json","html","md"]
@@ -188,6 +189,7 @@ class ExportWorker(QThread):
                         period_label     = p.period_label,
                         date_from        = p.date_from,
                         date_to          = p.date_to,
+                        user_filter_mode = p.user_filter_mode,
                         log              = self._log,
                     )
                     all_files.extend(files)
@@ -208,6 +210,7 @@ class ExportWorker(QThread):
                         ai_split_chunk_words = p.ai_split_chunk_words,
                         date_from        = p.date_from,
                         date_to          = p.date_to,
+                        user_filter_mode = p.user_filter_mode,
                         log              = self._log,
                     )
                     all_files.extend(json_paths)
@@ -228,6 +231,7 @@ class ExportWorker(QThread):
                         ai_split_chunk_words = p.ai_split_chunk_words,
                         date_from        = p.date_from,
                         date_to          = p.date_to,
+                        user_filter_mode = p.user_filter_mode,
                         log              = self._log,
                     )
                     all_files.extend(md_paths)
