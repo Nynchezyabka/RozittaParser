@@ -32,6 +32,12 @@ from core.exceptions import (
 
 logger = logging.getLogger(__name__)
 
+# Публичные credentials Telegram Desktop (используются как fallback
+# при импорте tdata, когда пользователь не вводил api_id/hash вручную).
+# Источник: https://github.com/telegramdesktop/tdesktop (hardcoded)
+_TDESKTOP_API_ID   = 2040
+_TDESKTOP_API_HASH = "b18441a1ff607e10a989891a5462e627"
+
 # Тип для async-поставщика строки (телефон / код / пароль)
 _StringProvider = Callable[[], Awaitable[str]]
 # Тип для лог-колбэка (может быть Qt-сигнал или просто print)
@@ -116,12 +122,21 @@ class AuthService:
         session_path = cfg.session_path
         session_file = session_path + ".session"
 
-        api_id   = cfg.api_id_int
-        api_hash = cfg.api_hash
+        # TDesktop fallback: если api_id/hash не заданы (импорт из tdata),
+        # используем публичные credentials Telegram Desktop.
+        api_id   = cfg.api_id_int or _TDESKTOP_API_ID
+        api_hash = (cfg.api_hash or "").strip() or _TDESKTOP_API_HASH
+
+        if not api_id or not api_hash:
+            # Ни пользовательских, ни fallback-credentials нет — обычная валидация
+            cfg.validate()
 
         if os.path.exists(session_file):
             logger.info("auth: используем существующую сессию %s", session_file)
         else:
+            if not cfg.api_id_int:
+                # Новая сессия без credentials — обязательный ввод
+                cfg.validate()
             logger.info("auth: создаём новую сессию")
 
         kwargs = dict(
