@@ -1159,6 +1159,17 @@ class TdataImportWorker(QThread):
             self.character_state.emit("error")
             return
 
+        # Если api_id/hash не заданы — подставляем TDesktop credentials.
+        # Без этого build_client() в ChatsWorker/ParseWorker упадёт с
+        # "Your API ID or Hash cannot be empty or None".
+        if not self._cfg.api_id or not self._cfg.api_hash:
+            from features.auth.api import _TDESKTOP_API_ID, _TDESKTOP_API_HASH
+            self._cfg.api_id   = str(_TDESKTOP_API_ID)
+            self._cfg.api_hash = _TDESKTOP_API_HASH
+            self.log_message.emit(
+                "ℹ️ api_id/hash не заданы — используются credentials Telegram Desktop"
+            )
+
         # Сохраняем конфиг — теперь сессия активна
         try:
             from config import save_config
