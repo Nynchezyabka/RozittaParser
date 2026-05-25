@@ -251,6 +251,7 @@ class ExportWorker(QThread):
                         period_label         = p.period_label,
                         date_from        = p.date_from,
                         date_to          = p.date_to,
+                        user_filter_mode = p.user_filter_mode,
                         log                  = self._log,
                     )
                     all_files.extend(html_paths)

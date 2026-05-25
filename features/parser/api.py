@@ -111,7 +111,6 @@ _MEDIA_SUBFOLDERS: dict[str, str] = {
     "file": "files",
 }
 
-
 def _cleanup_partial(target_path: str) -> None:
     """
     Удаляет все файлы вида target_path.* (частично скачанные Telethon'ом).
@@ -126,7 +125,6 @@ def _cleanup_partial(target_path: str) -> None:
             logger.debug("[cleanup_partial] удалён: %s", fpath)
         except OSError as _e:
             logger.debug("[cleanup_partial] не удалось удалить %s: %s", fpath, _e)
-
 
 # ==============================================================================
 # Датакласс параметров сбора
@@ -163,7 +161,6 @@ class CollectParams:
     filter_expression: Optional[str] = None  # выражение-фильтр сообщений (simpleeval)
     use_takeout: bool = False  # True = использовать Takeout API (отдельные лимиты)
 
-
 # ==============================================================================
 # Результат collect_data
 # ==============================================================================
@@ -194,7 +191,6 @@ class CollectResult:
     # Абсолютный путь к БД — передаётся из ParseWorker, чтобы MainWindow
     # не реконструировал путь из chat_title (расхождение → OperationalError).
     db_path: str = ""
-
 
 # ==============================================================================
 # ParserService
@@ -1115,7 +1111,6 @@ class ParserService:
     # 5. Вспомогательные методы
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _should_download(message: Message, media_filter: List[str]) -> bool:
         """
         Определяет, нужно ли скачивать медиа из сообщения.
@@ -1216,32 +1211,44 @@ class ParserService:
 
         return None
 
-    @staticmethod
-    def _get_sender_name(message: Message) -> str:
+    def _get_sender_name(self, message: Message) -> str:
         """
         Извлекает отображаемое имя отправителя из Telethon Message.
 
-        Приоритет: username → first_name → «Unknown».
+        Приоритет:
+          1. sender.username / sender.first_name (User)
+          2. sender.title (Channel/Chat)
+          3. from_id -> PeerChannel -> chat_title (канал постит «от себя»)
+          4. from_id -> PeerUser -> User_{id} (удалённый аккаунт)
+          5. "Unknown"
 
         Returns:
             Строка с именем отправителя.
         """
         sender = getattr(message, "sender", None)
-        if sender is None:
-            return "Unknown"
+        if sender is not None:
+            if isinstance(sender, User):
+                uname = getattr(sender, "username", None)
+                if uname:
+                    return uname
+                first = getattr(sender, "first_name", None) or ""
+                last = getattr(sender, "last_name", None) or ""
+                name = f"{first} {last}".strip()
+                return name or "Unknown"
+            # Channel/Chat sender (анонимный пост от имени канала)
+            return getattr(sender, "title", None) or self._chat_title
 
-        if isinstance(sender, User):
-            username = getattr(sender, "username", None)
-            if username:
-                return username
-            first = getattr(sender, "first_name", None) or ""
-            last = getattr(sender, "last_name", None) or ""
-            name = f"{first} {last}".strip()
-            return name or "Unknown"
+        # sender is None -- fallback на from_id
+        from_id = getattr(message, "from_id", None)
+        if from_id is not None:
+            # Канал постит «от имени чата» -- используем chat_title
+            if hasattr(from_id, "channel_id"):
+                return self._chat_title
+            # Удалённый аккаунт -- user_id хоть какой-то
+            if hasattr(from_id, "user_id"):
+                return f"User_{from_id.user_id}"
 
-        # Channel/Chat sender (анонимный пост от имени канала)
-        return getattr(sender, "title", None) or "Unknown"
-
+        return "Unknown"
     @staticmethod
     def _eval_filter(message: Message, expression: str) -> bool:
         """
@@ -1283,8 +1290,8 @@ class ParserService:
             logger.debug("parser: filter_expression eval error: %s", exc)
             return True  # не блокируем парсинг при ошибке выражения
 
-    @staticmethod
     def _extract_row_sync(
+            self,
             message: Message,
             chat_id: int,
             topic_id: Optional[int],
@@ -1295,14 +1302,14 @@ class ParserService:
         Вызывается в inline-пути цикла для текстовых сообщений (нет I/O).
         Возвращает row-словарь совместимый с insert_messages_batch().
         """
-        sender_name = ParserService._get_sender_name(message)
+        sender_name = self._get_sender_name(message)
         date_str = message.date.strftime("%Y-%m-%d %H:%M:%S") if message.date else ""
 
         reply_to_msg_id: Optional[int] = None
         if message.reply_to:
             reply_to_msg_id = getattr(message.reply_to, "reply_to_msg_id", None)
 
-        effective_topic_id = topic_id or ParserService._extract_topic_id(message)
+        effective_topic_id = topic_id or self._extract_topic_id(message)
 
         return {
             "chat_id": chat_id,
