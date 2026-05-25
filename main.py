@@ -49,7 +49,13 @@ def _ensure_runtime_workdir() -> None:
     if not getattr(sys, "frozen", False):
         return
 
-    app_workdir = Path.home() / "RozittaParser"
+    if sys.platform == "darwin":
+        # .app bundle: писать внутрь бандла нельзя — используем стандартный путь macOS
+        app_workdir = Path.home() / "Library" / "Application Support" / "RozittaParser"
+    else:
+        # Windows / Linux: рядом с .exe
+        app_workdir = Path(sys.executable).resolve().parent
+
     app_workdir.mkdir(parents=True, exist_ok=True)
     os.chdir(app_workdir)
     logger.info("Runtime working directory: %s", app_workdir)
