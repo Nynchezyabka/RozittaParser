@@ -154,6 +154,68 @@ def _topic_suffix(topic_id: Optional[int]) -> str:
     return f"_topic{topic_id}" if topic_id is not None else ""
 
 
+def _dedup_thread_messages(pairs: list) -> list:
+    """
+    Преобразует пары (context→reply) в дедуплицированный список сообщений
+    с информацией о глубине в дереве ответов.
+
+    Устраняет дубликаты: каждое сообщение появляется ровно один раз.
+    Вычисляет depth (0 = корень) по цепочке reply_to_msg_id.
+
+    Returns:
+        Список кортежей (row, depth, reply_to_author), отсортированных по дате.
+        row             — tuple из БД
+        depth           — int: 0 для корневого сообщения, +1 за каждый уровень
+        reply_to_author — str|None: автор сообщения-родителя
+    """
+    seen_ids: set = set()
+    messages: list = []
+    msg_by_id: dict = {}
+
+    for pair in pairs:
+        for row in pair["context"]:
+            mid = row[_COL_MESSAGE_ID]
+            if mid not in seen_ids:
+                seen_ids.add(mid)
+                messages.append(row)
+                msg_by_id[mid] = row
+        for row in pair["reply"]:
+            mid = row[_COL_MESSAGE_ID]
+            if mid not in seen_ids:
+                seen_ids.add(mid)
+                messages.append(row)
+                msg_by_id[mid] = row
+
+    # Сортировка по дате
+    messages.sort(key=lambda r: r[_COL_DATE])
+
+    # Вычисление depth по цепочке reply_to
+    depth_cache: dict = {}
+
+    def _depth(row) -> int:
+        mid = row[_COL_MESSAGE_ID]
+        if mid in depth_cache:
+            return depth_cache[mid]
+        reply_to = row[_COL_REPLY_TO]
+        if reply_to is None or reply_to not in msg_by_id:
+            depth_cache[mid] = 0
+            return 0
+        parent_depth = _depth(msg_by_id[reply_to])
+        depth_cache[mid] = parent_depth + 1
+        return depth_cache[mid]
+
+    result: list = []
+    for row in messages:
+        depth = _depth(row)
+        reply_to = row[_COL_REPLY_TO]
+        reply_author = None
+        if reply_to and reply_to in msg_by_id:
+            reply_author = msg_by_id[reply_to][_COL_USERNAME] or f"id_{msg_by_id[reply_to][_COL_USER_ID]}"
+        result.append((row, depth, reply_author))
+
+    return result
+
+
 # ==============================================================================
 # DocxGenerator
 # ==============================================================================
@@ -305,29 +367,6 @@ class DocxGenerator:
     # ------------------------------------------------------------------
     # Режимы генерации
     # ------------------------------------------------------------------
-
-    def _add_context_block_to_doc(self, doc, rows: list) -> None:
-        """Рендерит блок контекста (цитата): отступ + серый текст."""
-        from docx.shared import Pt, RGBColor  # noqa: PLC0415
-        for row in rows:
-            author   = row[_COL_USERNAME] or f"id_{row[_COL_USER_ID]}"
-            date_str = (row[_COL_DATE] or "")[:16]
-            # строка-заголовок
-            ph = doc.add_paragraph()
-            ph.paragraph_format.left_indent = Pt(24)
-            ph.paragraph_format.space_after = Pt(0)
-            rh = ph.add_run(f"\u21b3 {author}  {date_str}")
-            rh.font.italic    = True
-            rh.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-            # строки текста
-            for line in (row[_COL_TEXT] or "").strip().splitlines() or [""]:
-                pt = doc.add_paragraph(line)
-                pt.paragraph_format.left_indent  = Pt(24)
-                pt.paragraph_format.space_before = Pt(0)
-                pt.paragraph_format.space_after  = Pt(1)
-                for r in pt.runs:
-                    r.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
-
     def _generate_threads(
         self,
         chat_id:      int,
@@ -341,10 +380,10 @@ class DocxGenerator:
         date_to:      Optional[str],
         log:          "_LogCallback",
     ) -> List[str]:
-        """Создаёт DOCX с парами (контекст → ответ) для thread-режима."""
-        from docx import Document          # noqa: PLC0415
-        from docx.shared import Pt         # noqa: PLC0415
-        from core.utils import sanitize_filename  # noqa: PLC0415
+        """Создаёт DOCX с деревом ответов для thread-режима (без дубликатов)."""
+        from docx import Document
+        from docx.shared import Pt
+        from core.utils import sanitize_filename
 
         doc = Document()
         user_label   = sanitize_filename(username or f"id_{user_id}")
@@ -355,7 +394,7 @@ class DocxGenerator:
         out_path     = Path(self._output_dir) / ("_".join(name_parts) + ".docx")
 
         doc.add_heading(
-            f"{chat_title} \u2014 \u0432\u0435\u0442\u043a\u0438 \u0441 {username or user_label}",
+            f"{chat_title} — ветки с {username or user_label}",
             level=1,
         )
 
@@ -364,20 +403,60 @@ class DocxGenerator:
             topic_id=topic_id, date_from=date_from, date_to=date_to,
         )
         if log:
-            log(f"Thread DOCX: {len(pairs)} \u043f\u0430\u0440")
+            log(f"Thread DOCX: {len(pairs)} пар")
 
-        for pair in pairs:
-            if pair["context"]:
-                self._add_context_block_to_doc(doc, pair["context"])
-            self._add_group_to_doc(doc, pair["reply"])
-            sep = doc.add_paragraph("\u2500" * 42)
-            sep.paragraph_format.space_before = Pt(3)
-            sep.paragraph_format.space_after  = Pt(3)
+        deduped = _dedup_thread_messages(pairs)
+        if log:
+            log(f"Thread DOCX: {len(deduped)} уникальных сообщений")
+
+        for row, depth, reply_author in deduped:
+            indent_pt = Pt(24 * depth)
+            author     = row[_COL_USERNAME] or f"id_{row[_COL_USER_ID]}"
+            date_str   = (row[_COL_DATE] or "")[:16]
+            text       = (row[_COL_TEXT] or "").strip()
+
+            # Заголовок
+            header_p = doc.add_paragraph()
+            header_p.paragraph_format.left_indent = indent_pt
+            header_p.paragraph_format.space_after  = Pt(0)
+
+            prefix = "↳ " if depth > 0 else ""
+            run = header_p.add_run(f"{prefix}{author}")
+            run.bold = True
+            run.font.size = Pt(11) if depth == 0 else Pt(10)
+            run.font.color.rgb = RGBColor(51, 51, 51) if depth == 0 else RGBColor(80, 80, 80)
+
+            date_run = header_p.add_run(f"  {date_str}")
+            date_run.font.size = Pt(9)
+            date_run.font.color.rgb = RGBColor(128, 128, 128)
+
+            # Маркер ответа
+            if depth > 0 and reply_author:
+                reply_p = doc.add_paragraph()
+                reply_p.paragraph_format.left_indent = indent_pt
+                reply_p.paragraph_format.space_before = Pt(0)
+                reply_p.paragraph_format.space_after  = Pt(2)
+                rr = reply_p.add_run(f"↩ в ответ на: {reply_author}")
+                rr.font.italic = True
+                rr.font.size = Pt(8)
+                rr.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+
+            # Текст
+            if text:
+                text_p = doc.add_paragraph()
+                text_p.paragraph_format.left_indent = indent_pt
+                text_p.paragraph_format.space_before = Pt(2)
+                xml_magic.write_text_with_links(text_p, text)
+
+            # Разделитель (только для depth=0)
+            if depth == 0:
+                sep = doc.add_paragraph("─" * 42)
+                sep.paragraph_format.space_before = Pt(3)
+                sep.paragraph_format.space_after  = Pt(3)
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(out_path))
         return [str(out_path)]
-
     def _generate_single(
         self,
         messages: List[tuple],
@@ -900,7 +979,7 @@ class JsonGenerator:
         date_from:            Optional[str]  = None,
         date_to:              Optional[str]  = None,
         log:                  _LogCallback   = lambda _: None,
-        user_filter_mode:     str            = "messages",
+        user_filter_mode:     str            = "none",
     ) -> List[str]:
         """
         Основная точка входа. Строит JSON и сохраняет на диск.
@@ -1017,18 +1096,15 @@ class JsonGenerator:
         log:          "_LogCallback",
     ) -> List[str]:
         """
-        JSON-выгрузка для thread-режима.
+        JSON-выгрузка для thread-режима (без дубликатов, с depth).
 
-        Структура каждой записи:
-        {
-            "type": "thread_reply",
-            "context": {"parts": [record, ...]},
-            "reply": record
-        }
-        LLM-парсер различает обычные записи (type="message") и thread-пары по полю type.
+        Каждая запись содержит:
+          - все поля обычного сообщения
+          - depth: глубина в дереве ответов (0 = корень)
+          - reply_to_author: автор сообщения-родителя (если есть)
         """
-        import json  # noqa: PLC0415
-        from core.utils import sanitize_filename  # noqa: PLC0415
+        import json
+        from core.utils import sanitize_filename
 
         stt_map: dict[int, str] = {}
         try:
@@ -1041,23 +1117,20 @@ class JsonGenerator:
             topic_id=topic_id, date_from=date_from, date_to=date_to,
         )
         if log:
-            log(f"Thread JSON: {len(pairs)} pairs")
+            log(f"Thread JSON: {len(pairs)} пар")
 
-        records = [
-            {
-                "type": "thread_reply",
-                "context": {
-                    "parts": [self._make_record(r, None) for r in p["context"]],
-                },
-                "reply": {
-                    "parts": [
-                        self._make_record(r, stt_map.get(r[_COL_MESSAGE_ID]))
-                        for r in p["reply"]
-                    ],
-                },
-            }
-            for p in pairs
-        ]
+        deduped = _dedup_thread_messages(pairs)
+        if log:
+            log(f"Thread JSON: {len(deduped)} уникальных сообщений")
+
+        records = []
+        for row, depth, reply_author in deduped:
+            msg_id = row[_COL_MESSAGE_ID]
+            rec = self._make_record(row, stt_map.get(msg_id))
+            rec["depth"] = depth
+            rec["reply_to_author"] = reply_author
+            rec["type"] = "thread_reply" if depth > 0 else "thread_root"
+            records.append(rec)
 
         user_label = sanitize_filename(username or f"id_{user_id}")
         name_parts = [sanitize_filename(chat_title)]
@@ -1070,7 +1143,6 @@ class JsonGenerator:
             json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return [str(out_path)]
-
     def _make_record(self, row, stt_text: Optional[str]) -> dict:
         return {
             "message_id": row[_COL_MESSAGE_ID],
@@ -1131,7 +1203,7 @@ class MarkdownGenerator:
         date_from:            Optional[str]  = None,
         date_to:              Optional[str]  = None,
         log:                  _LogCallback   = lambda _: None,
-        user_filter_mode:     str            = "messages",       
+        user_filter_mode:     str            = "none",
     ) -> List[str]:
         """
         Основная точка входа. Строит Markdown и сохраняет на диск.
@@ -1237,33 +1309,6 @@ class MarkdownGenerator:
         return out_paths
 
     # ── Вспомогательные ───────────────────────────────────────────────
-
-    def _format_thread_pair(self, pair: dict, stt_map: dict) -> str:
-        """
-        Форматирует пару (контекст + ответ) в Markdown.
-
-        Контекст оборачивается в blockquote (> ...) — стандарт CommonMark,
-        понятен LLM-инструментам. Метка [контекст] позволяет LLM различить
-        роли сообщений без дополнительных инструкций.
-        """
-        blocks: list = []
-        for row in pair["context"]:
-            raw = self._format_message(row, None).rstrip()
-            # снимаем горизонтальный разделитель, если _format_message его добавляет
-            raw = raw.rstrip("-").rstrip("\u2500").strip()
-            quoted = "\n".join(
-                f"> {ln}" if ln.strip() else ">"
-                for ln in raw.splitlines()
-            )
-            blocks.append(f"> **[\u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442]**\n{quoted}")
-        reply_parts = [
-            self._format_message(r, stt_map.get(r[_COL_MESSAGE_ID]))
-            for r in pair["reply"]
-        ]
-        reply_block = "\n".join(reply_parts)
-        blocks.append(reply_block)
-        return "\n\n".join(blocks)
-
     def _generate_threads(
         self,
         chat_id:      int,
@@ -1277,8 +1322,8 @@ class MarkdownGenerator:
         date_to:      Optional[str],
         log:          "_LogCallback",
     ) -> List[str]:
-        """Markdown-выгрузка для thread-режима."""
-        from core.utils import sanitize_filename  # noqa: PLC0415
+        """Markdown-выгрузка для thread-режима (без дубликатов)."""
+        from core.utils import sanitize_filename
 
         stt_map: dict[int, str] = {}
         try:
@@ -1291,7 +1336,11 @@ class MarkdownGenerator:
             topic_id=topic_id, date_from=date_from, date_to=date_to,
         )
         if log:
-            log(f"Thread MD: {len(pairs)} pairs")
+            log(f"Thread MD: {len(pairs)} пар")
+
+        deduped = _dedup_thread_messages(pairs)
+        if log:
+            log(f"Thread MD: {len(deduped)} уникальных сообщений")
 
         user_label = sanitize_filename(username or f"id_{user_id}")
         name_parts = [sanitize_filename(chat_title)]
@@ -1302,16 +1351,39 @@ class MarkdownGenerator:
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         user_display = username or user_label
-        header = (
-            f"# {chat_title} \u2014 \u0432\u0435\u0442\u043a\u0438 "
-            f"\u0441 {user_display}\n\n"
-        )
-        content = "\n\n---\n\n".join(
-            self._format_thread_pair(p, stt_map) for p in pairs
-        )
-        out_path.write_text(header + content, encoding="utf-8")
-        return [str(out_path)]
+        lines = [f"# {chat_title} — ветки с {user_display}"]
 
+        for row, depth, reply_author in deduped:
+            raw_date = row[_COL_DATE] or ""
+            date_str = raw_date[:16].replace("T", " ") if raw_date else "—"
+            author   = row[_COL_USERNAME] or f"id:{row[_COL_USER_ID]}" or "Неизвестно"
+            text     = (row[_COL_TEXT] or "").strip()
+            indent   = "    " * depth
+
+            # Заголовок
+            prefix = "↳ " if depth > 0 else ""
+            line = f"{indent}**[{date_str}] {prefix}{author}:**"
+
+            # Маркер ответа
+            if depth > 0 and reply_author:
+                line += f"  *(в ответ на: {reply_author})*"
+
+            lines.append(line)
+            if text:
+                lines.append(f"{indent}{text}")
+
+            # STT
+            msg_id = row[_COL_MESSAGE_ID]
+            stt = stt_map.get(msg_id)
+            if stt:
+                lines.append(f"{indent}*(STT: {stt.strip()})*")
+
+            if depth == 0:
+                lines.append("\n---\n")
+
+        out_path.write_text("\n".join(lines), encoding="utf-8")
+        return [str(out_path)]
+        
     def _format_message(self, row, stt_text: Optional[str]) -> str:
         """Форматирует одно сообщение в Markdown-блок."""
 
@@ -1384,6 +1456,8 @@ _HTML_TEMPLATE = """\
   .depth-1 {{ margin-left: 32px; }}
   .depth-2 {{ margin-left: 56px; }}
   .depth-3 {{ margin-left: 80px; }}
+  .depth-4 {{ margin-left: 104px; }}
+  .depth-5 {{ margin-left: 128px; }}
   .avatar {{
     width: 36px; height: 36px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
@@ -1504,6 +1578,7 @@ class HtmlGenerator:
         ai_split_chunk_words: int            = 300_000,
         date_from:            Optional[str]  = None,
         date_to:              Optional[str]  = None,
+        user_filter_mode:     str            = "none",
         log:                  _LogCallback   = lambda _: None,
     ) -> List[str]:
         """
@@ -1523,6 +1598,21 @@ class HtmlGenerator:
         """
 
         os.makedirs(self._output_dir, exist_ok=True)
+
+        # ── Thread-режим: ранний выход ───────────────────────────────
+        if user_filter_mode == "threads" and user_id is not None:
+            return self._generate_threads(
+                chat_id      = chat_id,
+                chat_title   = chat_title,
+                topic_id     = topic_id,
+                topic_name   = topic_name,
+                user_id      = user_id,
+                username     = username,
+                period_label = period_label,
+                date_from    = date_from,
+                date_to      = date_to,
+                log          = log,
+            )
 
         log("📋 Загружаю сообщения из БД для HTML-экспорта...")
         rows = self._db.get_messages(
@@ -1590,9 +1680,124 @@ class HtmlGenerator:
         log(f"✅ HTML готов: {total} сообщений → {len(out_paths)} файл(ов)")
         return out_paths
 
-    # ── Вспомогательные ───────────────────────────────────────────────
+    # ── Thread-режим ──────────────────────────────────────────────────
 
-    @staticmethod
+    def _generate_threads(
+        self,
+        chat_id:      int,
+        chat_title:   str,
+        topic_id:     Optional[int],
+        topic_name:   Optional[str],
+        user_id:      int,
+        username:     Optional[str],
+        period_label: str,
+        date_from:    Optional[str],
+        date_to:      Optional[str],
+        log:          "_LogCallback",
+    ) -> List[str]:
+        """HTML-выгрузка для thread-режима (дерево с отступами, без дубликатов)."""
+        from core.utils import sanitize_filename
+
+        stt_map: dict[int, str] = {}
+        try:
+            stt_map = self._db.get_transcriptions_for_chat(chat_id)
+        except Exception:
+            pass
+
+        pairs = self._db.get_thread_pairs(
+            chat_id, user_id,
+            topic_id=topic_id, date_from=date_from, date_to=date_to,
+        )
+        if log:
+            log(f"Thread HTML: {len(pairs)} пар")
+
+        deduped = _dedup_thread_messages(pairs)
+        if log:
+            log(f"Thread HTML: {len(deduped)} уникальных сообщений")
+
+        # Рендерим сообщения напрямую через _HTML_MSG
+        body_parts: list = []
+        for row, depth, reply_author in deduped:
+            msg_id     = row[_COL_MESSAGE_ID]
+            author     = row[_COL_USERNAME] or f"id_{row[_COL_USER_ID]}" or "Неизвестно"
+            raw_date   = row[_COL_DATE] or ""
+            date_str   = raw_date[:16].replace("T", " ") if raw_date else "—"
+            text       = (row[_COL_TEXT] or "").strip()
+            media_path = row[_COL_MEDIA_PATH]
+            file_type  = row[_COL_FILE_TYPE] or ""
+            avatar_letter = (author[0] or "?").upper()
+
+            safe_text = html_lib.escape(text)
+            safe_text = re.sub(
+                r"(https?://\S+)",
+                r'<a href="\1">\1</a>',
+                safe_text,
+            )
+            text_block = f'<div class="msg-text">{safe_text}</div>' if text else ""
+
+            media_block = ""
+            if media_path and os.path.exists(media_path):
+                abs_path = os.path.abspath(media_path)
+                fname = os.path.basename(abs_path)
+                if is_image_path(abs_path):
+                    media_block = (
+                        f'<img class="msg-img" src="{html_lib.escape(abs_path)}" '
+                        f'alt="{html_lib.escape(fname)}">'
+                    )
+                else:
+                    media_block = (
+                        f'<div class="msg-media"><a href="{html_lib.escape(abs_path)}">'
+                        f'{html_lib.escape(fname)}</a></div>'
+                    )
+
+            reply_badge = ""
+            if depth > 0 and reply_author:
+                reply_badge = (
+                    f'<span class="reply-badge">↳ в ответ на: '
+                    f'{html_lib.escape(reply_author)}</span>'
+                )
+
+            stt_block = ""
+            stt = stt_map.get(msg_id)
+            if stt:
+                stt_block = (
+                    f'<div class="msg-stt">🎙 {html_lib.escape(stt.strip())}</div>'
+                )
+
+            depth_class = f"depth-{min(depth, 5)}"
+
+            body_parts.append(_HTML_MSG.format(
+                depth=depth,
+                msg_id=msg_id,
+                avatar_letter=avatar_letter,
+                author=html_lib.escape(author),
+                date=date_str,
+                reply_badge=reply_badge,
+                quote_block="",
+                text_block=text_block,
+                media_block=media_block,
+                stt_block=stt_block,
+            ))
+
+        body = "\n".join(body_parts)
+        user_label = sanitize_filename(username or f"id_{user_id}")
+        name_parts = [sanitize_filename(chat_title)]
+        if topic_name:
+            name_parts.append(sanitize_filename(topic_name))
+        name_parts += [user_label, "threads", period_label]
+        out_path = Path(self._output_dir) / ("_".join(name_parts) + ".html")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        h_title = html_lib.escape(
+            f"{chat_title} — ветки с {username or user_label}"
+        )
+        html = _HTML_TEMPLATE.format(
+            title=h_title,
+            total=len(deduped),
+            body=body,
+        )
+        out_path.write_text(html, encoding="utf-8")
+        return [str(out_path)]
     def _format_message(row, stt_text: Optional[str], row_dict: dict) -> str:
         """Форматирует одно сообщение в HTML-блок по структуре макета."""
 

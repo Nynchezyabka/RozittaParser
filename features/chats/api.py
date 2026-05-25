@@ -606,15 +606,27 @@ class ChatsService:
             except Exception as exc:
                 logger.debug("get_participants: не удалось получить self (me): %s", exc)
 
-            # offset_date — Telethon начинает с этой даты назад.
-            # Если date_to не задан — с самого нового сообщения.
-            iter_kwargs = {"limit": 5000, "offset_date": date_to}
+            # Лимит сканирования: если задан date_from — сканируем все
+            # сообщения до этой даты (limit=None). Иначе — 10000 как защита
+            # от сканирования всей истории огромного чата.
+            scan_limit = None if date_from else 10_000
+            iter_kwargs = {"limit": scan_limit, "offset_date": date_to}
             async for message in self._client.iter_messages(entity, **iter_kwargs):
                 if date_from and message.date.replace(tzinfo=None).date() < date_from:
                     break  # вышли за нижнюю границу периода
+                # sender_id: обычные пользователи, каналы, удалённые аккаунты
                 sender_id = getattr(message, "sender_id", None)
                 if sender_id is None:
-                    continue
+                    # Fallback: from_id (удалённые аккаунты, анонсы каналов)
+                    from_id = getattr(message, "from_id", None)
+                    if from_id is not None:
+                        sender_id = (
+                            getattr(from_id, "user_id", None)
+                            or getattr(from_id, "channel_id", None)
+                            or getattr(from_id, "chat_id", None)
+                        )
+                    if sender_id is None:
+                        continue
 
                 counts[sender_id] = counts.get(sender_id, 0) + 1
 
@@ -630,7 +642,9 @@ class ChatsService:
                             )
                             username = (sender.username or "").strip()
                         else:
+                            # Channel sender (автор канала отвечает от имени чата)
                             name = getattr(sender, "title", str(sender_id))
+                            username = getattr(sender, "username", "") or ""
                         names[sender_id] = name
                         usernames[sender_id] = username
 
@@ -648,6 +662,9 @@ class ChatsService:
                         )
                         names[uid] = ent_name
                         usernames[uid] = (ent.username or "").strip()
+                    elif hasattr(ent, "title"):  # Channel — автор канала
+                        names[uid] = getattr(ent, "title", str(uid))
+                        usernames[uid] = getattr(ent, "username", "") or ""
                 except Exception:
                     pass  # останется User_{uid} через fallback в result
 

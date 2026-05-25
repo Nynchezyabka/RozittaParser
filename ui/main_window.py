@@ -1911,7 +1911,7 @@ class MainWindow(QMainWindow):
             split_mode=split_mode,
             topic_id=chat.get("selected_topic_id"),
             topic_name=chat.get("selected_topic_name"),
-            user_id=params.user_id,
+            user_id=params.user_id or None,
             username=params.username if params else None,
             user_filter_mode=params.user_filter_mode if params else "none",
             include_comments=params.include_comments if params else False,

@@ -609,6 +609,190 @@ class DBManager:
         with self._cursor() as cur:
             cur.execute(sql, params)
             return cur.fetchall()
+    def get_thread_pairs(
+        self,
+        chat_id:   int,
+        user_id:   int,
+        *,
+        topic_id:  Optional[int] = None,
+        date_from: Optional[str] = None,
+        date_to:   Optional[str] = None,
+    ) -> list:
+        """
+        Thread-режим: список пар {"context": [tuple, ...], "reply": [tuple, ...]}.
+
+        Два направления:
+        - Исходящее: участник ответил на чужое сообщение
+        - Входящее: кто-то ответил на сообщение участника
+
+        Context — сообщение(я), на которое ответили (+ merge-части).
+        Reply   — ответное сообщение(я) (+ merge-части).
+        """
+        pairs: list = []
+
+        # ── Исходящее направление: участник отвечает ────────────────
+        out_conds = ["chat_id = ?", "user_id = ?", "reply_to_msg_id IS NOT NULL"]
+        out_args: list = [chat_id, user_id]
+        if topic_id  is not None: out_conds.append("topic_id = ?"); out_args.append(topic_id)
+        if date_from is not None: out_conds.append("date >= ?");     out_args.append(date_from)
+        if date_to   is not None: out_conds.append("date <= ?");     out_args.append(date_to + " 23:59:59")
+
+        with self._cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM messages WHERE {' AND '.join(out_conds)} ORDER BY date ASC",
+                out_args,
+            )
+            out_reply_rows: list = cur.fetchall()
+
+        if out_reply_rows:
+            # Anchor-сообщения — одним запросом
+            out_anchor_ids = list({r["reply_to_msg_id"] for r in out_reply_rows})
+            ph = ",".join("?" * len(out_anchor_ids))
+            with self._cursor() as cur:
+                cur.execute(
+                    f"SELECT * FROM messages WHERE chat_id = ? AND message_id IN ({ph})",
+                    [chat_id, *out_anchor_ids],
+                )
+                out_anchor_map: dict = {r["message_id"]: r for r in cur.fetchall()}
+
+            # Расширяем anchors через merge_group_id
+            out_mgids = {r["merge_group_id"] for r in out_anchor_map.values() if r["merge_group_id"]}
+            out_merge_groups: dict = {}
+            if out_mgids:
+                ph2 = ",".join("?" * len(out_mgids))
+                with self._cursor() as cur:
+                    cur.execute(
+                        f"SELECT * FROM messages "
+                        f"WHERE chat_id = ? AND merge_group_id IN ({ph2}) ORDER BY date ASC",
+                        [chat_id, *out_mgids],
+                    )
+                    for r in cur.fetchall():
+                        out_merge_groups.setdefault(r["merge_group_id"], []).append(r)
+
+            # Группируем replies по merge_group_id
+            _out_by_mgid: dict = {}
+            out_reply_groups: list = []
+            for row in out_reply_rows:
+                mgid = row["merge_group_id"]
+                if mgid:
+                    _out_by_mgid.setdefault(mgid, []).append(row)
+                else:
+                    out_reply_groups.append([row])
+            for g in _out_by_mgid.values():
+                g.sort(key=lambda r: r["date"])
+            out_reply_groups.extend(_out_by_mgid.values())
+            out_reply_groups.sort(key=lambda g: g[0]["date"])
+
+            # Собираем исходящие пары
+            for reply_group in out_reply_groups:
+                anchor_id = None
+                for r in reply_group:
+                    if r["reply_to_msg_id"] is not None:
+                        anchor_id = r["reply_to_msg_id"]
+                        break
+                if anchor_id is None:
+                    continue
+                anchor = out_anchor_map.get(anchor_id)
+                if anchor is None:
+                    pairs.append({"context": [], "reply": reply_group})
+                    continue
+                mgid = anchor["merge_group_id"]
+                if mgid and mgid in out_merge_groups:
+                    context = list(out_merge_groups[mgid])
+                else:
+                    context = [anchor]
+                pairs.append({"context": context, "reply": reply_group})
+
+        # ── Входящее направление: кто-то отвечает участнику ──────────
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT message_id FROM messages WHERE chat_id = ? AND user_id = ?",
+                [chat_id, user_id],
+            )
+            target_msg_ids = [r["message_id"] for r in cur.fetchall()]
+
+        if target_msg_ids:
+            ph = ",".join("?" * len(target_msg_ids))
+            in_conds = [
+                "chat_id = ?",
+                "user_id != ?",
+                f"reply_to_msg_id IN ({ph})",
+            ]
+            in_args: list = [chat_id, user_id, *target_msg_ids]
+            if topic_id  is not None: in_conds.append("topic_id = ?"); in_args.append(topic_id)
+            if date_from is not None: in_conds.append("date >= ?");     in_args.append(date_from)
+            if date_to   is not None: in_conds.append("date <= ?");     in_args.append(date_to + " 23:59:59")
+
+            with self._cursor() as cur:
+                cur.execute(
+                    f"SELECT * FROM messages WHERE {' AND '.join(in_conds)} ORDER BY date ASC",
+                    in_args,
+                )
+                in_reply_rows: list = cur.fetchall()
+
+            if in_reply_rows:
+                # Anchors = сообщения участника, на которые ответили
+                in_anchor_ids = list({r["reply_to_msg_id"] for r in in_reply_rows})
+                ph2 = ",".join("?" * len(in_anchor_ids))
+                with self._cursor() as cur:
+                    cur.execute(
+                        f"SELECT * FROM messages WHERE chat_id = ? AND message_id IN ({ph2})",
+                        [chat_id, *in_anchor_ids],
+                    )
+                    in_anchor_map: dict = {r["message_id"]: r for r in cur.fetchall()}
+
+                # Расширяем anchors через merge_group_id
+                in_mgids = {r["merge_group_id"] for r in in_anchor_map.values() if r["merge_group_id"]}
+                in_merge_groups: dict = {}
+                if in_mgids:
+                    ph3 = ",".join("?" * len(in_mgids))
+                    with self._cursor() as cur:
+                        cur.execute(
+                            f"SELECT * FROM messages "
+                            f"WHERE chat_id = ? AND merge_group_id IN ({ph3}) ORDER BY date ASC",
+                            [chat_id, *in_mgids],
+                        )
+                        for r in cur.fetchall():
+                            in_merge_groups.setdefault(r["merge_group_id"], []).append(r)
+
+                # Группируем incoming replies по merge_group_id
+                _in_by_mgid: dict = {}
+                in_reply_groups: list = []
+                for row in in_reply_rows:
+                    mgid = row["merge_group_id"]
+                    if mgid:
+                        _in_by_mgid.setdefault(mgid, []).append(row)
+                    else:
+                        in_reply_groups.append([row])
+                for g in _in_by_mgid.values():
+                    g.sort(key=lambda r: r["date"])
+                in_reply_groups.extend(_in_by_mgid.values())
+                in_reply_groups.sort(key=lambda g: g[0]["date"])
+
+                # Собираем входящие пары
+                for reply_group in in_reply_groups:
+                    aid = reply_group[0]["reply_to_msg_id"]
+                    anchor = in_anchor_map.get(aid)
+                    if anchor is None:
+                        pairs.append({"context": [], "reply": reply_group})
+                        continue
+                    mgid = anchor["merge_group_id"]
+                    if mgid and mgid in in_merge_groups:
+                        context = list(in_merge_groups[mgid])
+                    else:
+                        context = [anchor]
+                    pairs.append({"context": context, "reply": reply_group})
+
+        # Сортируем все пары по дате первого сообщения в reply
+        pairs.sort(key=lambda p: p["reply"][0]["date"] if p["reply"] else "")
+
+        # Конвертируем Row → tuple (как get_messages)
+        for p in pairs:
+            p["context"] = [tuple(r) for r in p["context"]]
+            p["reply"]   = [tuple(r) for r in p["reply"]]
+
+        return pairs
+
 
     def get_thread_pairs(
         self,
@@ -710,6 +894,89 @@ class DBManager:
                 context = [anchor]
 
             pairs.append({"context": context, "reply": reply_group})
+
+        # ── Обратные пары: кто ответил целевому участнику ────────────
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT message_id FROM messages WHERE chat_id = ? AND user_id = ?",
+                [chat_id, user_id],
+            )
+            target_msg_ids = [r["message_id"] for r in cur.fetchall()]
+
+        if target_msg_ids:
+            ph = ",".join("?" * len(target_msg_ids))
+            rev_conds: list = [
+                "chat_id = ?",
+                "user_id != ?",
+                f"reply_to_msg_id IN ({ph})",
+            ]
+            rev_args: list = [chat_id, user_id, *target_msg_ids]
+            if topic_id  is not None: rev_conds.append("topic_id = ?");  rev_args.append(topic_id)
+            if date_from is not None: rev_conds.append("date >= ?");      rev_args.append(date_from)
+            if date_to   is not None: rev_conds.append("date <= ?");      rev_args.append(date_to + " 23:59:59")
+
+            with self._cursor() as cur:
+                cur.execute(
+                    f"SELECT * FROM messages WHERE {' AND '.join(rev_conds)} ORDER BY date ASC",
+                    rev_args,
+                )
+                rev_reply_rows: list = cur.fetchall()
+
+            if rev_reply_rows:
+                # Группируем по merge_group_id
+                _rev_by_mgid: dict = {}
+                rev_groups:   list = []
+                for row in rev_reply_rows:
+                    mgid = row["merge_group_id"]
+                    if mgid:
+                        _rev_by_mgid.setdefault(mgid, []).append(row)
+                    else:
+                        rev_groups.append([row])
+                for g in _rev_by_mgid.values():
+                    g.sort(key=lambda r: r["date"])
+                rev_groups.extend(_rev_by_mgid.values())
+                rev_groups.sort(key=lambda g: g[0]["date"])
+
+                # Anchors = сообщения целевого участника, на которые ответили
+                rev_anchor_ids = list({r["reply_to_msg_id"] for r in rev_reply_rows})
+                ph2 = ",".join("?" * len(rev_anchor_ids))
+                with self._cursor() as cur:
+                    cur.execute(
+                        f"SELECT * FROM messages WHERE chat_id = ? AND message_id IN ({ph2})",
+                        [chat_id, *rev_anchor_ids],
+                    )
+                    rev_anchor_map: dict = {r["message_id"]: r for r in cur.fetchall()}
+
+                # Расширяем anchors через merge_group_id
+                rev_mgids = {r["merge_group_id"] for r in rev_anchor_map.values() if r["merge_group_id"]}
+                rev_merge_groups: dict = {}
+                if rev_mgids:
+                    ph3 = ",".join("?" * len(rev_mgids))
+                    with self._cursor() as cur:
+                        cur.execute(
+                            f"SELECT * FROM messages "
+                            f"WHERE chat_id = ? AND merge_group_id IN ({ph3}) ORDER BY date ASC",
+                            [chat_id, *rev_mgids],
+                        )
+                        for r in cur.fetchall():
+                            rev_merge_groups.setdefault(r["merge_group_id"], []).append(r)
+
+                # Собираем обратные пары
+                for rev_group in rev_groups:
+                    aid    = rev_group[0]["reply_to_msg_id"]
+                    anchor = rev_anchor_map.get(aid)
+                    if anchor is None:
+                        pairs.append({"context": [], "reply": rev_group})
+                        continue
+                    mgid = anchor["merge_group_id"]
+                    if mgid and mgid in rev_merge_groups:
+                        context = list(rev_merge_groups[mgid])
+                    else:
+                        context = [anchor]
+                    pairs.append({"context": context, "reply": rev_group})
+
+        # Сортируем все пары по дате первого сообщения в reply
+        pairs.sort(key=lambda p: p["reply"][0]["date"] if p["reply"] else "")
 
         # Конвертируем Row → tuple (как get_messages)
         for p in pairs:
