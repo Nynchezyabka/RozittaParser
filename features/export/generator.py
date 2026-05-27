@@ -148,6 +148,59 @@ def _group_by_merge(messages: List[tuple]) -> List[List[tuple]]:
     return groups
 
 
+def _compute_comment_depth(messages: List[tuple]) -> Dict[int, int]:
+    """
+    Вычисляет глубину вложенности для комментариев по цепочке reply_to_msg_id.
+
+    Depth 0 = прямой ответ на пост (или корневое сообщение).
+    Depth N = ответ на сообщение с depth N-1.
+
+    Используется для форумного (threaded) рендеринга комментариев.
+
+    Args:
+        messages: Список строк из БД (tuple или Row).
+
+    Returns:
+        Словарь {message_id: depth}. Сообщения без reply_to имеют depth=0.
+    """
+    msg_by_id: Dict[int, tuple] = {}
+    for m in messages:
+        try:
+            mid = m[_COL_MESSAGE_ID]
+        except (IndexError, TypeError):
+            mid = m["message_id"]
+        msg_by_id[mid] = m
+
+    depth_cache: Dict[int, int] = {}
+
+    def _get_depth(msg_id: int) -> int:
+        if msg_id in depth_cache:
+            return depth_cache[msg_id]
+        msg = msg_by_id.get(msg_id)
+        if msg is None:
+            depth_cache[msg_id] = 0
+            return 0
+        try:
+            reply_to = msg[_COL_REPLY_TO]
+        except (IndexError, TypeError):
+            reply_to = msg["reply_to_msg_id"]
+        if reply_to is None or reply_to not in msg_by_id:
+            depth_cache[msg_id] = 0
+            return 0
+        parent_depth = _get_depth(reply_to)
+        depth_cache[msg_id] = parent_depth + 1
+        return parent_depth + 1
+
+    result: Dict[int, int] = {}
+    for m in messages:
+        try:
+            mid = m[_COL_MESSAGE_ID]
+        except (IndexError, TypeError):
+            mid = m["message_id"]
+        result[mid] = _get_depth(mid)
+    return result
+
+
 def _topic_suffix(topic_id: Optional[int]) -> str:
     """Возвращает строку '_topicN' или '' если topic_id is None."""
 
@@ -346,11 +399,11 @@ class DocxGenerator:
                     raise EmptyDataError(chat_id, topic_id)
 
                 if split_mode == "day":
-                    files = self._generate_by_day(messages, chat_id)
+                    files = self._generate_by_day(messages, chat_id, include_comments=include_comments)
                 elif split_mode == "month":
-                    files = self._generate_by_month(messages, chat_id)
+                    files = self._generate_by_month(messages, chat_id, include_comments=include_comments)
                 else:  # "none"
-                    files = self._generate_single(messages, chat_id)
+                    files = self._generate_single(messages, chat_id, include_comments=include_comments)
 
         except (EmptyDataError, DocxGenerationError):
             raise
@@ -462,6 +515,7 @@ class DocxGenerator:
         self,
         messages: List[tuple],
         chat_id:  int,
+        include_comments: bool = False,
     ) -> List[str]:
         """Режим "none" — один файл со всеми сообщениями."""
 
@@ -471,8 +525,26 @@ class DocxGenerator:
         title = doc.add_heading(f"Архив чата: {self._chat_title}", level=1)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
+        # B4: pre-compute depth for threaded comments
+        comment_depth: Dict[int, int] = {}
+        msg_by_id: Dict[int, tuple] = {}
+        if include_comments:
+            comment_depth = _compute_comment_depth(messages)
+            msg_by_id = {m[_COL_MESSAGE_ID]: m for m in messages}
+
         for group in _group_by_merge(messages):       # ← задача 5
-            self._add_group_to_doc(doc, group)
+            first_msg = group[0]
+            is_cmt = bool(first_msg[_COL_IS_COMMENT])
+            if is_cmt and comment_depth:
+                d = comment_depth.get(first_msg[_COL_MESSAGE_ID], 0)
+                ra = None
+                reply_to = first_msg[_COL_REPLY_TO]
+                if reply_to and reply_to in msg_by_id:
+                    parent = msg_by_id[reply_to]
+                    ra = parent[_COL_USERNAME] or f"id_{parent[_COL_USER_ID]}"
+                self._add_group_to_doc(doc, group, is_comment=True, depth=d, reply_author=ra)
+            else:
+                self._add_group_to_doc(doc, group)
 
         file_path = self._build_path("archive")
         self._save_doc(doc, file_path)
@@ -483,6 +555,7 @@ class DocxGenerator:
         self,
         messages: List[tuple],
         chat_id:  int,
+        include_comments: bool = False,
     ) -> List[str]:
         """Режим "day" — по одному файлу на каждый день."""
 
@@ -490,6 +563,13 @@ class DocxGenerator:
         for msg in messages:
             day = msg[_COL_DATE][:10]   # "YYYY-MM-DD"
             days[day].append(msg)
+
+        # B4: pre-compute depth for threaded comments (across all messages)
+        comment_depth: Dict[int, int] = {}
+        msg_by_id: Dict[int, tuple] = {}
+        if include_comments:
+            comment_depth = _compute_comment_depth(messages)
+            msg_by_id = {m[_COL_MESSAGE_ID]: m for m in messages}
 
         files: List[str] = []
         for day, day_msgs in sorted(days.items()):
@@ -500,7 +580,18 @@ class DocxGenerator:
             title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
             for group in _group_by_merge(day_msgs):   # ← задача 5
-                self._add_group_to_doc(doc, group)
+                first_msg = group[0]
+                is_cmt = bool(first_msg[_COL_IS_COMMENT])
+                if is_cmt and comment_depth:
+                    d = comment_depth.get(first_msg[_COL_MESSAGE_ID], 0)
+                    ra = None
+                    reply_to = first_msg[_COL_REPLY_TO]
+                    if reply_to and reply_to in msg_by_id:
+                        parent = msg_by_id[reply_to]
+                        ra = parent[_COL_USERNAME] or f"id_{parent[_COL_USER_ID]}"
+                    self._add_group_to_doc(doc, group, is_comment=True, depth=d, reply_author=ra)
+                else:
+                    self._add_group_to_doc(doc, group)
 
             file_path = self._build_path(f"day_{day}")
             self._save_doc(doc, file_path)
@@ -514,6 +605,7 @@ class DocxGenerator:
         self,
         messages: List[tuple],
         chat_id:  int,
+        include_comments: bool = False,
     ) -> List[str]:
         """Режим "month" — по одному файлу на каждый месяц."""
 
@@ -521,6 +613,13 @@ class DocxGenerator:
         for msg in messages:
             month = msg[_COL_DATE][:7]  # "YYYY-MM"
             months[month].append(msg)
+
+        # B4: pre-compute depth for threaded comments (across all messages)
+        comment_depth: Dict[int, int] = {}
+        msg_by_id: Dict[int, tuple] = {}
+        if include_comments:
+            comment_depth = _compute_comment_depth(messages)
+            msg_by_id = {m[_COL_MESSAGE_ID]: m for m in messages}
 
         files: List[str] = []
         for month, month_msgs in sorted(months.items()):
@@ -531,7 +630,18 @@ class DocxGenerator:
             title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
             for group in _group_by_merge(month_msgs):  # ← задача 5
-                self._add_group_to_doc(doc, group)
+                first_msg = group[0]
+                is_cmt = bool(first_msg[_COL_IS_COMMENT])
+                if is_cmt and comment_depth:
+                    d = comment_depth.get(first_msg[_COL_MESSAGE_ID], 0)
+                    ra = None
+                    reply_to = first_msg[_COL_REPLY_TO]
+                    if reply_to and reply_to in msg_by_id:
+                        parent = msg_by_id[reply_to]
+                        ra = parent[_COL_USERNAME] or f"id_{parent[_COL_USER_ID]}"
+                    self._add_group_to_doc(doc, group, is_comment=True, depth=d, reply_author=ra)
+                else:
+                    self._add_group_to_doc(doc, group)
 
             file_path = self._build_path(f"month_{month}")
             self._save_doc(doc, file_path)
@@ -578,7 +688,7 @@ class DocxGenerator:
             # Сам пост
             self._add_message_to_doc(doc, post, is_post=True)
 
-            # Комментарии (если нужны)
+            # Комментарии (если нужны) — B4: threaded/forum-style
             comments: list = []
             if include_comments:
                 all_rows = self._db.get_post_with_comments(chat_id, post_id)
@@ -593,8 +703,22 @@ class DocxGenerator:
                     )
                     comment_header.paragraph_format.space_before = Pt(12)
 
-                    for group in _group_by_merge(comments):   # ← задача 5
-                        self._add_group_to_doc(doc, group, is_comment=True)
+                    # B4: вычисляем глубину и автора-родителя для каждого комментария
+                    comment_depth = _compute_comment_depth(comments)
+                    msg_by_id = {m[_COL_MESSAGE_ID]: m for m in comments}
+                    # Также добавляем пост в контекст для корректных depth=0
+                    msg_by_id[post[_COL_MESSAGE_ID]] = post
+
+                    for group in _group_by_merge(comments):
+                        first_msg = group[0]
+                        d = comment_depth.get(first_msg[_COL_MESSAGE_ID], 0)
+                        # Определяем автора родительского сообщения
+                        ra = None
+                        reply_to = first_msg[_COL_REPLY_TO]
+                        if reply_to and reply_to in msg_by_id:
+                            parent = msg_by_id[reply_to]
+                            ra = parent[_COL_USERNAME] or f"id_{parent[_COL_USER_ID]}"
+                        self._add_group_to_doc(doc, group, is_comment=True, depth=d, reply_author=ra)
 
             file_path = self._build_path(f"post_{post_id}")
             self._save_doc(doc, file_path)
@@ -616,6 +740,8 @@ class DocxGenerator:
         group:      List[tuple],
         is_post:    bool = False,
         is_comment: bool = False,
+        depth:      int  = 0,
+        reply_author: Optional[str] = None,
     ) -> None:
         """
         Добавляет группу сообщений в документ.
@@ -641,6 +767,9 @@ class DocxGenerator:
         anchor_p.paragraph_format.space_before = Pt(0)
         anchor_p.paragraph_format.space_after  = Pt(0)
 
+        # --- B4: depth-отступ для комментариев ---
+        comment_indent = Inches(_COMMENT_INDENT_INCHES * (1 + depth)) if is_comment else Inches(0)
+
         # --- Единый заголовок ---
         header_p = doc.add_paragraph()
         if is_post:
@@ -648,9 +777,10 @@ class DocxGenerator:
             font_size   = Pt(12)
             font_color  = RGBColor(0, 102, 204)
         elif is_comment:
-            header_text = f"  💬 {username}"
-            font_size   = Pt(10)
-            font_color  = RGBColor(102, 102, 102)
+            prefix = "  ↳ " if depth > 0 else "  💬 "
+            header_text = f"{prefix}{username}"
+            font_size   = Pt(10) if depth == 0 else Pt(9)
+            font_color  = RGBColor(102, 102, 102) if depth == 0 else RGBColor(80, 80, 80)
         else:
             header_text = f"👤 {username}"
             font_size   = Pt(11)
@@ -666,7 +796,19 @@ class DocxGenerator:
         date_run.font.color.rgb = RGBColor(128, 128, 128)
 
         if is_comment:
-            header_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+            header_p.paragraph_format.left_indent = comment_indent
+            header_p.paragraph_format.space_after = Pt(0)
+
+        # --- B4: маркер «↩ в ответ на: автор» для вложенных комментариев ---
+        if is_comment and depth > 0 and reply_author:
+            reply_info_p = doc.add_paragraph()
+            reply_info_p.paragraph_format.left_indent = comment_indent
+            reply_info_p.paragraph_format.space_before = Pt(0)
+            reply_info_p.paragraph_format.space_after  = Pt(2)
+            rr = reply_info_p.add_run(f"↩ в ответ на: {reply_author}")
+            rr.font.italic = True
+            rr.font.size   = Pt(8)
+            rr.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
 
         # --- Ссылка-ответ (только у первой части) ---
         if reply_to:
@@ -674,7 +816,7 @@ class DocxGenerator:
             reply_p.add_run("↩️ В ответ на: ")
             xml_magic.add_internal_hyperlink(reply_p, reply_to, f"сообщение #{reply_to}")
             if is_comment:
-                reply_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                reply_p.paragraph_format.left_indent = comment_indent
 
         # --- Текст и медиа каждой части (без заголовков и разделителей) ---
         for part in group:
@@ -686,7 +828,7 @@ class DocxGenerator:
                 text_p = doc.add_paragraph()
                 xml_magic.write_text_with_links(text_p, text)
                 if is_comment:
-                    text_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                    text_p.paragraph_format.left_indent = comment_indent
 
             if media_path and os.path.exists(media_path):
                 abs_path = os.path.abspath(media_path)
@@ -696,7 +838,7 @@ class DocxGenerator:
                     media_p, file_uri, os.path.basename(abs_path)
                 )
                 if is_comment:
-                    media_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                    media_p.paragraph_format.left_indent = comment_indent
 
                 if is_image_path(abs_path):
                     try:
@@ -704,7 +846,7 @@ class DocxGenerator:
                         img_run = img_p.add_run()
                         img_run.add_picture(abs_path, width=Inches(_IMAGE_WIDTH_INCHES))
                         if is_comment:
-                            img_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                            img_p.paragraph_format.left_indent = comment_indent
                     except Exception as exc:
                         logger.warning(
                             "export: cannot insert image %s: %s",
@@ -716,7 +858,7 @@ class DocxGenerator:
                     f"📎 [медиафайл недоступен]: {os.path.basename(media_path)}"
                 )
                 if is_comment:
-                    media_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                    media_p.paragraph_format.left_indent = comment_indent
 
             # STT для этой части
             file_type = part[_COL_FILE_TYPE] or ""
@@ -733,7 +875,7 @@ class DocxGenerator:
                     stt_run.font.color.rgb   = RGBColor(40, 40, 40)
                     stt_run.italic           = True
                     if is_comment:
-                        stt_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                        stt_p.paragraph_format.left_indent = comment_indent
 
         # --- Единый разделитель в конце всей группы ---
         if not is_comment:
@@ -753,6 +895,8 @@ class DocxGenerator:
         msg:        tuple,
         is_post:    bool = False,
         is_comment: bool = False,
+        depth:      int  = 0,
+        reply_author: Optional[str] = None,
     ) -> None:
         """
         Форматирует одну строку из БД и добавляет её в документ.
@@ -761,6 +905,7 @@ class DocxGenerator:
             [Параграф с закладкой]
             [Заголовок: имя + дата]
             [↩️ В ответ на: ссылка] (если reply_to не None)
+            [↩ в ответ на: автор]   (depth > 0, для комментариев)
             [Текст сообщения]        (с автоссылками)
             [📎 Медиафайл: ссылка]   (если есть медиа)
             [Изображение]            (если медиа — картинка)
@@ -780,6 +925,9 @@ class DocxGenerator:
         anchor_p.paragraph_format.space_before = Pt(0)
         anchor_p.paragraph_format.space_after  = Pt(0)
 
+        # --- B4: depth-отступ для комментариев ---
+        comment_indent = Inches(_COMMENT_INDENT_INCHES * (1 + depth)) if is_comment else Inches(0)
+
         # --- Заголовок сообщения ---
         header_p = doc.add_paragraph()
         if is_post:
@@ -787,9 +935,10 @@ class DocxGenerator:
             font_size   = Pt(12)
             font_color  = RGBColor(0, 102, 204)
         elif is_comment:
-            header_text = f"  💬 {username}"
-            font_size   = Pt(10)
-            font_color  = RGBColor(102, 102, 102)
+            prefix = "  ↳ " if depth > 0 else "  💬 "
+            header_text = f"{prefix}{username}"
+            font_size   = Pt(10) if depth == 0 else Pt(9)
+            font_color  = RGBColor(102, 102, 102) if depth == 0 else RGBColor(80, 80, 80)
         else:
             header_text = f"👤 {username}"
             font_size   = Pt(11)
@@ -805,7 +954,19 @@ class DocxGenerator:
         date_run.font.color.rgb = RGBColor(128, 128, 128)
 
         if is_comment:
-            header_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+            header_p.paragraph_format.left_indent = comment_indent
+            header_p.paragraph_format.space_after = Pt(0)
+
+        # --- B4: маркер «↩ в ответ на: автор» для вложенных комментариев ---
+        if is_comment and depth > 0 and reply_author:
+            reply_info_p = doc.add_paragraph()
+            reply_info_p.paragraph_format.left_indent = comment_indent
+            reply_info_p.paragraph_format.space_before = Pt(0)
+            reply_info_p.paragraph_format.space_after  = Pt(2)
+            rr = reply_info_p.add_run(f"↩ в ответ на: {reply_author}")
+            rr.font.italic = True
+            rr.font.size   = Pt(8)
+            rr.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
 
         # --- Ссылка-ответ ---
         if reply_to:
@@ -815,14 +976,14 @@ class DocxGenerator:
                 reply_p, reply_to, f"сообщение #{reply_to}"
             )
             if is_comment:
-                reply_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                reply_p.paragraph_format.left_indent = comment_indent
 
         # --- Текст с авто-ссылками ---
         if text:
             text_p = doc.add_paragraph()
             xml_magic.write_text_with_links(text_p, text)
             if is_comment:
-                text_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                text_p.paragraph_format.left_indent = comment_indent
 
         # --- Медиа ---
         if media_path and os.path.exists(media_path):
@@ -833,7 +994,7 @@ class DocxGenerator:
                 media_p, file_uri, os.path.basename(abs_path)
             )
             if is_comment:
-                media_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                media_p.paragraph_format.left_indent = comment_indent
 
             if is_image_path(abs_path):
                 try:
@@ -841,7 +1002,7 @@ class DocxGenerator:
                     img_run = img_p.add_run()
                     img_run.add_picture(abs_path, width=Inches(_IMAGE_WIDTH_INCHES))
                     if is_comment:
-                        img_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                        img_p.paragraph_format.left_indent = comment_indent
                 except Exception as exc:
                     logger.warning(
                         "export: cannot insert image %s: %s",
@@ -857,7 +1018,7 @@ class DocxGenerator:
                 f"📎 [медиафайл недоступен]: {os.path.basename(media_path)}"
             )
             if is_comment:
-                media_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                media_p.paragraph_format.left_indent = comment_indent
 
         # --- Транскрипция ---
         file_type = msg[_COL_FILE_TYPE] or ""
@@ -874,7 +1035,7 @@ class DocxGenerator:
                 stt_run.font.color.rgb   = RGBColor(40, 40, 40)
                 stt_run.italic           = True
                 if is_comment:
-                    stt_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                    stt_p.paragraph_format.left_indent = comment_indent
 
         # --- Разделитель (не для комментариев) ---
         if not is_comment:

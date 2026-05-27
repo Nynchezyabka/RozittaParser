@@ -33,7 +33,6 @@ from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.messages import GetFullChatRequest
 from telethon.tl.types import (
     Channel,
-    ChannelParticipantsAdmins,
     Chat,
     User,
 )
@@ -652,10 +651,10 @@ class ChatsService:
         Работает без прав администратора (не использует get_participants).
         Сканирует последние N сообщений через iter_messages.
 
-        ОСОБЕННОСТЬ: В мегагруппах и каналах админ может писать «от имени
-        канала». Такие сообщения имеют sender_type="channel". Метод пытается
-        привязать channel-sender'ов к реальным админам через get_participants.
-        Если прав нет — показывает channel-sender с пометкой.
+                ОСОБЕННОСТЬ (Variant A-2): В мегагруппах и каналах админ может писать
+        «от имени канала». Такие сообщения имеют sender_type="channel".
+        Канал/чат включается в participant list как равноправный отправитель.
+        Нет резолва channel→admin (ненадёжно, не соответствует Telegram).
 
         Args:
             chat_id: ID чата (из get_dialogs, уже нормализован через get_peer_id).
@@ -828,94 +827,95 @@ class ChatsService:
             _log(f"⚠️ Ошибка получения статистики: {exc}")
             return []
 
-        # ── Резолв channel-sender → реальный админ ──────────────────
-        # В мегагруппах и каналах админ пишет «от имени канала».
-        # Пытаемся привязать такие сообщения к реальному человеку.
-        channel_sender_ids = [uid for uid, st in sender_types.items() if st == "channel"]
-
-        if channel_sender_ids and is_channel_entity:
-            logger.info(
-                "chats: get_user_stats: found %d channel-senders, trying to resolve to admins",
-                len(channel_sender_ids),
-            )
-            try:
-                # Получаем список админов
-                admin_users: List[User] = []
-                async for participant in self._client.iter_participants(
-                    entity, filter=ChannelParticipantsAdmins, limit=50
-                ):
-                    if isinstance(participant, User):
-                        admin_users.append(participant)
-
-                if admin_users:
+        # ── B1/B3: Normalize channel sender IDs for DB compat ────
+        # Telethon sender_id для channel-sender сообщений может не
+        # совпадать с тем, что парсер сохранил в БД.  Парсер
+        # нормализует channel sender_id в marked-negative формат
+        # broadcast-канала.  Делаем то же самое, чтобы экспорт
+        # находил сообщения через _telegram_user_id_variants().
+        if is_megagroup:
+            _linked = getattr(entity, "linked_chat_id", None)
+            if _linked is not None:
+                _bc_marked = -(1_000_000_000_000 + _linked)
+                for _old in (entity.id,
+                             -(1_000_000_000_000 + entity.id),
+                             _linked):
+                    if _old in counts and _old != _bc_marked:
+                        counts[_bc_marked] = counts.get(_bc_marked, 0) + counts.pop(_old, 0)
+                        if _old in names:
+                            names[_bc_marked] = names.pop(_old)
+                        if _old in usernames:
+                            usernames[_bc_marked] = usernames.pop(_old)
+                        if _old in sender_types:
+                            sender_types[_bc_marked] = sender_types.pop(_old)
+                if _bc_marked in counts:
                     logger.info(
-                        "chats: get_user_stats: found %d admins in %s",
-                        len(admin_users), entity_type,
+                        "chats: B1/B3 normalize: megagroup channel sender "
+                        "remapped → broadcast marked id=%s (%d msgs)",
+                        _bc_marked, counts[_bc_marked],
+                    )
+        elif is_broadcast:
+            _bc_marked = -(1_000_000_000_000 + entity.id)
+            if entity.id in counts and entity.id != _bc_marked:
+                counts[_bc_marked] = counts.get(_bc_marked, 0) + counts.pop(entity.id, 0)
+                if entity.id in names:
+                    names[_bc_marked] = names.pop(entity.id)
+                if entity.id in usernames:
+                    usernames[_bc_marked] = usernames.pop(entity.id)
+                if entity.id in sender_types:
+                    sender_types[_bc_marked] = sender_types.pop(entity.id)
+                if _bc_marked in counts:
+                    logger.info(
+                        "chats: B1/B3 normalize: broadcast channel sender "
+                        "remapped → marked id=%s (%d msgs)",
+                        _bc_marked, counts[_bc_marked],
                     )
 
-                    # Стратегия: находим создателя (creator=True) или первого админа
-                    creator = None
-                    for admin in admin_users:
-                        # Проверяем participant.client = ... нет.
-                        # В Telethon Participant object имеет .role для ChannelParticipantCreator
-                        # Проверяем через строковое представление типа
-                        part_type = type(admin).__name__
-                        # admin это User, но в iter_participants с filter,
-                        # возвращаются User объекты. Нам нужно проверить роль.
-                        # Попробуем другой подход: ищем создателя через отдельный запрос
-                        pass
-
-                    # Простой подход: создаём маппинг channel_id → admin
-                    # Для каналов: creator/owner (первый админ)
-                    # Для мегагрупп: аналогично
-                    primary_admin = admin_users[0]  # первый = обычно создатель
-
-                    for ch_id in channel_sender_ids:
-                        ch_name = names.get(ch_id, f"Channel_{ch_id}")
-                        ch_count = counts.get(ch_id, 0)
-                        admin_id = primary_admin.id
-                        admin_name = (
-                            f"{primary_admin.first_name or ''} {primary_admin.last_name or ''}".strip()
-                            or primary_admin.username
-                            or f"Admin_{admin_id}"
-                        )
-
-                        logger.info(
-                            "chats: get_user_stats: resolve channel-sender: %s (id=%s, msgs=%d) → %s (id=%s)",
-                            ch_name, ch_id, ch_count,
-                            admin_name, admin_id,
-                        )
-
-                        # Присоединяем сообщения channel-sender к админу
-                        if admin_id in counts:
-                            counts[admin_id] += ch_count
-                        else:
-                            counts[admin_id] = ch_count
-
-                        names[admin_id] = admin_name
-                        usernames[admin_id] = primary_admin.username or ""
-                        sender_types[admin_id] = "user"
-
-                        # Убираем channel-sender из результатов
-                        counts.pop(ch_id, None)
-                        names.pop(ch_id, None)
-                        usernames.pop(ch_id, None)
-                        sender_types.pop(ch_id, None)
-
-                else:
-                    logger.info("chats: get_user_stats: no admins found, keeping channel-senders")
-
-            except Exception as exc:
-                # Нет прав на get_participants — оставляем channel-sender
-                logger.info(
-                    "chats: get_user_stats: cannot resolve channel-senders (no admin rights?): %s",
-                    exc,
-                )
-
-        # ── Фильтрация channel-sender ────────────────────────────────
-        # В базовых Chat-группах убираем channel-sender (название чата ≠ участник)
-        # В Channel-сущностях уже резолвили выше, но если не удалось — оставляем
+        # ── Variant A-2: канал как равноправный участник ──────────
+        # В Channel-сущностях (broadcast-каналы, megagroups) — оставляем
+        # channel-sender как равноправного участника (Variant A-2).
+        # В базовых Chat-группах — убираем (название чата ≠ участник).
         filter_channel_senders = is_chat_entity
+
+        # ── B1/B3: Merge channel-sender entries in megagroups ─────
+        # В мегагруппе channel-sender может появляться с разными ID:
+        # bare-positive (3508193296) и marked-negative (-1003783247484).
+        # Сливаем в одну запись с marked-negative ID (формат БД).
+        if is_megagroup:
+            _ch_uids = [uid for uid in counts if sender_types.get(uid) == 'channel']
+            if len(_ch_uids) > 1:
+                # Prefer marked-negative ID (matches DB sender_id)
+                _merged_id = next(
+                    (uid for uid in _ch_uids if uid < -1_000_000_000_000),
+                    -(1_000_000_000_000 + _ch_uids[0]),
+                )
+                _merged_count = sum(counts[u] for u in _ch_uids)
+                # Name from broadcast channel entry (shorter, cleaner)
+                _merged_name = None
+                for _u in _ch_uids:
+                    if _u < -1_000_000_000_000 and _u in names:
+                        _merged_name = names[_u]
+                        break
+                if _merged_name is None:
+                    _merged_name = names.get(_ch_uids[0], f"Channel_{_merged_id}")
+                _merged_uname = next(
+                    (usernames[u] for u in _ch_uids
+                     if u in usernames and usernames[u]),
+                    "",
+                )
+                for _u in _ch_uids:
+                    del counts[_u]
+                    names.pop(_u, None)
+                    usernames.pop(_u, None)
+                    sender_types.pop(_u, None)
+                counts[_merged_id] = _merged_count
+                names[_merged_id] = _merged_name
+                usernames[_merged_id] = _merged_uname
+                sender_types[_merged_id] = 'channel'
+                logger.info(
+                    "chats: B1/B3 merge: %d channel-sender entries → id=%s (%d msgs)",
+                    len(_ch_uids), _merged_id, _merged_count,
+                )
 
         sorted_users = sorted(counts.items(), key=lambda x: x[1], reverse=True)
 

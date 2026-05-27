@@ -823,6 +823,17 @@ class SettingsPanel(QWidget):
         for btn in self._split_buttons:
             btn.setChecked(btn.mode == mode)
 
+    def _update_split_post_button(self) -> None:
+        """I3: кнопка «Посты» активна только для broadcast-каналов."""
+        is_channel = (
+            self._current_chat is not None
+            and self._current_chat.get("type") == "channel"
+        )
+        self._split_post.setEnabled(is_channel)
+        if not is_channel and self._split_mode == "post":
+            # Сбрасываем на «Единый» если был выбран «Посты»
+            self._on_split_mode("none")
+
     def _on_load_members_clicked(self) -> None:
         if self._current_chat:
             self.load_members_requested.emit(self._current_chat)
@@ -845,6 +856,7 @@ class SettingsPanel(QWidget):
         short = (title[:38] + "…") if len(title) > 38 else title
         self._chat_label.setText(short or "не выбран")
         self._load_members_btn.setEnabled(True)
+        self._update_split_post_button()  # I3
 
     def populate_members(self, users: list[dict]) -> None:
         self._members_cache = users.copy()
@@ -853,7 +865,10 @@ class SettingsPanel(QWidget):
         for user in users:
             uid = user.get("id", 0)
             name = user.get("name", str(uid))
-            self._members_combo.addItem(name, user)  # ← заменили uid на user
+            # I6: пометка канала как участника (Variant A-2)
+            if user.get("sender_type") == "channel":
+                name = f"📢 {name}"
+            self._members_combo.addItem(name, user)
         self._members_combo.setEnabled(True)
         self._members_combo.setCurrentIndex(0)
         self.log_message.emit(f"Загружено участников: {len(users)}")

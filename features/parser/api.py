@@ -307,17 +307,20 @@ class ParserService:
         self._log(f"📂 Чат: {chat_title} ({chat_type})")
         logger.info("parser: chat %s type=%s", normalized_id, chat_type)
 
-        # --- Linked group для комментариев ---
+        # --- Linked group для комментариев и standalone channel-sender сообщений ---
         linked_chat_id: Optional[int] = None
-        if params.download_comments and chat_type == "channel":
+        if chat_type == "channel":
             from features.chats.api import ChatsService
             chats_svc = ChatsService(self._client)
             linked_chat_id = await chats_svc.get_linked_group(
                 normalized_id, log=self._log
             )
-            if not linked_chat_id:
-                self._log("⚠️ У канала нет группы комментариев — пропускаем")
-                params = dataclass_replace(params, download_comments=False)
+            if linked_chat_id:
+                self._log(f"🔗 Найдена linked-группа: {linked_chat_id}")
+            else:
+                if params.download_comments:
+                    self._log("⚠️ У канала нет группы комментариев — пропускаем")
+                    params = dataclass_replace(params, download_comments=False)
 
         # --- Сохраняем чат в БД ---
         self._db.insert_chat(normalized_id, chat_title, chat_type, linked_chat_id)
@@ -511,6 +514,25 @@ class ParserService:
                     self._log(f"    ❌ {err}")
                     logger.warning("parser: %s", err)
                     errors.append(err)
+
+        # --- Скачиваем самостоятельные сообщения канала из linked-группы ---
+        # Это сообщения, где канал является отправителем в linked-группе,
+        # но которые не являются ответами на конкретные посты (не комментарии).
+        # Например: админ канала пишет «от имени канала» в обсуждении.
+        if linked_chat_id and chat_type == "channel":
+            standalone_count = await self._scan_linked_for_channel_messages(
+                channel_id=normalized_id,
+                linked_chat_id=linked_chat_id,
+                params=params,
+                cutoff_date=cutoff_date,
+                upper_date=upper_date,
+                insert_fn=insert_fn,
+                tracker=tracker,
+                errors=errors,
+                known_post_ids=set(posts_with_comments.keys()),
+            )
+            if standalone_count:
+                self._log(f"📢 Найдено {standalone_count} самостоятельных сообщений канала в linked-группе")
 
         self._progress_cb(100)
         logger.info(
@@ -1124,6 +1146,167 @@ class ParserService:
     # ------------------------------------------------------------------
     # 5. Вспомогательные методы
     # ------------------------------------------------------------------
+
+    async def _scan_linked_for_channel_messages(
+            self,
+            channel_id: int,
+            linked_chat_id: int,
+            params: CollectParams,
+            cutoff_date: Optional[datetime],
+            upper_date: Optional[datetime],
+            insert_fn: Callable,
+            tracker: DownloadTracker,
+            errors: List[str],
+            known_post_ids: set[int],
+    ) -> int:
+        """
+        Сканирует linked-группу на предмет standalone channel-sender сообщений.
+
+        Это сообщения в linked discussion группе, отправленные «от имени канала»,
+        но не являющиеся ответами на конкретные посты (не комментарии).
+        Например: админ канала пишет в обсуждении от имени канала,
+        или пересылает сообщение от канала.
+
+        Такие сообщения сохраняются с:
+            chat_id = channel_id (привязка к каналу, как у комментариев)
+            is_comment = 0 (не комментарий к посту)
+            from_linked_group = 1 (маркер происхождения)
+
+        Args:
+            channel_id:     ID broadcast-канала (для chat_id в БД).
+            linked_chat_id: ID linked discussion группы.
+            params:         Параметры парсинга.
+            cutoff_date:    Нижняя граница дат.
+            upper_date:     Верхняя граница дат.
+            insert_fn:      Функция пакетной вставки.
+            tracker:        DownloadTracker.
+            errors:         Список ошибок (пополняется in-place).
+            known_post_ids: ID постов, чьи комментарии уже собраны.
+
+        Returns:
+            Количество сохранённых standalone channel-sender сообщений.
+        """
+        self._log(f"📢 Сканируем linked-группу {linked_chat_id} на предмет сообщений канала...")
+        count = 0
+        batch: List[dict] = []
+        _pending: list[tuple[int, asyncio.Task]] = []
+
+        try:
+            async for message in self._client.iter_messages(
+                    linked_chat_id,
+                    limit=None,
+            ):
+                # Фильтр: только channel-sender сообщения
+                sender = getattr(message, "sender", None)
+                is_channel_sender = sender is not None and not isinstance(sender, User)
+                if not is_channel_sender:
+                    continue
+
+                # Пропускаем комментарии к уже собранным постам
+                # Если message.reply_to указывает на discussion thread поста,
+                # то это комментарий — уже собран через _get_post_replies
+                reply_to = getattr(message, "reply_to", None)
+                if reply_to is not None:
+                    reply_to_msg_id = getattr(reply_to, "reply_to_msg_id", None)
+                    if reply_to_msg_id is not None:
+                        # Проверяем, не является ли это ответом на обсуждение поста
+                        # Discussion thread starter имеет forum_topic=True
+                        # или reply_to_top_id. Если это reply к такому сообщению —
+                        # пропускаем (комментарий уже собран)
+                        continue
+
+                # Фильтр дат
+                msg_date = ensure_aware_utc(message.date) if message.date else None
+                if upper_date and msg_date and msg_date > upper_date:
+                    continue
+                if cutoff_date is not None and msg_date and msg_date < cutoff_date:
+                    break  # iter_messages идёт от новых к старым
+
+                # Инкрементальный режим: пропускаем уже скачанные
+                if not params.re_download and tracker.is_downloaded(message.id):
+                    continue
+
+                # Определяем, требуется ли скачивание медиа
+                needs_download = (
+                        params.media_filter is not None
+                        and self._should_download(message, params.media_filter)
+                )
+
+                if needs_download:
+                    task = asyncio.create_task(
+                        self._process_message(
+                            message=message,
+                            chat_id=channel_id,
+                            topic_id=None,
+                            media_filter=params.media_filter,
+                        )
+                    )
+                    _pending.append((message.id, task))
+
+                    if len(_pending) >= _TASK_BATCH_SIZE:
+                        await self._flush_tasks(
+                            _pending, batch, errors, tracker, 0
+                        )
+                        _pending.clear()
+                else:
+                    # Быстрый путь: текстовое сообщение
+                    row = self._extract_row_sync(message, channel_id, None)
+                    # Переопределяем поля для standalone channel-sender сообщения
+                    row["from_linked_group"] = 1
+                    row["is_comment"] = 0
+                    row["post_id"] = None
+                    batch.append(row)
+                    tracker.mark_downloaded(message.id)
+                    self._msg_count += 1
+                    count += 1
+
+                    if len(batch) >= _DB_BATCH_SIZE:
+                        insert_fn(batch)
+                        batch.clear()
+                        tracker.save()
+
+            # Flush оставшихся медиа-задач
+            if _pending:
+                await self._flush_tasks(
+                    _pending, batch, errors, tracker, 0
+                )
+                _pending.clear()
+
+            # Обрабатываем результаты медиа-задач: переопределяем поля
+            # для standalone channel-sender сообщений
+            # (медиа-задачи уже добавлены в batch через _flush_tasks,
+            #  но _process_message не знает про from_linked_group —
+            #  поэтому обновляем post-factum)
+            for i, row in enumerate(batch):
+                if isinstance(row, dict):
+                    row["from_linked_group"] = 1
+                    row["is_comment"] = 0
+                    row["post_id"] = None
+
+            # Финальный flush
+            if batch:
+                insert_fn(batch)
+                batch.clear()
+                tracker.save()
+
+        except TelethonFloodWaitError as exc:
+            wait = exc.seconds + _FLOOD_BUFFER
+            self._log(f"⏳ FloodWait при сканировании linked-группы: {wait} сек...")
+            logger.warning("parser: FloodWait %ds during linked group scan", exc.seconds)
+            # Не ретрайм — уже собранные данные сохранятся
+
+        except Exception as exc:
+            err = f"Ошибка сканирования linked-группы: {exc}"
+            self._log(f"⚠️ {err}")
+            logger.warning("parser: %s", err)
+            errors.append(err)
+            # Сохраняем то, что успели собрать
+            if batch:
+                insert_fn(batch)
+                batch.clear()
+
+        logger.info("parser: linked group scan found %d standalone channel messages", count)
+        return count
 
     def _should_download(self, message: Message, media_filter: List[str]) -> bool:
         """

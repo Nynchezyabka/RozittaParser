@@ -653,6 +653,7 @@ class ParseSettingsScreen(QWidget):
         self._chat_display.setText(f"{title}  ({chat_id})")
         self._start_btn.setEnabled(True)
         self._load_members_btn.setEnabled(True)
+        self._update_split_post_button()  # I3
         self.log_message.emit(f"Выбран чат: {title}")
 
     def populate_members(self, users: list[dict]) -> None:
@@ -782,6 +783,23 @@ class ParseSettingsScreen(QWidget):
         if isinstance(button, SplitModeButton):
             is_post = button.mode == "post"
             self._comments_row.setVisible(is_post)
+
+    def _update_split_post_button(self) -> None:
+        """I3: кнопка «Посты» активна только для broadcast-каналов."""
+        is_channel = (
+            self._current_chat is not None
+            and self._current_chat.get("type") == "channel"
+        )
+        post_btn = self._split_buttons.get("post")
+        if post_btn is not None:
+            post_btn.setEnabled(is_channel)
+        if not is_channel and self._split_group.checkedButton() is not None:
+            checked_btn = self._split_group.checkedButton()
+            if isinstance(checked_btn, SplitModeButton) and checked_btn.mode == "post":
+                # Сбрасываем на «Единый»
+                none_btn = self._split_buttons.get("none")
+                if none_btn is not None:
+                    none_btn.setChecked(True)
 
     def _on_tag_all_toggled(self, checked: bool) -> None:
         """При выборе «Все» снять выделение с остальных тегов."""
