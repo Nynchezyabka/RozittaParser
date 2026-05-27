@@ -44,7 +44,7 @@ rozitta_parser/
 │
 ├── core/
 │   ├── utils.py                ✅ finalize_telegram_id, sanitize_filename, is_image_path
-│   ├── database.py             ✅ WAL, batch I/O, transcriptions, merge_group
+│   ├── database.py             ✅ WAL, batch I/O, transcriptions, merge_group, get_thread_pairs, sender_type (v2)
 │   ├── logger.py               ✅ разделитель сессий
 │   ├── exceptions.py           ✅
 │   ├── merger.py               ✅ MergerService O(n)
@@ -55,13 +55,13 @@ rozitta_parser/
 ├── features/
 │   ├── auth/api.py             ✅ build_client (api_id баг исправлен)
 │   ├── auth/ui.py              ✅ cancel btn; MTProto вручную/ссылка
-│   ├── chats/api.py            ✅ MTProto-ускорение
+│   ├── chats/api.py            ✅ MTProto-ускорение; ⚠️ I9: убрать admin resolution
 │   ├── chats/ui.py             ✅ selected_topic_id, selected_topic_name в chat dict
-│   ├── parser/api.py           ✅ batch I/O, форумы, topic_id
+│   ├── parser/api.py           ✅ batch I/O, форумы, topic_id; instance methods; from_id fallback; C1/C2 fix
 │   ├── parser/ui.py            ✅ ParseParams с username, user_ids, thread_mode
-│   ├── export/generator.py     ✅ все генераторы; topic_name/username в именах файлов
+│   ├── export/generator.py     ✅ все 4 генератора; _dedup_thread_messages; tree render; C3 fix
 │   ├── export/xml_magic.py     ✅
-│   └── export/ui.py            ✅ ExportParams с topic_name, username
+│   └── export/ui.py            ✅ ExportParams с topic_name, username, user_filter_mode
 │
 ├── ui/
 │   └── main_window.py          ✅ рабочий SettingsPanel; _run_export с username
@@ -105,7 +105,7 @@ QMainWindow
 
 ---
 
-## 🗺️ 4. ROADMAP (2026-05-16)
+## 🗺️ 4. ROADMAP (2026-05-27)
 
 ---
 
@@ -120,6 +120,9 @@ QMainWindow
 | CFG-1 | Proxy Support (SOCKS5 + MTProto) | 2026-03 |
 | AUTH-UX | Улучшение UX авторизации | 2026-04-03 |
 | NAMES-1 | topic_name + username в именах файлов экспорта | 2026-05-16 |
+| FEAT-1 | Thread mode: дедупликация + дерево ответов во всех 4 форматах | 2026-05-25 |
+| BUGFIX-1 | Duplicate user_filter_mode + instance methods + from_id fallback | 2026-05-25 |
+| BUGFIX-2 | C1/C2/C3 + BUG-18 (OpenTele2) | 2026-05-27 |
 
 ---
 
@@ -128,9 +131,41 @@ QMainWindow
 | # | Задача | Файл | Статус |
 |---|--------|------|--------|
 | **BF-2** | **Посты + комментарии** — подробный Issue ниже | `features/parser/api.py` | 🔴 В работе |
-| **BUG-18** | **OpenTele**: при импорте всегда предлагается установить библиотеку | `features/auth/ui.py`, `api.py` | 🔴 |
+| **BUG-18** | **OpenTele2**: при импорте всегда предлагалось установить библиотеку | `features/auth/ui.py`, `api.py` | ✅ Исправлен |
 | **BUG-19** | **DOCX**: нет превью видео (thumbnail или placeholder) | `features/export/generator.py` | 🟡 |
 | **DB-LOCK-2** | «database is locked» периодически при параллельной записи | `core/database.py` | 🟡 |
+| **UNKNOWN-1** | **Channel-author "Unknown"** — автор канала отображается как Unknown в конкретных группах | `features/parser/api.py` | 🟡 Отложено (требует per-group анализ) |
+
+---
+
+### 🔴 ФАЗА A-2 — Завершение Variant A-2 (канал как участник)
+
+| # | Задача | Файл | Приоритет | Описание |
+|---|--------|------|-----------|----------|
+| **I6** | Канал как участник в списке | `features/chats/api.py`, `features/parser/api.py`, `features/export/generator.py` | 🔴 высокий | Включить канал/чат в participant list. Сообщения от sender_id=group_id привязать к каналу как участнику. Без этого сообщения Натальи в группе = 0 |
+| **I3** | «По постам» только для каналов | `features/export/ui.py`, `ui/main_window.py` | 🔴 высокий | Кнопка «По постам» неактивна/серая для групп (megagroups). Только broadcast-каналы |
+| **I9** | Убрать admin resolution из chats/api.py | `features/chats/api.py` | 🟡 средний | Удалить логику резолва channel-sender → admin. Согласовано по Variant A-2: канал = равноправный отправитель |
+
+---
+
+### 🟡 ФАЗА EXPORT-FIX — Исправления экспорта
+
+| # | Задача | Файл | Приоритет | Описание |
+|---|--------|------|-----------|----------|
+| **I1** | Пустые сообщения в экспорте канала | `features/export/generator.py` | 🟡 средний | Из 3 постов канала 2 пустых, 1 корректный. Нужна диагностика: текст теряется при парсинге или рендере |
+| **I2** | Порядок grouped_media | `features/parser/api.py`, `features/export/generator.py` | 🟡 средний | Длинные сообщения: часть 2 идёт перед частью 1 (переставлены merge_part_index) |
+| **I7** | Переименовать кнопку «Перекачать медиа» | `features/parser/ui.py`, `ui/main_window.py` | 🟡 средний | Непонятное название → понятное + tooltip/подсказка |
+| **I8** | media=0 при обычном парсинге | `features/parser/api.py` | 🟡 средний | Медиа не скачивается при обычном парсинге, только через отдельную кнопку |
+| **I10** | Дубли ExportWorker | `ui/main_window.py` | 🟡 низкий | Предупреждения о дублировании воркеров в логе |
+
+---
+
+### 🟡 ФАЗА EXPORT-FEAT — Новые режимы экспорта
+
+| # | Задача | Файл | Приоритет | Описание |
+|---|--------|------|-----------|----------|
+| **I5** | Режимы comments + user + split | `features/export/generator.py` | 🟢 низкий | Новый режим: комментарии + фильтр по пользователю + разделение |
+| **I4** | Единая терминология | все модули | 🟢 низкий | Унифицировать термины: чат/группа/канал, sender/user/author |
 
 ---
 
@@ -194,7 +229,6 @@ QMainWindow
 
 | # | Задача | Файл | Статус |
 |---|--------|------|--------|
-| **FEAT-1** | **Thread mode** — скачивать ветки с выбранным участником (его сообщения + те, на которые он отвечает) | `features/parser/api.py`, `ui` | 🟡 |
 | **FEAT-2** | **Роль участника** — добавить обозначение admin/member в экспорт участников | `features/export/participants.py` | 🟡 |
 | **FEAT-3** | **STT постобработка** — улучшение качества транскрипции после Whisper (локальная эвристика или внешний API) | `core/stt/` | 🟡 |
 | **FEAT-4** | **STT для видео** — добавить `"video"` в `STT_FILE_TYPES`; **постобработка текста** (капитализация, знаки препинания); транскрипции сохранять частями (по мере готовности) | `core/stt/worker.py`, `core/stt/whisper_manager.py` | 🟡 |
@@ -254,14 +288,68 @@ QMainWindow
 
 ---
 
-### 🟡 FEAT-1: Thread mode
+### 🔴 I6: Канал как участник (Variant A-2)
+
+**Проблема:** В группах (megagroups) сообщения от админа канала хранятся с `sender_id = group_id`, а не с личным `user_id` админа. При фильтре по пользователю (например, Наталья) экспорт возвращает 0 сообщений, потому что `sender_id != user_id`.
+
+**Решение (Variant A-2):** Включить канал/чат в participant list как равноправного отправителя. Не резолвить channel-sender в конкретного админа — это ненадёжно и unnecessarily сложно.
+
+**Что нужно сделать:**
+1. В `features/chats/api.py` — при загрузке участников добавлять канал/чат в список с `sender_type="channel"`
+2. В UI — отображать канал как отдельного участника (иконка/метка отличается от обычных пользователей)
+3. В экспорте — при выборе канала как участника, фильтровать по `sender_id = chat_id` и `sender_type = "channel"`
+4. Это закроет UNKNOWN-1: вместо "Unknown" будет имя канала
+
+**Побочный эффект:** Выбор Натальи в группе всё ещё даст 0 сообщений (её сообщения под sender_id=группы), но выбор «Канал Natalia Lishak» как участника — покажет все её посты. Это ожидаемо и соответствует тому, как Telegram отображает сообщения.
+
+**Метки:** `module:chats`, `module:parser`, `module:export`
+**Файлы:** `features/chats/api.py`, `features/export/generator.py`, `features/parser/ui.py`
+
+---
+
+### 🔴 I3: «По постам» только для broadcast-каналов
+
+**Проблема:** Режим разделения «По постам» (`split_mode="post"`) не имеет смысла для групп (megagroups), потому что в группах нет постов в том же смысле, что в каналах. Кнопка должна быть неактивна для групп.
+
+**Что нужно сделать:**
+1. При выборе группы (megagroup) — кнопка «По постам» в SplitGrid становится неактивной (greyed out / disabled)
+2. При переключении на канал — кнопка снова активна
+3. Логика: `chat_dict["type"] == "channel"` → активна, иначе — нет
+
+**Метки:** `module:ui`, `module:export`
+**Файлы:** `features/export/ui.py`, `ui/main_window.py`
+
+---
+
+### ✅ FEAT-1: Thread mode (ЗАВЕРШЕНО)
 
 **Описание:** при выборе участника — два режима:
-- «Только сообщения» (реализовано) — только сообщения выбранного участника
-- «Все ветки» (нужно сделать) — сообщения участника + те сообщения других людей, на которые он отвечал (контекст переписки)
+- «Только сообщения» (реализовано ранее) — только сообщения выбранного участника
+- «Все ветки» (✅ РЕАЛИЗОВАНО 2026-05-25) — сообщения участника + те сообщения других людей, на которые он отвечал (контекст переписки)
 
-**Метки:** `module:parser`, `module:ui`
-**Файлы:** `features/parser/api.py`, `ui/main_window.py`
+**Реализованная архитектура:**
+
+1. **Парсинг:** `ParserService.collect_data()` с `user_filter_mode="threads"` собирает сообщения и формирует пары `(context→reply)` через `get_thread_pairs()`
+2. **Дедупликация:** `_dedup_thread_messages(pairs)` — общая утилита в `generator.py`, которая:
+   - Собирает уникальные сообщения из всех пар (по `message_id`)
+   - Вычисляет `depth` (глубину в дереве ответов: root=0, reply=1, reply-to-reply=2 и т.д.)
+   - Определяет `reply_to_author` — автор сообщения, на которое ответили
+   - Возвращает `[(row, depth, reply_author), ...]` без дубликатов
+3. **Рендер по форматам:**
+   - **HTML:** CSS-дерево с классами `depth-0`..`depth-5`, `margin-left` нарастает с глубиной, маркер «↳ в ответ на: [автор]»
+   - **DOCX:** линейный рендер, отступ 24pt × depth + маркер «↳» + «↩ в ответ на: [автор]», разделитель только между root-сообщениями
+   - **Markdown:** линейный рендер, отступ 4 пробела × depth + маркер «↳» + «*(в ответ на: автор)*»
+   - **JSON:** плоский список с полями `depth` (int) + `reply_to_author` (str), `type`: `thread_root` / `thread_reply`
+
+**Удалённые устаревшие методы:**
+- `DocxGenerator._add_context_block_to_doc` — заменён на dedup + linear render
+- `MarkdownGenerator._format_thread_pair` — заменён на dedup + linear render
+
+**Известные ограничения:**
+- Channel-author "Unknown" — автор канала может отображаться как Unknown в экспорте. Требует per-group исследования (отложено, см. UNKNOWN-1). Будет решено в I6 (канал как участник).
+
+**Метки:** `module:parser`, `module:export`, `module:ui`
+**Файлы:** `features/parser/api.py`, `features/export/generator.py`, `ui/main_window.py`, `features/export/ui.py`, `core/database.py`
 
 ---
 
@@ -278,13 +366,34 @@ CR-4 — STT (`WhisperManager.instance()` не был `@classmethod`)
 CR-5 — `ValueError: API ID cannot be empty`
 CR-6 — `ExportWorker` не запускался
 
+### Баги сессии 2026-05-25 (исправлены)
+
+| # | Описание | Файл | Исправление |
+|---|----------|------|-------------|
+| BUG-20 | `ParserService._get_sender_name() missing 1 required positional argument` | `features/parser/api.py` | `_get_sender_name` и `_extract_row_sync` переведены в instance methods |
+| BUG-21 | `@staticmethod` упорно оставался на `_get_sender_name` | `features/parser/api.py` | Программная замена строк в патче v9c |
+| BUG-22 | Duplicate `user_filter_mode` аргумент в `generator.py` | `features/export/generator.py`, `features/export/ui.py` | Патч v10: программное удаление дубликатов |
+| BUG-23 | Duplicate threads dispatch в `DocxGenerator.generate()` | `features/export/generator.py` | Убран дублирующий вызов генерации тредов |
+| BUG-24 | Thread pair duplication — одно сообщение рендерилось несколько раз | `features/export/generator.py` | `_dedup_thread_messages()` — общая утилита дедупликации |
+
+### Баги сессии 2026-05-27 (исправлены)
+
+| # | Описание | Файл | Исправление |
+|---|----------|------|-------------|
+| **C1** | `name '_iter_msg_count' is not defined` — парсинг падал, работала только кнопка «перекачать медиа» | `features/parser/api.py` | `_iter_one_topic` теперь возвращает кол-во прочитанных сообщений; `_run_topics` использует `iter_read` вместо несуществующей переменной |
+| **C2** | `ParserService._should_download() takes 2 positional arguments but 3 were given` — скачивание медиа падало | `features/parser/api.py` | Добавлен пропущенный `self` в сигнатуру `_should_download(self, ...)` |
+| **C3** | Экспорт группы по пользователю (Дмитрий) возвращал все 32 сообщения вместо 13 | `features/export/generator.py` | `include_channel_senders = False` — канал не подтягивается автоматически при фильтре по пользователю (Variant A-2) |
+
+**Причина C1/C2:** Предыдущие сессии правили `api.py` несколько раз, и каждый патч вносил ошибку в уже работавший код. `_iter_msg_count` появился как артефакт переименования, `self` в `_should_download` потерялся при копировании. Это следствие недостаточной проверки целостности после патчей.
+
 ### Открытые баги
 
 | # | Описание | Файл | Приоритет |
 |---|----------|------|-----------|
-| **BUG-18** | OpenTele: всегда предлагается установить библиотеку | `features/auth/ui.py` | 🔴 |
+| **BUG-18** | OpenTele2: всегда предлагалось установить библиотеку | `features/auth/ui.py` | ✅ Исправлен |
 | **BUG-19** | DOCX: нет превью видео | `features/export/generator.py` | 🟡 |
 | **DB-LOCK-2** | «database is locked» при параллельной записи | `core/database.py` | 🟡 |
+| **UNKNOWN-1** | Channel-author "Unknown" в экспорте (конкретные группы) | `features/parser/api.py` | 🟡 → будет решено в I6 |
 
 ---
 
@@ -297,6 +406,19 @@ CR-6 — `ExportWorker` не запускался
 - `build_client(cfg)` — единственная точка создания клиента
 - Каждый воркер: `build_client()` → `connect()` → работа → `disconnect()` в `finally`
 - `MainWindow` НЕ хранит постоянный `self._client`
+
+### Variant A-2: Канал как участник
+- Канал/чат включается в participant list как равноправный отправитель
+- **Нет** резолва channel-sender → admin (ненадёжно, не соответствует отображению в Telegram)
+- Сообщения от канала отображаются под именем канала, как в самом Telegram
+- `sender_type` поле (`"user"` / `"channel"` / `"deleted"`) в DB schema v2 позволяет различать типы отправителей
+- При фильтре по пользователю: `include_channel_senders = False` — канал не подтягивается автоматически
+- **Следствие:** при выборе конкретного человека в группе его сообщения от имени канала (sender_id=group_id) не попадут в результат — это ожидаемо. Для доступа к таким сообщениям нужно выбрать канал как участника (I6)
+
+### «По постам» — только для каналов
+- Режим `split_mode="post"` имеет смысл только для broadcast-каналов
+- Для групп (megagroups) кнопка «По постам» должна быть неактивна/серой
+- Группы не имеют постов в том же смысле, что каналы
 
 ### Имена файлов экспорта
 Шаблон: `{chat_title}[_{topic_name}][_{username}]_{kind}_{period_label}.{ext}`
@@ -311,11 +433,18 @@ CR-6 — `ExportWorker` не запускался
 
 `username` берётся из `UserTag.username` → `ParseParams.username` → `ExportParams.username` → `generate(username=...)` → `_build_path()`.
 
+### Thread dedup + tree render
+Все 4 генератора используют общую утилиту `_dedup_thread_messages(pairs)` для дедупликации и вычисления глубины ответов. Не реализовать собственную логику дедупликации в отдельном генераторе.
+
+### from_id fallback
+Для удалённых аккаунтов и авторов-каналов, где `sender_id` is None, `_get_sender_name` использует `from_id` как fallback-идентификатор. Это instance-метод (не `@staticmethod`), так как нужен доступ к `self._chat_title`.
+
 ### SQLite
 - thread-local соединения через `DBManager`
 - WAL + `busy_timeout=30000` + `synchronous=NORMAL`
 - `insert_messages_batch()` — 1 commit / 200 сообщений
 - STT: сохранение после каждого файла (не в конце батча) — защита от потери данных при падении
+- Schema v2: `sender_type` column (`"user"` / `"channel"` / `"deleted"`), `PRAGMA user_version` для миграций
 
 ### Qt-изоляция
 - `features/*/api.py` + `core/*.py` (кроме worker.py) — никакого Qt
@@ -367,16 +496,17 @@ CR-6 — `ExportWorker` не запускался
 | R-4 | Проверить .spec и onefile-сборку | `rozitta_parser.spec` |
 
 ### После релиза (по приоритету)
-1. BF-2 — посты + комментарии
-2. UI-REDESIGN (RD-1..9)
-3. FEAT-1 — thread mode
-4. REF-1..3 — рефакторинг (личные задачи)
-5. FEAT-3 — STT постобработка
-6. P3 — тесты, CI
+1. I6 + I3 + I9 — завершение Variant A-2 (канал как участник, по постам для каналов, убрать admin resolution)
+2. BF-2 — посты + комментарии
+3. I1 + I2 — исправления экспорта (пустые сообщения, порядок grouped_media)
+4. UI-REDESIGN (RD-1..9)
+5. REF-1..3 — рефакторинг (личные задачи)
+6. FEAT-3 — STT постобработка
+7. P3 — тесты, CI
 
 ---
 
 **Анализ создан:** 2025-02-12
-**Последнее обновление:** 2026-05-18
-**Версия:** 5.0
+**Последнее обновление:** 2026-05-27
+**Версия:** 5.2
 **Автор:** Claude (Anthropic)

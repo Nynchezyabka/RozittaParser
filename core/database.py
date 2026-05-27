@@ -11,8 +11,8 @@ core/database.py — Менеджер SQLite базы данных Rozitta Parse
       здесь неприменим. In-memory используется только в TopicsWorker (один поток).
 - Retry-логика (3 попытки, экспоненциальный backoff) для крайних случаев
 - Контекстный менеджер — соединение гарантированно закрывается
-- Миграции схемы — таблицы и индексы создаются при первом открытии
-- Авто-миграция (insert_chat) — Retry Loop добавляет недостающие колонки на лету
+- Миграции схемы (PRAGMA user_version) — применяются при открытии БД,
+  до любого доступа к данным; добавление новых колонок — одна строка в _MIGRATIONS
 
 Правильное использование в воркерах:
 
@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS messages (
     is_comment         INTEGER DEFAULT 0,
     from_linked_group  INTEGER DEFAULT 0,
     merge_group_id     INTEGER,
-    merge_part_index   INTEGER
+    merge_part_index   INTEGER,
+    sender_type        TEXT    DEFAULT 'user'
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_unique
@@ -125,6 +126,34 @@ CREATE TABLE IF NOT EXISTS cached_dialogs (
     updated_at           TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 """
+# ---------------------------------------------------------------------------
+# Миграции схемы (PRAGMA user_version)
+# ---------------------------------------------------------------------------
+# Каждая миграция — кортеж (version, description, [sql_statements]).
+# Применяются последовательно в _run_migrations() при открытии БД.
+# Новые .db получают полную схему через CREATE TABLE IF NOT EXISTS,
+# миграции пропускаются (но безопасно — duplicate column name игнорируется).
+# ---------------------------------------------------------------------------
+
+_MIGRATIONS: list[tuple[int, str, list[str]]] = [
+    # v1: колонки chats, которые ранее добавлялись через retry-loop
+    (1, "chats: type, linked_chat_id, metadata", [
+        "ALTER TABLE chats ADD COLUMN type TEXT DEFAULT ''",
+        "ALTER TABLE chats ADD COLUMN linked_chat_id INTEGER",
+        "ALTER TABLE chats ADD COLUMN metadata TEXT DEFAULT ''",
+    ]),
+    # v2: sender_type в messages + индекс
+    (2, "messages: sender_type + index", [
+        "ALTER TABLE messages ADD COLUMN sender_type TEXT DEFAULT 'user'",
+        (
+            "CREATE INDEX IF NOT EXISTS idx_messages_sender_type "
+            "ON messages (chat_id, sender_type) "
+            "WHERE sender_type IS NOT NULL"
+        ),
+    ]),
+]
+
+_CURRENT_SCHEMA_VERSION = max(v for v, _, _ in _MIGRATIONS)
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +270,7 @@ class DBManager:
                     self._shared_lock.release()
 
     def _ensure_schema(self) -> None:
-        """Создаёт таблицы и индексы (идемпотентно, один раз)."""
+        """Создаёт таблицы, индексы и применяет миграции (идемпотентно, один раз)."""
 
         with self._init_lock:
             if self._initialized:
@@ -249,8 +278,65 @@ class DBManager:
             conn = self._get_connection()
             conn.executescript(_SCHEMA_SQL)
             conn.commit()
+            self._run_migrations(conn)
             self._initialized = True
-            logger.info("DBManager: схема инициализирована (%s)", self.db_path)
+            logger.info(
+                "DBManager: схема инициализирована (v%d, %s)",
+                _CURRENT_SCHEMA_VERSION, self.db_path,
+            )
+
+    def _run_migrations(self, conn: sqlite3.Connection) -> None:
+        """
+        Применяет миграции схемы при помощи PRAGMA user_version.
+
+        Принцип:
+        1. Читаем текущую версию: PRAGMA user_version (0 для старых .db)
+        2. Применяем все миграции с version > текущей
+        3. После каждой миграции: PRAGMA user_version = N
+        4. «duplicate column name» — колонка уже есть, пропускаем
+
+        Для новых .db: CREATE TABLE IF NOT EXISTS создаёт полную схему,
+        а миграции безопасно пропускают ALTER TABLE (колонки уже есть).
+        """
+        current_version: int = conn.execute("PRAGMA user_version").fetchone()[0]
+
+        if current_version >= _CURRENT_SCHEMA_VERSION:
+            logger.debug("DBManager: схема актуальна (v%d)", current_version)
+            return
+
+        applied = 0
+        for version, description, statements in _MIGRATIONS:
+            if version <= current_version:
+                continue
+            logger.info(
+                "DBManager: миграция v%d → %s", version, description,
+            )
+            for sql in statements:
+                try:
+                    conn.execute(sql)
+                except sqlite3.OperationalError as exc:
+                    err_msg = str(exc).lower()
+                    if "duplicate column name" in err_msg:
+                        # Колонка уже существует (новая БД с полной схемой)
+                        logger.debug(
+                            "DBManager: колонка уже есть, пропускаем: %s", sql[:60],
+                        )
+                    elif "already exists" in err_msg:
+                        # Индекс уже существует
+                        logger.debug(
+                            "DBManager: индекс уже есть, пропускаем: %s", sql[:60],
+                        )
+                    else:
+                        raise
+            conn.execute(f"PRAGMA user_version = {version}")
+            conn.commit()
+            applied += 1
+
+        if applied:
+            logger.info(
+                "DBManager: применено %d миграций (v%d → v%d)",
+                applied, current_version, _CURRENT_SCHEMA_VERSION,
+            )
 
     def close(self) -> None:
         """Закрывает соединение текущего потока (и разделяемое для :memory:)."""
@@ -297,6 +383,7 @@ class DBManager:
         topic_id:          Optional[int] = None,
         user_id:           Optional[int] = None,
         username:          Optional[str] = None,
+        sender_type:       Optional[str] = None,
         text:              Optional[str] = None,
         media_path:        Optional[str] = None,
         file_type:         Optional[str] = None,
@@ -334,13 +421,13 @@ class DBManager:
         """
         sql = """
             INSERT OR REPLACE INTO messages
-                (chat_id, message_id, topic_id, user_id, username, date, text,
+                (chat_id, message_id, topic_id, user_id, username, sender_type, date, text,
                  media_path, file_type, file_size,
                  reply_to_msg_id, post_id, is_comment, from_linked_group)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
-            chat_id, message_id, topic_id, user_id, username, date, text,
+            chat_id, message_id, topic_id, user_id, username, sender_type, date, text,
             media_path, file_type, file_size,
             reply_to_msg_id, post_id, is_comment, from_linked_group,
         )
@@ -371,11 +458,11 @@ class DBManager:
 
         sql = """
             INSERT OR REPLACE INTO messages
-                (chat_id, message_id, topic_id, user_id, username, date, text,
+                (chat_id, message_id, topic_id, user_id, username, sender_type, date, text,
                  media_path, file_type, file_size,
                  reply_to_msg_id, post_id, is_comment, from_linked_group)
             VALUES
-                (:chat_id, :message_id, :topic_id, :user_id, :username, :date, :text,
+                (:chat_id, :message_id, :topic_id, :user_id, :username, :sender_type, :date, :text,
                  :media_path, :file_type, :file_size,
                  :reply_to_msg_id, :post_id, :is_comment, :from_linked_group)
         """
@@ -424,11 +511,11 @@ class DBManager:
 
         sql = """
             INSERT OR IGNORE INTO messages
-                (chat_id, message_id, topic_id, user_id, username, date, text,
+                (chat_id, message_id, topic_id, user_id, username, sender_type, date, text,
                  media_path, file_type, file_size,
                  reply_to_msg_id, post_id, is_comment, from_linked_group)
             VALUES
-                (:chat_id, :message_id, :topic_id, :user_id, :username, :date, :text,
+                (:chat_id, :message_id, :topic_id, :user_id, :username, :sender_type, :date, :text,
                  :media_path, :file_type, :file_size,
                  :reply_to_msg_id, :post_id, :is_comment, :from_linked_group)
         """
@@ -466,10 +553,8 @@ class DBManager:
 
         Колонки в схеме: chat_id, title, type, linked_chat_id, metadata.
 
-        Включает АВТОМАТИЧЕСКОЕ ИСПРАВЛЕНИЕ (Auto-Migration) схемы:
-        Retry Loop методично добавляет недостающие колонки по одной
-        пока запрос не выполнится успешно. Защищает от потери данных
-        при рассинхроне схемы (старый .db файл + новый код).
+        Миграции схемы применяются автоматически в _ensure_schema()
+        при открытии БД — retry-loop больше не нужен.
 
         Args:
             chat_id:        Нормализованный ID чата.
@@ -487,55 +572,8 @@ class DBManager:
                 linked_chat_id = excluded.linked_chat_id,
                 metadata       = excluded.metadata
         """
-
-        # Retry Loop: до 3 попыток, каждая может добавить одну недостающую колонку
-        for attempt in range(_MAX_RETRIES):
-            try:
-                with self._cursor() as cur:
-                    cur.execute(sql, (chat_id, title, chat_type, linked_chat_id, metadata))
-                return  # Успешно — выходим
-
-            except sqlite3.OperationalError as exc:
-                err_msg = str(exc).lower()
-
-                # --- Авто-миграция: добавляем недостающие колонки по одной ---
-                if "no column named type" in err_msg:
-                    logger.warning(
-                        "DBManager: ⚠️ Авто-миграция: колонка 'type' отсутствует в chats. Добавляю..."
-                    )
-                    conn = self._get_connection()
-                    conn.execute("ALTER TABLE chats ADD COLUMN type TEXT DEFAULT ''")
-                    conn.commit()
-
-                elif "no column named linked_chat_id" in err_msg:
-                    logger.warning(
-                        "DBManager: ⚠️ Авто-миграция: колонка 'linked_chat_id' отсутствует. Добавляю..."
-                    )
-                    conn = self._get_connection()
-                    conn.execute("ALTER TABLE chats ADD COLUMN linked_chat_id INTEGER")
-                    conn.commit()
-
-                elif "no column named metadata" in err_msg:
-                    logger.warning(
-                        "DBManager: ⚠️ Авто-миграция: колонка 'metadata' отсутствует. Добавляю..."
-                    )
-                    conn = self._get_connection()
-                    conn.execute("ALTER TABLE chats ADD COLUMN metadata TEXT DEFAULT ''")
-                    conn.commit()
-
-                else:
-                    # Ошибка не связана с колонками — логируем схему и пробрасываем
-                    self.debug_check_schema("chats")
-                    raise
-
-            except sqlite3.Error as exc:
-                logger.error("DBManager: ошибка при вставке чата %d: %s", chat_id, exc)
-                raise
-
-        logger.error(
-            "DBManager: insert_chat не выполнен за %d попыток (chat_id=%d)",
-            _MAX_RETRIES, chat_id,
-        )
+        with self._cursor() as cur:
+            cur.execute(sql, (chat_id, title, chat_type, linked_chat_id, metadata))
 
     def debug_check_schema(self, table_name: str) -> None:
         """
@@ -565,6 +603,7 @@ class DBManager:
         topic_id:         Optional[int] = None,
         user_id:          Optional[int] = None,
         include_comments: bool          = False,
+        include_channel_senders: bool   = False,
         date_from:        Optional[str] = None,   # "YYYY-MM-DD"
         date_to:          Optional[str] = None,   # "YYYY-MM-DD" (включительно)
     ) -> List[sqlite3.Row]:
@@ -589,8 +628,14 @@ class DBManager:
             params.append(topic_id)
 
         if user_id is not None:
-            conditions.append("user_id = ?")
-            params.append(user_id)
+            if include_channel_senders:
+                # Включаем сообщения пользователя + channel-sender сообщения
+                # (админ канала пишет «от имени канала» — user_id = channel_id)
+                conditions.append("(user_id = ? OR sender_type = 'channel')")
+                params.append(user_id)
+            else:
+                conditions.append("user_id = ?")
+                params.append(user_id)
 
         if not include_comments:
             conditions.append("is_comment = 0")

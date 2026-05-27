@@ -3,16 +3,16 @@
 ## 📋 О проекте
 
 **Название:** Rozitta Parser (Telegram Archiver)
-**Версия:** 4.2 (SOCKS5/Tor прокси реализован; имена файлов с датой/топиком; кэш бессрочный; логи авторизации)
+**Версия:** 4.5 (C1/C2/C3 bugfix; Variant A-2; sender_type schema v2)
 **Тип:** Desktop приложение (PySide6)
-**Назначение:** Архивирование сообщений из Telegram чатов с созданием DOCX / JSON / MD документов
+**Назначение:** Архивирование сообщений из Telegram чатов с созданием DOCX / JSON / MD / HTML документов
 
 ---
 
 ## 🎯 Основная функциональность
 
 1. **Авторизация в Telegram** через Telethon (сессия и api_id/hash/phone сохраняются после входа)
-2. **Импорт сессии из Telegram Desktop** — кнопка «🖥️ Импорт из tdata», без ввода кода (opentele)
+2. **Импорт сессии из Telegram Desktop** — кнопка «🖥️ Импорт из tdata», без ввода кода (OpenTele2, ✅ BUG-18 исправлен)
 3. **Загрузка списка чатов** (каналы, группы, форумы, диалоги — коллапсируемые секции; кэш 24ч)
 4. **Парсинг сообщений** с фильтрацией по глубине / медиа / пользователю
 5. **Скачивание медиа** в структурированные папки
@@ -24,6 +24,12 @@
 11. **JSON экспорт** (✅ РЕАЛИЗОВАНО — плоский список объектов, совместим с NotebookLM)
 12. **Markdown экспорт** (✅ РЕАЛИЗОВАНО — чистый формат для ИИ-инструментов)
 13. **AI-split чанкинг** (✅ РЕАЛИЗОВАНО — разбивка MD/JSON на части по 300к слов)
+14. **HTML экспорт** (✅ РЕАЛИЗОВАНО — чистая веб-страница с CSS-стилями)
+15. **Thread mode** (✅ РЕАЛИЗОВАНО — экспорт веток с дедупликацией + дерево ответов):
+    - HTML: CSS-дерево с `depth-N` классами, `margin-left` нарастает с глубиной
+    - DOCX: линейный рендер, отступ 24pt × depth + маркер «↳» + «↩ в ответ на: [автор]»
+    - Markdown: линейный рендер, отступ 4 пробела × depth + маркер «↳» + «*(в ответ на: автор)*»
+    - JSON: плоский список с полями `depth` + `reply_to_author`, типы `thread_root` / `thread_reply`
 
 ---
 
@@ -137,7 +143,8 @@ rozitta_parser/
 ├── core/                            # ✅ Готова полностью
 │   ├── __init__.py
 │   ├── utils.py                     # finalize_telegram_id, sanitize_filename, ...
-│   ├── database.py                  # DBManager: WAL, thread-local, retry, merge
+│   ├── database.py                  # DBManager: WAL, thread-local, retry, merge, get_thread_pairs
+│   │                                #   Schema v2: sender_type column, PRAGMA user_version migrations
 │   ├── logger.py                    # setup_logging, get_logger, set_level
 │   ├── exceptions.py                # Полная иерархия ошибок
 │   ├── merger.py                    # MergerService: O(n) склейка
@@ -163,16 +170,23 @@ rozitta_parser/
 │   │
 │   ├── chats/                       # ✅ Готова (ПЕРЕРАБОТАН ui.py 2026-02-22)
 │   │   ├── api.py                   # ChatsService, classify_entity()
+│   │   │                            #   ⚠️ I9: убрать admin resolution (Variant A-2)
 │   │   └── ui.py                    # ChatItemWidget, CollapsibleSection,
 │   │                                #   CollapsibleChatsWidget, ChatsScreen,
 │   │                                #   ChatsWorker, TopicsWorker
 │   │
 │   ├── parser/                      # ✅ Готова
 │   │   ├── api.py                   # ParserService, CollectParams, CollectResult
+│   │   │                            #   _get_sender_name (instance, from_id fallback)
+│   │   │                            #   _extract_row_sync (instance method)
+│   │   │                            #   C1/C2 fix (2026-05-27)
 │   │   └── ui.py                    # ParseWorker QThread (собственный TelegramClient)
 │   │
 │   └── export/                      # ✅ Готова
-│       ├── generator.py             # DocxGenerator + JsonGenerator + MarkdownGenerator
+│       ├── generator.py             # DocxGenerator + JsonGenerator + MarkdownGenerator + HtmlGenerator
+│       │                            #   _dedup_thread_messages() — shared утилита дедупликации тредов
+│       │                            #   Удалены: _add_context_block_to_doc, _format_thread_pair
+│       │                            #   C3 fix: include_channel_senders=False (2026-05-27)
 │       ├── xml_magic.py             # add_bookmark, add_internal_hyperlink, ...
 │       └── ui.py                    # ExportWorker QThread, ExportParams
 │
@@ -215,9 +229,18 @@ CREATE TABLE messages (
     is_comment         INTEGER DEFAULT 0,
     from_linked_group  INTEGER DEFAULT 0,
     merge_group_id     INTEGER,
-    merge_part_index   INTEGER
+    merge_part_index   INTEGER,
+    sender_type        TEXT    DEFAULT 'user'   -- Schema v2: "user" | "channel" | "deleted"
 );
 ```
+
+### Schema v2 миграция
+- `PRAGMA user_version` используется для миграций
+- v1→v2: добавлена колонка `sender_type TEXT DEFAULT 'user'`
+- `sender_type` позволяет различать типы отправителей при экспорте и фильтрации
+- `"user"` — обычный пользователь
+- `"channel"` — сообщение от канала/чата (sender_id = chat_id)
+- `"deleted"` — удалённый аккаунт
 
 ### Таблица: `transcriptions` (✅ реализована — 2026-03-09)
 ```sql
@@ -230,6 +253,23 @@ CREATE TABLE transcriptions (
     PRIMARY KEY (message_id, peer_id)
 );
 ```
+
+---
+
+## 🏷️ Принятые дизайнерские решения
+
+### Variant A-2: Канал как участник
+- Канал/чат включается в participant list как равноправный отправитель
+- **Нет** резолва channel-sender → admin (ненадёжно, не соответствует отображению в Telegram)
+- Сообщения от канала отображаются под именем канала, как в самом Telegram
+- `sender_type` поле в DB позволяет различать типы отправителей
+- При фильтрации по пользователю: `include_channel_senders = False` — канал не подтягивается автоматически
+- **Следствие:** выбор конкретного человека в группе не покажет его сообщения от имени канала (sender_id=group_id). Для этого нужно выбрать канал как участника (I6)
+
+### «По постам» — только для каналов
+- Режим `split_mode="post"` имеет смысл только для broadcast-каналов
+- Для групп (megagroups) кнопка «По постам» должна быть неактивна/серой
+- Группы не имеют постов в том же смысле, что каналы
 
 ---
 
@@ -287,6 +327,11 @@ ChatsScreen(cfg: AppConfig, parent=None)
 - Источник комментариев: **linked discussion group** (привязанная супергруппа)
 - Связь: через `GetDiscussionMessageRequest(peer=channel, msg_id=post_id)`
 
+### ⚠️ Ограничение: только для каналов
+
+Режим «По постам» не имеет смысла для групп (megagroups) — у групп нет постов.
+Кнопка должна быть неактивна при выбранной группе. См. I3.
+
 ### Структура выходных файлов
 
 **Один DOCX = один пост канала + все его комментарии.**
@@ -297,6 +342,43 @@ output/
     ├── Post_002_[дата].docx
     └── ...
 ```
+
+---
+
+## 🧵 ТРЕБОВАНИЕ: Thread mode (✅ РЕАЛИЗОВАНО)
+
+### Архитектура дедупликации тредов
+
+При экспорте веток (thread mode) `get_thread_pairs()` возвращает пары `(context→reply)`.
+Одно сообщение может входить в несколько пар (как reply в одной и context в другой),
+что приводило к дублированию. Решение — общая утилита `_dedup_thread_messages()`:
+
+```python
+# _dedup_thread_messages(pairs) → [(row, depth, reply_author), ...]
+#
+# 1. Собирает все уникальные сообщения из всех пар (по message_id)
+# 2. Вычисляет depth (глубину в дереве ответов):
+#    - root сообщение (ни на что не отвечает) → depth=0
+#    - ответ на root → depth=1
+#    - ответ на ответ → depth=2, и т.д.
+# 3. Определяет reply_to_author — автор сообщения, на которое ответили
+# 4. Возвращает плоский список без дубликатов
+```
+
+### Рендер по форматам
+
+| Формат | Стиль рендера | Отступ | Маркер ответа |
+|--------|---------------|--------|---------------|
+| **HTML** | CSS-дерево | `margin-left` через классы `depth-0`..`depth-5` | «↳ в ответ на: [автор]» |
+| **DOCX** | Линейный | 24pt × depth + `↳` | «↩ в ответ на: [автор]» |
+| **Markdown** | Линейный | 4 пробела × depth + `↳` | *(в ответ на: автор)* |
+| **JSON** | Плоский список | Поле `depth` (int) | Поле `reply_to_author` (str), `type`: `thread_root` / `thread_reply` |
+
+### Удалённые устаревшие методы
+
+При реализации tree-based рендера следующие методы стали ненужными и удалены:
+- `DocxGenerator._add_context_block_to_doc` — заменён на dedup + linear render
+- `MarkdownGenerator._format_thread_pair` — заменён на dedup + linear render
 
 ---
 
@@ -485,6 +567,41 @@ worker.error.connect(self._on_parse_error,          Qt.UniqueConnection)
 worker.finished.connect(lambda: self._on_stt_finished(result), Qt.UniqueConnection)
 ```
 
+### 14. Instance-методы парсера — НЕ @staticmethod
+
+`_get_sender_name` и `_extract_row_sync` в `features/parser/api.py` — **instance-методы**
+класса `ParserService`, не `@staticmethod`. Это необходимо для доступа к `self._chat_title`
+и корректного fallback на `from_id` при удалённых аккаунтах и авторах-каналах.
+
+```python
+# ✅ ПРАВИЛЬНО:
+def _get_sender_name(self, message) -> str:
+    ...
+    # fallback на from_id для каналов и удалённых аккаунтов
+
+# ❌ ЗАПРЕЩЕНО — делать эти методы @staticmethod:
+@staticmethod
+def _get_sender_name(message) -> str:  # потеряет доступ к self._chat_title
+```
+
+### 15. `_dedup_thread_messages()` — единая точка дедупликации тредов
+
+Все 4 генератора (Docx/Markdown/Html/Json) используют **общую** функцию
+`_dedup_thread_messages(pairs)` для дедупликации и вычисления depth.
+Не реализовать собственную логику дедупликации в отдельном генераторе.
+
+### 16. Перед патчем — проверь контекст
+
+Прежде чем писать патч, прочитай текущее состояние файла. Не предполагай, что код выглядит
+как в прошлом патче или как ты его оставил — между сессиями могли быть ручные правки или
+другие патчи. Старый код в памяти ≠ текущий код на диске.
+
+### 17. После патча — проверь ссылки
+
+После каждого патча проверяй целостность: все имена, на которые ссылается изменённый код,
+должны существовать. Если переименовал переменную/метод — сделай grep по файлу на старое имя.
+Если добавил вызов — убедись, что целевая функция/метод существует с той же сигнатурой.
+
 ---
 
 ## 🔄 Основные потоки выполнения
@@ -534,7 +651,20 @@ _run_export(collect_result)
     → DocxGenerator (всегда единый файл, ai_split игнорируется)
     → JsonGenerator (с ai_split → part_1.json, part_2.json, ...)
     → MarkdownGenerator (с ai_split → part_1.md, part_2.md, ...)
+    → HtmlGenerator (полноценная веб-страница с CSS-стилями)
   → Signal: export_complete(list[str])  ← пути созданных файлов
+```
+
+### Thread mode (✅ реализовано):
+```
+user_filter_mode == "threads"
+  → parser: collect_data() собирает сообщения + пары тредов
+  → database: get_thread_pairs(chat_id, user_id, ...) → List[sqlite3.Row]
+  → generator: _dedup_thread_messages(pairs) → [(row, depth, reply_author), ...]
+     → HTML: CSS depth-N классы + margin-left
+     → DOCX: 24pt indent × depth + "↳" маркер
+     → MD: 4 spaces × depth + "↳" маркер
+     → JSON: flat list + depth + reply_to_author fields
 ```
 
 ---
@@ -545,7 +675,7 @@ _run_export(collect_result)
 |------|--------|---------------------|
 | `config.py` | ✅ Готов | — |
 | `core/utils.py` | ✅ Готов | — |
-| `core/database.py` | ✅ Готов | 2026-03-09 таблица transcriptions |
+| `core/database.py` | ✅ Готов | 2026-05-25 get_thread_pairs; 2026-05-27 sender_type (v2) |
 | `core/logger.py` | ✅ Готов | — |
 | `core/exceptions.py` | ✅ Готов | — |
 | `core/merger.py` | ✅ Готов | — |
@@ -558,14 +688,14 @@ _run_export(collect_result)
 | `core/stt/worker.py` | ✅ Готов | 2026-03-09 STTWorker |
 | `features/auth/api.py` | ✅ Готов | 2026-03-18 tdata import + detect_tdata_path |
 | `features/auth/ui.py` | ✅ Готов | 2026-03-18 TdataImportWorker + кнопка импорта + диалог pip |
-| `features/chats/api.py` | ✅ Готов | 2026-03-18 lazy linked_chat + кэш диалогов |
+| `features/chats/api.py` | ✅ Готов | 2026-03-18 lazy linked_chat + кэш диалогов; ⚠️ I9 pending |
 | `features/chats/ui.py` | ✅ Готов | 2026-03-18 лимит 500, LinkedGroupWorker |
-| `features/parser/api.py` | ✅ Готов | 2026-03-17 периодический flush батча |
+| `features/parser/api.py` | ✅ Готов | 2026-05-27 C1/C2 fix: _iter_one_topic returns count, _should_download(self,...) |
 | `features/parser/ui.py` | ✅ Готов | — |
-| `features/export/generator.py` | ✅ Готов | 2026-03-16 JsonGenerator + MarkdownGenerator + ai_split |
+| `features/export/generator.py` | ✅ Готов | 2026-05-27 C3 fix: include_channel_senders=False (Variant A-2) |
 | `features/export/xml_magic.py` | ✅ Готов | — |
-| `features/export/ui.py` | ✅ Готов | 2026-03-16 ExportParams(export_formats, ai_split) |
-| `ui/main_window.py` | ✅ Готов | 2026-03-18 STT по чипам, статус форматов, артефакты иконок |
+| `features/export/ui.py` | ✅ Готов | 2026-05-25 duplicate user_filter_mode fixed |
+| `ui/main_window.py` | ✅ Готов | 2026-05-25 duplicate user_filter_mode fixed |
 | `core/ui_shared/widgets.py` | ✅ Готов | 2026-03-18 fix SectionTitle HLine артефакт |
 | `core/ui_shared/styles.py` | ✅ Готов | 2026-03-18 fix FilterButton min-width |
 | `main.py` | ✅ Готов | — |
@@ -598,22 +728,24 @@ class ExportParams:
     split_mode:       str           = "none"       # "none" | "day" | "month" | "post"
     topic_id:         Optional[int] = None
     user_id:          Optional[int] = None
+    username:         Optional[str] = None
     include_comments: bool          = False
     output_dir:       str           = "output"
     db_path:          str           = "output/telegram_archive.db"
     export_formats:   list          = None         # ["docx","json","md","html"]
     ai_split:         bool          = False        # разбивка MD/JSON по 300к слов
+    user_filter_mode: str           = "messages"   # "messages" | "threads"
     # DOCX всегда единый файл, ai_split на него не влияет
 ```
 
 ### 4. Форматы экспорта и генераторы
 
-| Формат | Класс | ai_split | Выходные файлы |
+| Формат | Класс | ai_split | Выходные файли |
 |--------|-------|----------|----------------|
 | `docx` | `DocxGenerator` | ❌ не влияет | `chat_history.docx` |
 | `json` | `JsonGenerator` | ✅ да | `_history.json` или `_part_1.json`, `_part_2.json` |
 | `md`   | `MarkdownGenerator` | ✅ да | `_history.md` или `_part_1.md`, `_part_2.md` |
-| `html` | ✅ да | — | roadmap EX-2 |
+| `html` | `HtmlGenerator` | ❌ не влияет | `_history.html` |
 
 ### 5. Markdown формат сообщения
 ```markdown
@@ -623,6 +755,7 @@ class ExportParams:
 *(STT: текст расшифровки)*   ← только если есть STT
 
 ---
+```
 
 ### 6. Типизация сигналов (рекомендация)
 По возможности документируйте структуру данных, передаваемых через `Signal(object)`. Для списков используйте `Signal(list)`, но с комментарием о типе элементов.
@@ -631,8 +764,6 @@ class ExportParams:
 ```python
 # сигнал передаёт словарь чата: {id, title, type, ...}
 chat_selected = Signal(object)
-
-
 ```
 
 ---
@@ -673,6 +804,7 @@ chat_selected = Signal(object)
 | `output\<чат>\*.docx` | Сгенерированные документы |
 | `output\<чат>\*_telegram_history.json` | JSON-архив (или `_part_N.json` с ai_split) |
 | `output\<чат>\*_telegram_history.md` | Markdown-архив (или `_part_N.md` с ai_split) |
+| `output\<чат>\*_telegram_history.html` | HTML-архив |
 | `rozitta.log` | Лог приложения (рядом с .exe) |
 
 ### Сборка .exe
@@ -687,6 +819,6 @@ pyinstaller rozitta_parser.spec --noconfirm
 
 ---
 
-**Последнее обновление:** 2026-05-18
-**Версия документа:** 4.3
+**Последнее обновление:** 2026-05-27
+**Версия документа:** 4.5
 **Автор:** Claude (Anthropic)

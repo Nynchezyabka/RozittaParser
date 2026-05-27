@@ -419,7 +419,7 @@ class ParserService:
                 self._log(f"🔍 Начинаем сбор из: {chat_title}")
                 logger.debug("[DIAG] _iter_one_topic start: topic_id=%s", _topic_id)
                 self._log(f"[DIAG] iter_one_topic → topic_id={_topic_id}")
-                iter_read = await self._iter_one_topic(
+                await self._iter_one_topic(
                     entity=entity,
                     topic_id=_topic_id,
                     params=params,
@@ -435,10 +435,10 @@ class ParserService:
                     chat_type=chat_type,
                     batch=_batch,
                 )
-                logger.debug("[DIAG] _iter_one_topic done: topic_id=%s msgs_so_far=%d iter_read=%d", _topic_id, self._msg_count, iter_read)
-                self._log(f"[DIAG] iter_one_topic done: topic_id={_topic_id} msgs={self._msg_count} read={iter_read}")
-                if self._msg_count == 0 and iter_read > 0:
-                    self._log(f"[DIAG] 0 сохранено из {iter_read} прочитанных — фильтр user_ids или инкрементальный режим")
+                logger.debug("[DIAG] _iter_one_topic done: topic_id=%s msgs_so_far=%d", _topic_id, self._msg_count)
+                self._log(f"[DIAG] iter_one_topic done: topic_id={_topic_id} msgs={self._msg_count}")
+                if self._msg_count == 0 and _iter_msg_count > 0:
+                    self._log("[DIAG] 0 сохранено из {_iter_msg_count} прочитанных — фильтр user_ids или инкрементальный режим")
                 elif self._msg_count == 0:
                     self._log("[DIAG] 0 сообщений — инкрементальный режим, фильтр дат или пустой чат")
 
@@ -549,7 +549,7 @@ class ParserService:
             linked_chat_id: Optional[int],
             chat_type: str,
             batch: List[dict],
-    ) -> int:
+    ) -> None:
         """
         Итерирует сообщения одного топика (или всего чата если topic_id=None).
 
@@ -748,7 +748,7 @@ class ParserService:
                         topic_id,
                     )
                     self._log(f"⚠️ Топик id={topic_id} не существует (TOPIC_ID_INVALID) — пропускаем")
-                    return _iter_msg_count  # пропустить этот топик
+                    return  # пропустить этот топик, collect_data продолжит следующий
                 raise  # остальные BadRequestError — пробрасывать дальше
 
             except OSError as exc:
@@ -766,8 +766,6 @@ class ParserService:
                 logger.warning("parser: network error (%s), retry %d", exc, attempts + 1)
                 await asyncio.sleep(delay)
                 attempts += 1
-
-        return _iter_msg_count
 
     # ------------------------------------------------------------------
     # 3. Gather-пакет задач + запись результатов в batch / tracker
@@ -1125,7 +1123,7 @@ class ParserService:
     # 5. Вспомогательные методы
     # ------------------------------------------------------------------
 
-    def _should_download(self, message: Message, media_filter: List[str]) -> bool:
+    def _should_download(message: Message, media_filter: List[str]) -> bool:
         """
         Определяет, нужно ли скачивать медиа из сообщения.
 

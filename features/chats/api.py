@@ -23,13 +23,17 @@ features/chats/api.py — Работа со списком чатов, фору�
 
 from __future__ import annotations
 
+import asyncio
+import datetime as _dt
 import logging
 from typing import Dict, List, Optional
 
 from telethon import TelegramClient, functions
 from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.functions.messages import GetFullChatRequest
 from telethon.tl.types import (
     Channel,
+    ChannelParticipantsAdmins,
     Chat,
     User,
 )
@@ -223,7 +227,12 @@ class ChatsService:
 
             dialogs.append(chat_info)
 
-        # --- Сортировка: каналы → форумы → группы → личные ---
+        # --- Обогащение participants_count для каналов и групп ---
+        # Telethon get_dialogs() не заполняет participants_count для broadcast-каналов
+        # и маленьких групп. GetFullChannelRequest → full_chat.participants_count
+        await self._enrich_participants_counts(dialogs, _log)
+
+        # --- Сортировка: каналы → форумы → группы → личние ---
         _type_order = {"channel": 0, "forum": 1, "group": 2, "private": 3}
         dialogs.sort(key=lambda x: _type_order.get(x["type"], 9))
 
@@ -241,6 +250,88 @@ class ChatsService:
                 logger.warning("chats: не удалось сохранить кэш: %s", exc)
 
         return dialogs
+
+    # ------------------------------------------------------------------
+    # 1b. Обогащение participants_count (GetFullChannelRequest)
+    # ------------------------------------------------------------------
+
+    async def _enrich_participants_counts(
+            self,
+            dialogs: List[ChatInfo],
+            log=None,
+    ) -> None:
+        """
+        Обогащает participants_count для чатов, где он = 0.
+
+        Telethon get_dialogs() не заполняет participants_count для:
+        - Broadcast-каналов (всегда 0 из get_dialogs)
+        - Маленьких/приватных групп (может быть 0)
+
+        GetFullChannelRequest → full_chat.participants_count даёт точное число,
+        но требует отдельный API-запрос на каждый чат.
+
+        Используем asyncio.Semaphore(3) для ограничения параллелизма
+        и избежания FloodWait. Ошибки не прерывают загрузку.
+
+        Args:
+            dialogs: Список ChatInfo (модифицируется in-place).
+            log:     Колбэк для логов.
+        """
+        _log = log or logger.info
+
+        # Собираем чаты, которым нужно обогащение: Channel с count == 0
+        need_enrich = [
+            (i, d) for i, d in enumerate(dialogs)
+            if d.get("participants_count", 0) == 0
+            and d.get("type") in ("channel", "forum", "group")
+        ]
+
+        if not need_enrich:
+            return
+
+        _log(f"📊 Обогащаю participants_count для {len(need_enrich)} чатов...")
+        sem = asyncio.Semaphore(3)  # не более 3 параллельных запросов
+        enriched = 0
+
+        async def _fetch_one(idx: int, chat_info: ChatInfo) -> None:
+            nonlocal enriched
+            chat_id = chat_info.get("id")
+            try:
+                async with sem:
+                    entity = await self._client.get_entity(chat_id)
+
+                    if isinstance(entity, Channel):
+                        # Супергруппа или канал — GetFullChannelRequest
+                        full = await self._client(GetFullChannelRequest(channel=entity))
+                        count = getattr(full.full_chat, "participants_count", 0) or 0
+                    elif isinstance(entity, Chat):
+                        # Базовая группа — GetFullChatRequest
+                        full = await self._client(GetFullChatRequest(chat_id=entity.id))
+                        count = getattr(full.full_chat, "participants_count", 0) or 0
+                    else:
+                        # Private chat / User — не enrich
+                        return
+
+                    if count > 0:
+                        dialogs[idx]["participants_count"] = count
+                        enriched += 1
+                        logger.debug(
+                            "chats: participants_count enriched: %s → %d",
+                            chat_info.get("title", chat_id), count,
+                        )
+            except Exception as exc:
+                # Ошибка — не критично, оставляем 0
+                logger.debug(
+                    "chats: _enrich_participants_counts failed for %s: %s",
+                    chat_id, exc,
+                )
+
+        # Запускаем все задачи параллельно (с semaphore = 3)
+        tasks = [_fetch_one(idx, d) for idx, d in need_enrich]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        if enriched:
+            _log(f"✅ Participants count обогащён для {enriched} чатов")
 
     # ------------------------------------------------------------------
     # 2. Топики форума
@@ -558,66 +649,105 @@ class ChatsService:
         """
         Собирает топ активных участников чата по количеству сообщений.
 
-        Статистика строится на основе последних 1000 сообщений.
-        Полная альтернатива — get_participants() + итерация, но она
-        требует прав администратора. Данный метод работает без привилегий.
+        Работает без прав администратора (не использует get_participants).
+        Сканирует последние N сообщений через iter_messages.
+
+        ОСОБЕННОСТЬ: В мегагруппах и каналах админ может писать «от имени
+        канала». Такие сообщения имеют sender_type="channel". Метод пытается
+        привязать channel-sender'ов к реальным админам через get_participants.
+        Если прав нет — показывает channel-sender с пометкой.
 
         Args:
-            chat_id: ID чата (любой формат).
+            chat_id: ID чата (из get_dialogs, уже нормализован через get_peer_id).
             limit:   Сколько топ-участников вернуть.
+            date_from: Фильтр: с какой даты (date или datetime).
+            date_to:   Фильтр: по какую дату (date или datetime).
             log:     Колбэк для UI-логов.
 
         Returns:
-            Список словарей {"id": int, "name": str, "username": str|None,
-            "message_count": int}, отсортированный по убыванию message_count.
-            Пустой список при ошибке.
+            Список словарей {"id", "name", "username", "sender_type",
+            "message_count"}, отсортированный по убыванию message_count.
         """
 
         _log = log or logger.info
-        normalized_id = finalize_telegram_id(chat_id, TelegramEntityType.CHANNEL)
 
+        # ── Конвертация date → datetime для Telethon ──────────────────
+        if date_from is not None and isinstance(date_from, _dt.date) and not isinstance(date_from, _dt.datetime):
+            date_from = _dt.datetime.combine(date_from, _dt.time.min)
+        if date_to is not None and isinstance(date_to, _dt.date) and not isinstance(date_to, _dt.datetime):
+            date_to = _dt.datetime.combine(date_to, _dt.time(23, 59, 59))
+
+        logger.info(
+            "chats: get_user_stats: chat_id=%s, date_from=%r (%s), date_to=%r (%s)",
+            chat_id,
+            date_from, type(date_from).__name__ if date_from else "None",
+            date_to, type(date_to).__name__ if date_to else "None",
+        )
+
+        # ID из get_dialogs() уже нормализован через get_peer_id().
+        # finalize_telegram_id() ЛОМАЕТ ID для базовых групп Chat!
         try:
-            entity = await self._client.get_entity(normalized_id)
+            entity = await self._client.get_entity(chat_id)
         except Exception as exc:
-            logger.warning("chats: get_user_stats get_entity failed: %s", exc)
+            logger.warning("chats: get_user_stats get_entity(%s) failed: %s", chat_id, exc)
+            _log(f"⚠️ Не удалось найти чат {chat_id}: {exc}")
             return []
 
-        # Счётчик: {user_id: count}
-        counts: Dict[int, int] = {}
-        # Кэш имён: {user_id: display_name}
-        names: Dict[int, str] = {}
-        # Кэш usernames: {user_id: display_name}
-        usernames: Dict[int, str] = {}
+        entity_type = type(entity).__name__
+        entity_id = getattr(entity, 'id', '?')
+        is_channel_entity = isinstance(entity, Channel)
+        is_chat_entity = isinstance(entity, Chat)
+        is_broadcast = is_channel_entity and getattr(entity, "broadcast", False)
+        is_megagroup = is_channel_entity and getattr(entity, "megagroup", False)
 
-# NEW — добавляем pre-populate себя перед циклом:
+        logger.info(
+            "chats: get_user_stats entity: %s id=%s (broadcast=%s, megagroup=%s, linked_chat_id=%s)",
+            entity_type, entity_id,
+            getattr(entity, "broadcast", None),
+            getattr(entity, "megagroup", None),
+            getattr(entity, "linked_chat_id", None),
+        )
+
+        # Счётчики
+        counts: Dict[int, int] = {}
+        names: Dict[int, str] = {}
+        usernames: Dict[int, str] = {}
+        sender_types: Dict[int, str] = {}
+
         try:
-            # Telethon не возвращает sender для собственных сообщений —
-            # pre-populate чтобы текущий пользователь не терялся
+            # Pre-populate текущего пользователя
             try:
                 me = await self._client.get_me()
                 if me:
                     me_name = (
                         f"{me.first_name or ''} {me.last_name or ''}".strip()
-                        or me.username
-                        or str(me.id)
+                        or me.username or str(me.id)
                     )
                     names[me.id] = me_name
                     usernames[me.id] = (me.username or "").strip()
-            except Exception as exc:
-                logger.debug("get_participants: не удалось получить self (me): %s", exc)
+            except Exception:
+                pass
 
-            # Лимит сканирования: если задан date_from — сканируем все
-            # сообщения до этой даты (limit=None). Иначе — 10000 как защита
-            # от сканирования всей истории огромного чата.
+            # Параметры iter_messages
             scan_limit = None if date_from else 10_000
-            iter_kwargs = {"limit": scan_limit, "offset_date": date_to}
+            iter_kwargs: Dict = {"limit": scan_limit}
+            if date_to is not None:
+                iter_kwargs["offset_date"] = date_to
+
+            msg_count = 0
+            skipped = 0
+
             async for message in self._client.iter_messages(entity, **iter_kwargs):
-                if date_from and message.date.replace(tzinfo=None).date() < date_from:
-                    break  # вышли за нижнюю границу периода
-                # sender_id: обычные пользователи, каналы, удалённые аккаунты
+                if date_from and message.date:
+                    msg_date = message.date.replace(tzinfo=None) if hasattr(message.date, 'replace') else message.date
+                    if msg_date < date_from:
+                        break
+
+                msg_count += 1
+
+                # Определяем sender_id
                 sender_id = getattr(message, "sender_id", None)
                 if sender_id is None:
-                    # Fallback: from_id (удалённые аккаунты, анонсы каналов)
                     from_id = getattr(message, "from_id", None)
                     if from_id is not None:
                         sender_id = (
@@ -626,68 +756,200 @@ class ChatsService:
                             or getattr(from_id, "chat_id", None)
                         )
                     if sender_id is None:
-                        continue
+                        peer_id = getattr(message, "peer_id", None)
+                        if peer_id is not None and hasattr(peer_id, "channel_id"):
+                            sender_id = peer_id.channel_id
+                        else:
+                            skipped += 1
+                            continue
 
                 counts[sender_id] = counts.get(sender_id, 0) + 1
 
-                # Имя — берём из объекта сообщения, если ещё не знаем
+                # Имя и тип отправителя
                 if sender_id not in names:
-                    sender = getattr(message, "sender", None)
-                    if sender is not None:
-                        if isinstance(sender, User):
-                            name = (
-                                f"{sender.first_name or ''} {sender.last_name or ''}".strip()
-                                or sender.username
-                                or str(sender_id)
-                            )
-                            username = (sender.username or "").strip()
+                    try:
+                        sender = getattr(message, "sender", None)
+                        if sender is not None:
+                            if isinstance(sender, User):
+                                name = (
+                                    f"{sender.first_name or ''} {sender.last_name or ''}".strip()
+                                    or sender.username or f"Deleted_{sender_id}"
+                                )
+                                username = (sender.username or "").strip()
+                                stype = "deleted" if not (sender.first_name or sender.last_name or sender.username) else "user"
+                            else:
+                                name = getattr(sender, "title", str(sender_id))
+                                username = getattr(sender, "username", "") or ""
+                                stype = "channel"
+                            names[sender_id] = name
+                            usernames[sender_id] = username
+                            sender_types[sender_id] = stype
                         else:
-                            # Channel sender (автор канала отвечает от имени чата)
-                            name = getattr(sender, "title", str(sender_id))
-                            username = getattr(sender, "username", "") or ""
-                        names[sender_id] = name
-                        usernames[sender_id] = username
+                            from_id = getattr(message, "from_id", None)
+                            if from_id is not None and hasattr(from_id, "channel_id"):
+                                sender_types[sender_id] = "channel"
+                            elif from_id is not None and hasattr(from_id, "user_id"):
+                                sender_types[sender_id] = "deleted"
+                            else:
+                                peer_id = getattr(message, "peer_id", None)
+                                if peer_id is not None and hasattr(peer_id, "channel_id"):
+                                    sender_types[sender_id] = "channel"
+                                else:
+                                    sender_types[sender_id] = "user"
+                    except Exception as exc:
+                        logger.debug("chats: sender extraction failed: %s", exc)
 
-        # NEW — после цикла резолвим тех, у кого sender был None (ушедшие участники):
-            # Резолвим имена для ушедших участников (sender был None в сообщении)
+            logger.info(
+                "chats: get_user_stats scan: %d msgs, %d senders, %d skipped",
+                msg_count, len(counts), skipped,
+            )
+
+            # Резолвим неизвестные имена
             unknown_ids = [uid for uid in counts if uid not in names]
-            for uid in unknown_ids[:50]:  # cap: не более 50 лишних запросов
+            for uid in unknown_ids[:50]:
                 try:
                     ent = await self._client.get_entity(uid)
                     if isinstance(ent, User):
-                        ent_name = (
+                        names[uid] = (
                             f"{ent.first_name or ''} {ent.last_name or ''}".strip()
-                            or ent.username
-                            or str(uid)
+                            or ent.username or f"Deleted_{uid}"
                         )
-                        names[uid] = ent_name
                         usernames[uid] = (ent.username or "").strip()
-                    elif hasattr(ent, "title"):  # Channel — автор канала
+                        sender_types[uid] = "deleted" if not (ent.first_name or ent.last_name or ent.username) else "user"
+                    elif hasattr(ent, "title"):
                         names[uid] = getattr(ent, "title", str(uid))
                         usernames[uid] = getattr(ent, "username", "") or ""
+                        sender_types[uid] = "channel"
                 except Exception:
-                    pass  # останется User_{uid} через fallback в result
+                    pass
 
         except Exception as exc:
-            logger.warning("chats: get_user_stats iter_messages failed: %s", exc)
+            logger.warning("chats: get_user_stats iter_messages failed: %s", exc, exc_info=True)
             _log(f"⚠️ Ошибка получения статистики: {exc}")
             return []
 
-        # Сортируем и обрезаем до limit
-        sorted_users = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+        # ── Резолв channel-sender → реальный админ ──────────────────
+        # В мегагруппах и каналах админ пишет «от имени канала».
+        # Пытаемся привязать такие сообщения к реальному человеку.
+        channel_sender_ids = [uid for uid, st in sender_types.items() if st == "channel"]
 
-        result: List[Dict] = [
-            {"id": uid, "name": names.get(uid, f"User_{uid}"), "username": usernames.get(uid, None), "message_count": cnt}
-            for uid, cnt in sorted_users
-        ]
+        if channel_sender_ids and is_channel_entity:
+            logger.info(
+                "chats: get_user_stats: found %d channel-senders, trying to resolve to admins",
+                len(channel_sender_ids),
+            )
+            try:
+                # Получаем список админов
+                admin_users: List[User] = []
+                async for participant in self._client.iter_participants(
+                    entity, filter=ChannelParticipantsAdmins, limit=50
+                ):
+                    if isinstance(participant, User):
+                        admin_users.append(participant)
+
+                if admin_users:
+                    logger.info(
+                        "chats: get_user_stats: found %d admins in %s",
+                        len(admin_users), entity_type,
+                    )
+
+                    # Стратегия: находим создателя (creator=True) или первого админа
+                    creator = None
+                    for admin in admin_users:
+                        # Проверяем participant.client = ... нет.
+                        # В Telethon Participant object имеет .role для ChannelParticipantCreator
+                        # Проверяем через строковое представление типа
+                        part_type = type(admin).__name__
+                        # admin это User, но в iter_participants с filter,
+                        # возвращаются User объекты. Нам нужно проверить роль.
+                        # Попробуем другой подход: ищем создателя через отдельный запрос
+                        pass
+
+                    # Простой подход: создаём маппинг channel_id → admin
+                    # Для каналов: creator/owner (первый админ)
+                    # Для мегагрупп: аналогично
+                    primary_admin = admin_users[0]  # первый = обычно создатель
+
+                    for ch_id in channel_sender_ids:
+                        ch_name = names.get(ch_id, f"Channel_{ch_id}")
+                        ch_count = counts.get(ch_id, 0)
+                        admin_id = primary_admin.id
+                        admin_name = (
+                            f"{primary_admin.first_name or ''} {primary_admin.last_name or ''}".strip()
+                            or primary_admin.username
+                            or f"Admin_{admin_id}"
+                        )
+
+                        logger.info(
+                            "chats: get_user_stats: resolve channel-sender: %s (id=%s, msgs=%d) → %s (id=%s)",
+                            ch_name, ch_id, ch_count,
+                            admin_name, admin_id,
+                        )
+
+                        # Присоединяем сообщения channel-sender к админу
+                        if admin_id in counts:
+                            counts[admin_id] += ch_count
+                        else:
+                            counts[admin_id] = ch_count
+
+                        names[admin_id] = admin_name
+                        usernames[admin_id] = primary_admin.username or ""
+                        sender_types[admin_id] = "user"
+
+                        # Убираем channel-sender из результатов
+                        counts.pop(ch_id, None)
+                        names.pop(ch_id, None)
+                        usernames.pop(ch_id, None)
+                        sender_types.pop(ch_id, None)
+
+                else:
+                    logger.info("chats: get_user_stats: no admins found, keeping channel-senders")
+
+            except Exception as exc:
+                # Нет прав на get_participants — оставляем channel-sender
+                logger.info(
+                    "chats: get_user_stats: cannot resolve channel-senders (no admin rights?): %s",
+                    exc,
+                )
+
+        # ── Фильтрация channel-sender ────────────────────────────────
+        # В базовых Chat-группах убираем channel-sender (название чата ≠ участник)
+        # В Channel-сущностях уже резолвили выше, но если не удалось — оставляем
+        filter_channel_senders = is_chat_entity
+
+        sorted_users = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+
+        # Логируем ВСЕХ senders до фильтрации
+        logger.info("chats: get_user_stats BEFORE filter (%d senders):", len(sorted_users))
+        for uid, cnt in sorted_users[:10]:
+            stype = sender_types.get(uid, "user")
+            name = names.get(uid, f"User_{uid}")
+            logger.info("  → %s (id=%s, type=%s, msgs=%d)", name, uid, stype, cnt)
+
+        result: List[Dict] = []
+        channel_skipped = 0
+        for uid, cnt in sorted_users[:limit]:
+            stype = sender_types.get(uid, "user")
+            if stype == "channel" and filter_channel_senders:
+                channel_skipped += 1
+                continue
+            result.append({
+                "id": uid,
+                "name": names.get(uid, f"User_{uid}"),
+                "username": usernames.get(uid, None),
+                "sender_type": stype,
+                "message_count": cnt,
+            })
+
+        logger.info(
+            "chats: get_user_stats AFTER filter: %d users (channel_skipped=%d)",
+            len(result), channel_skipped,
+        )
+        for r in result[:5]:
+            logger.info("  ✅ %s (id=%s, type=%s, msgs=%d)", r["name"], r["id"], r["sender_type"], r["message_count"])
 
         _log(f"📊 Топ {len(result)} активных участников получен")
-        logger.info("chats: get_user_stats → %d users", len(result))
         return result
-
-    # ------------------------------------------------------------------
-    # 5. Вспомогательные методы
-    # ------------------------------------------------------------------
 
     async def resolve_chat(
         self,

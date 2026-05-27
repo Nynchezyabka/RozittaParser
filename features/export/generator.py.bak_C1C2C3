@@ -338,7 +338,7 @@ class DocxGenerator:
                     topic_id         = topic_id,
                     user_id          = user_id,
                     include_comments = include_comments,
-                    include_channel_senders = False,
+                    include_channel_senders = user_id is not None,
                     date_from        = date_from,
                     date_to          = date_to,
                 )
@@ -557,7 +557,7 @@ class DocxGenerator:
             topic_id         = topic_id,
             user_id          = user_id,
             include_comments = False,
-            include_channel_senders = False,
+            include_channel_senders = user_id is not None,
             date_from        = date_from,
             date_to          = date_to,
         )
