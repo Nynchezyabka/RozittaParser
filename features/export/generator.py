@@ -1798,7 +1798,8 @@ class HtmlGenerator:
         )
         out_path.write_text(html, encoding="utf-8")
         return [str(out_path)]
-    def _format_message(row, stt_text: Optional[str], row_dict: dict) -> str:
+
+    def _format_message(self, row, stt_text: Optional[str], row_dict: dict) -> str:
         """Форматирует одно сообщение в HTML-блок по структуре макета."""
 
         msg_id   = row[_COL_MESSAGE_ID]
