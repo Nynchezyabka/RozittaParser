@@ -1111,7 +1111,7 @@ class ParserService:
     # 5. Вспомогательные методы
     # ------------------------------------------------------------------
 
-    def _should_download(message: Message, media_filter: List[str]) -> bool:
+    def _should_download(self, message: Message, media_filter: List[str]) -> bool:
         """
         Определяет, нужно ли скачивать медиа из сообщения.
 
