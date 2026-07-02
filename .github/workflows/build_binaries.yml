@@ -47,7 +47,6 @@ jobs:
             app_name: RozittaParser-Linux-x64
             artifact_path: dist/RozittaParser-Linux-x64.pkg
 
-          # Apple Silicon (arm64)
           - os: macos-latest
             artifact_name: RozittaParser-macOS-arm64.zip
             data_sep: ":"
@@ -56,7 +55,6 @@ jobs:
             app_name: RozittaParser-macOS-arm64
             artifact_path: dist/RozittaParser-macOS-arm64.zip
 
-          # Intel (x86_64)
           - os: macos-15-intel
             artifact_name: RozittaParser-macOS-Intel-x64.zip
             data_sep: ":"
@@ -64,8 +62,6 @@ jobs:
             pyinstaller_icon: "assets/rozitta_idle_mac.icns"
             app_name: RozittaParser-macOS-Intel-x64
             artifact_path: dist/RozittaParser-macOS-Intel-x64.zip
-
-    #runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -80,7 +76,6 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          # python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
 
@@ -109,12 +104,9 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         shell: bash
         run: |
-          # Finder чувствителен к подписи app bundle и вложенных dylib/frameworks.
-          # Делаем ad-hoc подпись после сборки и проверяем валидность.
           codesign --force --deep --sign - "dist/${{ matrix.app_name }}.app"
           codesign --verify --deep --strict --verbose=2 "dist/${{ matrix.app_name }}.app"
           spctl --assess --type execute --verbose=2 "dist/${{ matrix.app_name }}.app" || true
-          
           ditto -c -k --sequesterRsrc --keepParent "dist/${{ matrix.app_name }}.app" "dist/${{ matrix.app_name }}.zip"
 
       - name: Upload artifact
@@ -155,14 +147,46 @@ jobs:
           name: RozittaParser-macOS-Intel-x64.zip
           path: release-assets/macos-intel
 
+      - name: Prepare release version
+        id: relver
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.release_tag }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          if [[ "$VERSION" != v* ]]; then
+            VERSION="v${VERSION}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Релиз: ${VERSION}"
+
+      - name: Rename artifacts with version
+        shell: bash
+        env:
+          VERSION: ${{ steps.relver.outputs.version }}
+        run: |
+          set -e
+          cd release-assets
+          mv "windows/RozittaParser-Windows-x64.exe" \
+             "windows/RozittaParser-Windows-x64-${VERSION}.exe"
+          mv "linux/RozittaParser-Linux-x64.pkg" \
+             "linux/RozittaParser-Linux-x64-${VERSION}.pkg"
+          mv "macos-arm64/RozittaParser-macOS-arm64.zip" \
+             "macos-arm64/RozittaParser-macOS-arm64-${VERSION}.zip"
+          mv "macos-intel/RozittaParser-macOS-Intel-x64.zip" \
+             "macos-intel/RozittaParser-macOS-Intel-x64-${VERSION}.zip"
+          echo "=== Файлы для релиза ==="
+          ls -la windows/ linux/ macos-arm64/ macos-intel/
+
       - name: Upload assets to Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
-        #uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || github.event.inputs.release_tag }}
           files: |
-            release-assets/windows/RozittaParser-Windows-x64.exe
-            release-assets/linux/RozittaParser-Linux-x64.pkg
-            release-assets/macos-arm64/RozittaParser-macOS-arm64.zip
-            release-assets/macos-intel/RozittaParser-macOS-Intel-x64.zip
+            release-assets/windows/RozittaParser-Windows-x64-${{ steps.relver.outputs.version }}.exe
+            release-assets/linux/RozittaParser-Linux-x64-${{ steps.relver.outputs.version }}.pkg
+            release-assets/macos-arm64/RozittaParser-macOS-arm64-${{ steps.relver.outputs.version }}.zip
+            release-assets/macos-intel/RozittaParser-macOS-Intel-x64-${{ steps.relver.outputs.version }}.zip
           fail_on_unmatched_files: true
