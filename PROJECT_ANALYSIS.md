@@ -44,7 +44,7 @@ rozitta_parser/
 │
 ├── core/
 │   ├── utils.py                ✅ finalize_telegram_id, sanitize_filename, is_image_path
-│   ├── database.py             ✅ WAL, batch I/O, transcriptions, merge_group
+│   ├── database.py             ✅ WAL, batch I/O, transcriptions, merge_group, get_thread_pairs, sender_type (v2), _telegram_user_id_variants
 │   ├── logger.py               ✅ разделитель сессий
 │   ├── exceptions.py           ✅
 │   ├── merger.py               ✅ MergerService O(n)
@@ -55,13 +55,13 @@ rozitta_parser/
 ├── features/
 │   ├── auth/api.py             ✅ build_client (api_id баг исправлен)
 │   ├── auth/ui.py              ✅ cancel btn; MTProto вручную/ссылка
-│   ├── chats/api.py            ✅ MTProto-ускорение
+│   ├── chats/api.py            ✅ MTProto-ускорение; канал как участник; get_user_stats с merge channel-sender entries
 │   ├── chats/ui.py             ✅ selected_topic_id, selected_topic_name в chat dict
-│   ├── parser/api.py           ✅ batch I/O, форумы, topic_id
+│   ├── parser/api.py           ✅ batch I/O, форумы, topic_id; instance methods; from_id fallback; B6 fix: _should_download signature
 │   ├── parser/ui.py            ✅ ParseParams с username, user_ids, thread_mode
-│   ├── export/generator.py     ✅ все генераторы; topic_name/username в именах файлов
+│   ├── export/generator.py     ✅ все 4 генератора; _dedup_thread_messages; tree render; B6 fix: HtmlGenerator._format_message signature
 │   ├── export/xml_magic.py     ✅
-│   └── export/ui.py            ✅ ExportParams с topic_name, username
+│   └── export/ui.py            ✅ ExportParams с topic_name, username, user_filter_mode
 │
 ├── ui/
 │   └── main_window.py          ✅ рабочий SettingsPanel; _run_export с username
@@ -105,7 +105,7 @@ QMainWindow
 
 ---
 
-## 🗺️ 4. ROADMAP (2026-05-16)
+## 🗺️ 4. ROADMAP (2026-07-03)
 
 ---
 
@@ -120,6 +120,13 @@ QMainWindow
 | CFG-1 | Proxy Support (SOCKS5 + MTProto) | 2026-03 |
 | AUTH-UX | Улучшение UX авторизации | 2026-04-03 |
 | NAMES-1 | topic_name + username в именах файлов экспорта | 2026-05-16 |
+| FEAT-1 | Thread mode: дедупликация + дерево ответов во всех 4 форматах | 2026-05-25 |
+| BUGFIX-1 | Duplicate user_filter_mode + instance methods + from_id fallback | 2026-05-25 |
+| BUGFIX-2 | C1/C2/C3 + BUG-18 (OpenTele2) | 2026-05-27 |
+| I6+I3+I9 | Variant A-2 завершён: канал как участник, по постам для каналов, убран admin resolution | 2026-06 |
+| B1/B3 | Channel-sender merge в get_user_stats — дубликат канала в списке участников убран | 2026-06 |
+| BUGFIX-3 | C2-regression + B6: сигнатуры _should_download и _format_message | 2026-07-03 |
+| RELEASE | v1.7.3 — bugfix-релиз (парсинг, видео, HTML) | 2026-07-03 |
 
 ---
 
@@ -128,9 +135,30 @@ QMainWindow
 | # | Задача | Файл | Статус |
 |---|--------|------|--------|
 | **BF-2** | **Посты + комментарии** — подробный Issue ниже | `features/parser/api.py` | 🔴 В работе |
-| **BUG-18** | **OpenTele**: при импорте всегда предлагается установить библиотеку | `features/auth/ui.py`, `api.py` | 🔴 |
 | **BUG-19** | **DOCX**: нет превью видео (thumbnail или placeholder) | `features/export/generator.py` | 🟡 |
 | **DB-LOCK-2** | «database is locked» периодически при параллельной записи | `core/database.py` | 🟡 |
+| **UNKNOWN-1** | **Channel-author "Unknown"** — автор канала отображается как Unknown в конкретных группах | `features/parser/api.py` | 🟡 Отложено (требует per-group анализ) |
+
+---
+
+### 🟡 ФАЗА EXPORT-FIX — Исправления экспорта
+
+| # | Задача | Файл | Приоритет | Описание |
+|---|--------|------|-----------|----------|
+| **I1** | Пустые сообщения в экспорте канала | `features/export/generator.py` | 🟡 средний | Из 3 постов канала 2 пустых, 1 корректный. Нужна диагностика: текст теряется при парсинге или рендере |
+| **I2** | Порядок grouped_media | `features/parser/api.py`, `features/export/generator.py` | 🟡 средний | Длинные сообщения: часть 2 идёт перед частью 1 (переставлены merge_part_index) |
+| **I7** | Переименовать кнопку «Перекачать медиа» | `features/parser/ui.py`, `ui/main_window.py` | 🟡 средний | Непонятное название → понятное + tooltip/подсказка |
+| **I8** | media=0 при обычном парсинге | `features/parser/api.py` | 🟡 средний | Медиа не скачивается при обычном парсинге, только через отдельную кнопку |
+| **I10** | Дубли ExportWorker | `ui/main_window.py` | 🟡 низкий | Предупреждения о дублировании воркеров в логе |
+
+---
+
+### 🟡 ФАЗА EXPORT-FEAT — Новые режимы экспорта
+
+| # | Задача | Файл | Приоритет | Описание |
+|---|--------|------|-----------|----------|
+| **I5** | Режимы comments + user + split | `features/export/generator.py` | 🟢 низкий | Новый режим: комментарии + фильтр по пользователю + разделение |
+| **I4** | Единая терминология | все модули | 🟢 низкий | Унифицировать термины: чат/группа/канал, sender/user/author |
 
 ---
 
@@ -186,7 +214,7 @@ QMainWindow
 | **RD-7** | Модальное подтверждение | Диалог «Подтвердите запуск» с перечнем параметров перед стартом парсинга | 🟡 |
 | **RD-8** | Оценка экспорта | Карточка с предварительным подсчётом сообщений и размера по данным из БД. Если данных в БД нет — карточку скрыть | 🟡 |
 | **RD-9** | Компоновка настроек | Переработать порядок и расположение элементов: компактнее, с прокруткой как в прототипе, логичный порядок секций. Убрать ползунок глубины скачивания (занимает место, дублирует календарь) | 🟡 |
-| **RD-10** | Прокси → дополнительные настройки | Убрать ProxySection с главного экрана авторизации, перенести в скрытый раздел «Дополнительные настройки» | 🟡 |
+| **RD-10** | Прокси → дополнительные настройки | Убрать ProxySection с главного экрана авторизации, перенести в скрытый раздел «Дополнительные Настройки» | 🟡 |
 
 ---
 
@@ -194,14 +222,15 @@ QMainWindow
 
 | # | Задача | Файл | Статус |
 |---|--------|------|--------|
-| **FEAT-1** | **Thread mode** — скачивать ветки с выбранным участником (его сообщения + те, на которые он отвечает) | `features/parser/api.py`, `ui` | 🟡 |
 | **FEAT-2** | **Роль участника** — добавить обозначение admin/member в экспорт участников | `features/export/participants.py` | 🟡 |
 | **FEAT-3** | **STT постобработка** — улучшение качества транскрипции после Whisper (локальная эвристика или внешний API) | `core/stt/` | 🟡 |
 | **FEAT-4** | **STT для видео** — добавить `"video"` в `STT_FILE_TYPES`; **постобработка текста** (капитализация, знаки препинания); транскрипции сохранять частями (по мере готовности) | `core/stt/worker.py`, `core/stt/whisper_manager.py` | 🟡 |
+| **FEAT-5** | **VLM (Florence-2) — распознавание изображений** — локальная модель, описание картинок в DOCX/MD для контекста. Сценарий: ландшафтный дизайнер, архив переписки с клиентами, поиск «показывала ли я ей проект с террасой?». См. подробное описание ниже | `core/vlm/`, `features/export/generator.py` | 🟡 Запланировано |
+| **FEAT-6** | **Telegram-бот — удалённое управление** — запуск архивирования и получение результата через Telegram-бот. Мини-приложение с платными функциями: приоритетная очередь, расширенные лимиты, корпоративные функции. См. подробное описание ниже | `bot/`, новый модуль | 🟡 Запланировано |
 
 ---
 
-### 🟡 ФАЗА P2 — Performance & Filters
+### 🟡 ФАЗа P2 — Performance & Filters
 
 | # | Задача | Файл | Статус |
 |---|--------|------|--------|
@@ -254,14 +283,121 @@ QMainWindow
 
 ---
 
-### 🟡 FEAT-1: Thread mode
+### 🟡 FEAT-5: VLM (Florence-2) — распознавание изображений
+
+**Проблема:** В переписках, особенно профессиональных (дизайнеры, архитекторы, ремонт), много изображений без текстового описания. При экспорте в DOCX/MD картинки есть, но контекст потерян. AI-инструменты (NotebookLM) не видят содержимое картинок.
+
+**Сценарий (реальный):** Ландшафтный дизайнер ведёт переписку с клиентами в Telegram. За 2 года — тысячи фото участков, эскизов, готовых проектов. Нужно найти: «показывала ли я клиенту проект с террасой и какой реакция была?». Сейчас это невозможно — поиск по тексту не найдёт картинки.
+
+**Решение:** Локальная VLM модель (Florence-2 от Microsoft) генерирует краткое описание каждого изображения и сохраняет его:
+- В БД: колонка `image_description` в таблице `media` или отдельная таблица
+- В DOCX/MD: под/над картинкой — курсивное описание «*[Описание: терраса с деревянным настилом, видом на сад, солнечный день]*»
+- В JSON: поле `image_description` для каждого сообщения с медиа
+
+**Архитектура:**
+```
+parser: скачивает медиа (существующий поток)
+    ↓
+vlm_worker: для каждого изображения → Florence-2 → описание
+    ↓
+database: image_description в таблицу transcriptions (или новую vl_descriptions)
+    ↓
+export: подставляет описание в DOCX/MD/JSON рядом с картинкой
+```
+
+**Ключевые решения:**
+- Модель: Florence-2-base (232M параметров) или Florence-2-large (770M)
+- Локально, без облака — конфиденциальность переписки сохранена
+- Опционально — пользователь сам включает в настройках
+- Промпт: «Briefly describe this image in Russian, 1-2 sentences» (краткость важнее детальности)
+- Кэш: повторные экспорты используют уже сгенерированные описания
+- Условие запуска: только для новых изображений (incremental)
+
+**Метки:** `module:vlm`, `module:export`, `module:database`
+**Файлы:** новый `core/vlm/`, `features/export/generator.py`, `core/database.py`
+
+---
+
+### 🟡 FEAT-6: Telegram-бот — удалённое управление
+
+**Проблема:** Сейчас для архивирования нужен компьютер с запущенным Rozitta Parser. Хочется:
+- Запустить архивирование удалённо (с телефона, в дороге)
+- Получить результат сразу в Telegram
+- Не держать компьютер включённым с открытым приложением
+
+**Решение (комбинированное — вариант 1+2):** Telegram-бот, который работает как обёртка над Rozitta Parser на сервере/компьютере. Пользователь пишет боту: «заархивируй чат X за последний месяц в DOCX» → бот запускает архивирование → присылает готовый файл.
+
+**Архитектура:**
+```
+Telegram Bot (python-telegram-bot)
+    ↓ команды: /archive, /list_chats, /export, /status
+RozittaParser как библиотека (не GUI)
+    ↓ ParserService.collect_data() + ExportWorker
+Готовый файл
+    ↓
+Bot.send_document(file)
+```
+
+**Бизнес-модель (мини-приложение с платными функциями):**
+
+| Уровень | Что входит | Цена |
+|---------|-----------|------|
+| **Free** | 1 архивация в день, до 100 сообщений, базовые форматы (MD/JSON) | 0 ₽ |
+| **Pro** | Безлимит архиваций, до 10 000 сообщений, все форматы, STT, приоритетная очередь | 199 ₽/мес |
+| **Business** | Безлимит всего, корпоративные чаты, командный доступ, API | 999 ₽/мес |
+
+**Платные функции реализуются через:**
+- Telegram Stars (встроенная платежная система Telegram)
+- Или CloudTips/Boosty (уже есть в проекте) для российских пользователей
+
+**Команды бота:**
+- `/start` — приветствие + список доступных чатов
+- `/list_chats` — показать чаты пользователя (кэшированный список)
+- `/archive <chat_name> [period] [format]` — запустить архивирование
+- `/status` — статус текущей задачи
+- `/cancel` — отменить
+- `/help` — справка
+
+**Безопасность:**
+- Бот привязан к Telegram-аккаунту пользователя (через /start с уникальным токеном)
+- Один бот — один пользователь (не публичный сервис)
+- Сессия Telegram хранится на сервере в зашифрованном виде
+- Файлы удаляются с сервера через 24 часа после отправки
+
+**Метки:** `module:bot`, `module:parser`, `module:export`
+**Файлы:** новый `bot/`, переиспользование `features/parser/api.py`, `features/export/generator.py`
+
+---
+
+### ✅ FEAT-1: Thread mode (ЗАВЕРШЕНО)
 
 **Описание:** при выборе участника — два режима:
-- «Только сообщения» (реализовано) — только сообщения выбранного участника
-- «Все ветки» (нужно сделать) — сообщения участника + те сообщения других людей, на которые он отвечал (контекст переписки)
+- «Только сообщения» (реализовано ранее) — только сообщения выбранного участника
+- «Все ветки» (✅ РЕАЛИЗОВАНО 2026-05-25) — сообщения участника + те сообщения других людей, на которые он отвечал (контекст переписки)
 
-**Метки:** `module:parser`, `module:ui`
-**Файлы:** `features/parser/api.py`, `ui/main_window.py`
+**Реализованная архитектура:**
+
+1. **Парсинг:** `ParserService.collect_data()` с `user_filter_mode="threads"` собирает сообщения и формирует пары `(context→reply)` через `get_thread_pairs()`
+2. **Дедупликация:** `_dedup_thread_messages(pairs)` — общая утилита в `generator.py`, которая:
+   - Собирает уникальные сообщения из всех пар (по `message_id`)
+   - Вычисляет `depth` (глубину в дереве ответов: root=0, reply=1, reply-to-reply=2 и т.д.)
+   - Определяет `reply_to_author` — автор сообщения, на которое ответили
+   - Возвращает `[(row, depth, reply_author), ...]` без дубликатов
+3. **Рендер по форматам:**
+   - **HTML:** CSS-дерево с классами `depth-0`..`depth-5`, `margin-left` нарастает с глубиной, маркер «↳ в ответ на: [автор]»
+   - **DOCX:** линейный рендер, отступ 24pt × depth + маркер «↳» + «↩ в ответ на: [автор]», разделитель только между root-сообщениями
+   - **Markdown:** линейный рендер, отступ 4 пробела × depth + маркер «↳» + «*(в ответ на: автор)*»
+   - **JSON:** плоский список с полями `depth` (int) + `reply_to_author` (str), `type`: `thread_root` / `thread_reply`
+
+**Удалённые устаревшие методы:**
+- `DocxGenerator._add_context_block_to_doc` — заменён на dedup + linear render
+- `MarkdownGenerator._format_thread_pair` — заменён на dedup + linear render
+
+**Известные ограничения:**
+- Channel-author "Unknown" — автор канала может отображаться как Unknown в экспорте. Требует per-group исследования (отложено, см. UNKNOWN-1). Будет решено в I6 (канал как участник).
+
+**Метки:** `module:parser`, `module:export`, `module:ui`
+**Файлы:** `features/parser/api.py`, `features/export/generator.py`, `ui/main_window.py`, `features/export/ui.py`, `core/database.py`
 
 ---
 
@@ -278,13 +414,58 @@ CR-4 — STT (`WhisperManager.instance()` не был `@classmethod`)
 CR-5 — `ValueError: API ID cannot be empty`
 CR-6 — `ExportWorker` не запускался
 
+### Баги сессии 2026-05-25 (исправлены)
+
+| # | Описание | Файл | Исправление |
+|---|----------|------|-------------|
+| BUG-20 | `ParserService._get_sender_name() missing 1 required positional argument` | `features/parser/api.py` | `_get_sender_name` и `_extract_row_sync` переведены в instance methods |
+| BUG-21 | `@staticmethod` упорно оставался на `_get_sender_name` | `features/parser/api.py` | Программная замена строк в патче v9c |
+| BUG-22 | Duplicate `user_filter_mode` аргумент в `generator.py` | `features/export/generator.py`, `features/export/ui.py` | Патч v10: программное удаление дубликатов |
+| BUG-23 | Duplicate threads dispatch в `DocxGenerator.generate()` | `features/export/generator.py` | Убран дублирующий вызов генерации тредов |
+| BUG-24 | Thread pair duplication — одно сообщение рендерилось несколько раз | `features/export/generator.py` | `_dedup_thread_messages()` — общая утилита дедупликации |
+
+### Баги сессии 2026-05-27 (исправлены)
+
+| # | Описание | Файл | Исправление |
+|---|----------|------|-------------|
+| **C1** | `name '_iter_msg_count' is not defined` — парсинг падал, работала только кнопка «перекачать медиа» | `features/parser/api.py` | `_iter_one_topic` теперь возвращает кол-во прочитанных сообщений; `_run_topics` использует `iter_read` вместо несуществующей переменной |
+| **C2** | `ParserService._should_download() takes 2 positional arguments but 3 were given` — скачивание медиа падало | `features/parser/api.py` | Добавлен пропущенный `self` в сигнатуру `_should_download(self, ...)` |
+| **C3** | Экспорт группы по пользователю (Дмитрий) возвращал все 32 сообщения вместо 13 | `features/export/generator.py` | `include_channel_senders = False` — канал не подтягивается автоматически при фильтре по пользователю (Variant A-2) |
+
+**Причина C1/C2:** Предыдущие сессии правили `api.py` несколько раз, и каждый патч вносил ошибку в уже работавший код. `_iter_msg_count` появился как артефакт переименования, `self` в `_should_download` потерялся при копировании. Это следствие недостаточной проверки целостности после патчей.
+
+### Баги сессии 2026-06 (Variant A-2 + B1/B3, исправлены)
+
+| # | Описание | Файл | Исправление |
+|---|----------|------|-------------|
+| **I6** | Канал как участник — сообщения Натальи в группе = 0 (sender_id=группы) | `features/chats/api.py`, `features/parser/api.py`, `features/export/generator.py` | Включение канала в participant list как равноправного отправителя (Variant A-2) |
+| **I3** | «По постам» для групп — режим не имеет смысла для megagroups | `features/export/ui.py`, `ui/main_window.py` | Кнопка «По постам» неактивна для групп, только для broadcast-каналов |
+| **I9** | Admin resolution в chats/api.py — логика резолва channel→admin не нужна | `features/chats/api.py` | Удалена логика резолва; канал = равноправный отправитель |
+| **B1/B3** | Channel-sender в `get_user_stats` возвращал ДВЕ записи канала: bare ID + marked ID — экспорт от имени канала падал или давал пустой результат | `features/chats/api.py` | Дубликат channel-sender entries слиты в одну запись с marked-negative ID, соответствующим формату в БД |
+
+**Причина B1/B3:** `linked_chat_id=None` на megagroup entity из Telethon — невозможно обнаружить ID связанного broadcast-канала. Фикс через merge duplicate entries в stats вместо нормализации ID.
+
+### Баги сессии 2026-07-03 (C2-regression + B6, исправлены)
+
+| # | Описание | Файл | Исправление |
+|---|----------|------|-------------|
+| **C2-reg** | `ParserService._should_download() takes 2 positional arguments but 3 were given` — регрессия C2, снова пропал `self` | `features/parser/api.py` | Восстановлена сигнатура `_should_download(self, message, media_filter)` |
+| **B6** | `HtmlGenerator._format_message() takes 3 positional arguments but 4 were given` — HTML-экспорт падал на сообщениях от имени канала | `features/export/generator.py` | Восстановлена сигнатура `_format_message(self, ...)` |
+
+**Причина:** Регрессии сигнатур методов. Между сессиями патчи теряли `self` при копировании/переименовании. Баги прошли незамеченными больше месяца, потому что:
+1. Тестирование покрывало сценарии из чейнджлога v1.7.2 (вход через Telegram Desktop, фильтр по участнику) — на них всё работало
+2. Сценарии видео-скачивания и HTML-экспорта не входили в регулярный smoke-тест
+3. Жалоб от пользователей не было (видимо, не было видео в тестовых чатах, HTML не использовался)
+
+**Урок:** Введён простой smoke-тест (правило #18 в CLAUDE.md): парсинг тестового чата → проверка медиа → проверка всех 4 форматов экспорта.
+
 ### Открытые баги
 
 | # | Описание | Файл | Приоритет |
 |---|----------|------|-----------|
-| **BUG-18** | OpenTele: всегда предлагается установить библиотеку | `features/auth/ui.py` | 🔴 |
 | **BUG-19** | DOCX: нет превью видео | `features/export/generator.py` | 🟡 |
 | **DB-LOCK-2** | «database is locked» при параллельной записи | `core/database.py` | 🟡 |
+| **UNKNOWN-1** | Channel-author "Unknown" в экспорте (конкретные группы) | `features/parser/api.py` | 🟡 → будет решено в I6 |
 
 ---
 
@@ -293,10 +474,29 @@ CR-6 — `ExportWorker` не запускался
 ### ID нормализация
 `finalize_telegram_id(raw_id, entity_type)` из `core/utils.py`
 
+### Sender ID нормализация (новое, B1/B3)
+`_telegram_user_id_variants(uid)` в `core/database.py` — возвращает `[uid, -(1_000_000_000_000 + uid)]` для положительных ID (bare↔marked ID конверсия для одного и того же entity). Используется в SQL-фильтрах `get_messages()` и `get_thread_pairs()`, чтобы находить сообщения канала как по bare, так и по marked-negative ID.
+
+### Channel-sender merge в stats (B1/B3)
+В `get_user_stats()` дубликат channel-sender entries (bare ID + marked ID одного канала) сливается в одну запись с marked-negative ID, соответствующим формату в БД. Это нужно, потому что `linked_chat_id=None` на megagroup entity — нельзя обнаружить связанный broadcast-канал для прямой нормализации.
+
 ### TelegramClient изоляция
 - `build_client(cfg)` — единственная точка создания клиента
 - Каждый воркер: `build_client()` → `connect()` → работа → `disconnect()` в `finally`
 - `MainWindow` НЕ хранит постоянный `self._client`
+
+### Variant A-2: Канал как участник
+- Канал/чат включается в participant list как равноправный отправитель
+- **Нет** резолва channel-sender → admin (ненадёжно, не соответствует отображению в Telegram)
+- Сообщения от канала отображаются под именем канала, как в самом Telegram
+- `sender_type` поле (`"user"` / `"channel"` / `"deleted"`) в DB schema v2 позволяет различать типы отправителей
+- При фильтре по пользователю: `include_channel_senders = False` — канал не подтягивается автоматически
+- **Следствие:** при выборе конкретного человека в группе его сообщения от имени канала (sender_id=group_id) не попадут в результат — это ожидаемо. Для доступа к таким сообщениям нужно выбрать канал как участника (I6)
+
+### «По постам» — только для каналов
+- Режим `split_mode="post"` имеет смысл только для broadcast-каналов
+- Для групп (megagroups) кнопка «По постам» должна быть неактивна/серой
+- Группы не имеют постов в том же смысле, что каналы
 
 ### Имена файлов экспорта
 Шаблон: `{chat_title}[_{topic_name}][_{username}]_{kind}_{period_label}.{ext}`
@@ -311,11 +511,21 @@ CR-6 — `ExportWorker` не запускался
 
 `username` берётся из `UserTag.username` → `ParseParams.username` → `ExportParams.username` → `generate(username=...)` → `_build_path()`.
 
+### Имена файлов релиза (новое)
+В `.github/workflows/build_binaries.yml` добавлены шаги, переименовывающие артефакты перед заливкой в GitHub Release: к имени файла добавляется версия тега (например `-v1.7.3`). Раньше файлы назывались `RozittaParser-Windows-x64.exe`, теперь — `RozittaParser-Windows-x64-v1.7.3.exe`.
+
+### Thread dedup + tree render
+Все 4 генератора используют общую утилиту `_dedup_thread_messages(pairs)` для дедупликации и вычисления глубины ответов. Не реализовать собственную логику дедупликации в отдельном генераторе.
+
+### from_id fallback
+Для удалённых аккаунтов и авторов-каналов, где `sender_id` is None, `_get_sender_name` использует `from_id` как fallback-идентификатор. Это instance-метод (не `@staticmethod`), так как нужен доступ к `self._chat_title`.
+
 ### SQLite
 - thread-local соединения через `DBManager`
 - WAL + `busy_timeout=30000` + `synchronous=NORMAL`
 - `insert_messages_batch()` — 1 commit / 200 сообщений
 - STT: сохранение после каждого файла (не в конце батча) — защита от потери данных при падении
+- Schema v2: `sender_type` column (`"user"` / `"channel"` / `"deleted"`), `PRAGMA user_version` для миграций
 
 ### Qt-изоляция
 - `features/*/api.py` + `core/*.py` (кроме worker.py) — никакого Qt
@@ -357,26 +567,27 @@ CR-6 — `ExportWorker` не запускался
 
 ## 🚀 9. ПЛАН РЕЛИЗА
 
-### Желательно перед публичным релизом
+### v1.7.3 (текущий, 2026-07-03) — bugfix-релиз
 
-| # | Задача | Файл |
-|---|--------|------|
-| R-1 | Исправить OpenTele detection (BUG-18) | `features/auth/ui.py` |
-| R-2 | DOCX видео placeholder (BUG-19) | `features/export/generator.py` |
-| R-3 | Smoke test: авторизация → чаты → парсинг → все форматы | — |
-| R-4 | Проверить .spec и onefile-сборку | `rozitta_parser.spec` |
+Исправлены регрессии v1.7.2:
+- C2-regression: `_should_download` signature — скачивание видео
+- B6: `HtmlGenerator._format_message` signature — HTML-экспорт
+- Workflow: версия в имени файла релиза
+- Документация обновлена
 
 ### После релиза (по приоритету)
 1. BF-2 — посты + комментарии
-2. UI-REDESIGN (RD-1..9)
-3. FEAT-1 — thread mode
-4. REF-1..3 — рефакторинг (личные задачи)
-5. FEAT-3 — STT постобработка
-6. P3 — тесты, CI
+2. I1 + I2 — исправления экспорта (пустые сообщения, порядок grouped_media)
+3. UI-REDESIGN (RD-1..9)
+4. FEAT-5 — VLM (Florence-2) распознавание изображений
+5. FEAT-6 — Telegram-бот удалённого управления
+6. REF-1..3 — рефакторинг (личные задачи)
+7. FEAT-3 — STT постобработка
+8. P3 — тесты, CI
 
 ---
 
 **Анализ создан:** 2025-02-12
-**Последнее обновление:** 2026-05-18
-**Версия:** 5.0
+**Последнее обновление:** 2026-07-03
+**Версия:** 6.1
 **Автор:** Claude (Anthropic)
