@@ -245,6 +245,8 @@ class DocxGenerator:
         self._username:     Optional[str] = None
         # Транскрипции: {message_id: text} — загружаются в generate()
         self._transcriptions: Dict[int, str] = {}
+        # Описания изображений (VLM, FEAT-5): {message_id: text}
+        self._img_descriptions: Dict[int, str] = {}
 
 
     # ------------------------------------------------------------------
@@ -300,6 +302,14 @@ class DocxGenerator:
                 self._log(f"🎙 STT: загружено {len(self._transcriptions)} транскрипций")
         except Exception:
             self._transcriptions = {}
+
+        # Описания изображений (VLM, FEAT-5)
+        try:
+            self._img_descriptions = self._db.get_image_descriptions_for_chat(chat_id)
+            if self._img_descriptions:
+                self._log(f"🖼 VLM: загружено {len(self._img_descriptions)} описаний изображений")
+        except Exception:
+            self._img_descriptions = {}
 
         # ── Thread-режим: ранний выход ───────────────────────────────
         if user_filter_mode == "threads" and user_id is not None:
@@ -703,6 +713,15 @@ class DocxGenerator:
                         img_run.add_picture(abs_path, width=Inches(_IMAGE_WIDTH_INCHES))
                         if is_comment:
                             img_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                        img_desc = self._img_descriptions.get(part_id)
+                        if img_desc:
+                            desc_p   = doc.add_paragraph()
+                            desc_run = desc_p.add_run(f"🖼 Описание: {img_desc}")
+                            desc_run.italic          = True
+                            desc_run.font.size       = Pt(10)
+                            desc_run.font.color.rgb  = RGBColor(80, 80, 80)
+                            if is_comment:
+                                desc_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
                     except Exception as exc:
                         logger.warning(
                             "export: cannot insert image %s: %s",
@@ -840,6 +859,15 @@ class DocxGenerator:
                     img_run.add_picture(abs_path, width=Inches(_IMAGE_WIDTH_INCHES))
                     if is_comment:
                         img_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+                    img_desc = self._img_descriptions.get(msg_id)
+                    if img_desc:
+                        desc_p   = doc.add_paragraph()
+                        desc_run = desc_p.add_run(f"🖼 Описание: {img_desc}")
+                        desc_run.italic          = True
+                        desc_run.font.size       = Pt(10)
+                        desc_run.font.color.rgb  = RGBColor(80, 80, 80)
+                        if is_comment:
+                            desc_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
                 except Exception as exc:
                     logger.warning(
                         "export: cannot insert image %s: %s",
@@ -1030,6 +1058,7 @@ class JsonGenerator:
         log(f"📊 Строк получено: {len(rows)}")
 
         stt_map:   dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        img_map:   dict[int, str] = self._db.get_image_descriptions_for_chat(chat_id)
         safe_title = sanitize_filename(chat_title)
         topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
             else (_topic_suffix(topic_id) if topic_id else "")
@@ -1041,7 +1070,7 @@ class JsonGenerator:
             records: List[dict] = []
             for row in rows:
                 msg_id = row[_COL_MESSAGE_ID]
-                records.append(self._make_record(row, stt_map.get(msg_id)))
+                records.append(self._make_record(row, stt_map.get(msg_id), img_map.get(msg_id)))
             out_path = os.path.join(self._output_dir, f"{base_name}.json")
             self._write_json(out_path, records, log)
             return [out_path]
@@ -1054,7 +1083,7 @@ class JsonGenerator:
 
         for row in rows:
             msg_id  = row[_COL_MESSAGE_ID]
-            record  = self._make_record(row, stt_map.get(msg_id))
+            record  = self._make_record(row, stt_map.get(msg_id), img_map.get(msg_id))
             chunk.append(record)
             words += _word_count(record.get("text")) + _word_count(record.get("stt_text"))
 
@@ -1107,8 +1136,13 @@ class JsonGenerator:
         from core.utils import sanitize_filename
 
         stt_map: dict[int, str] = {}
+        img_map: dict[int, str] = {}
         try:
             stt_map = self._db.get_transcriptions_for_chat(chat_id)
+        except Exception:
+            pass
+        try:
+            img_map = self._db.get_image_descriptions_for_chat(chat_id)
         except Exception:
             pass
 
@@ -1126,7 +1160,7 @@ class JsonGenerator:
         records = []
         for row, depth, reply_author in deduped:
             msg_id = row[_COL_MESSAGE_ID]
-            rec = self._make_record(row, stt_map.get(msg_id))
+            rec = self._make_record(row, stt_map.get(msg_id), img_map.get(msg_id))
             rec["depth"] = depth
             rec["reply_to_author"] = reply_author
             rec["type"] = "thread_reply" if depth > 0 else "thread_root"
@@ -1143,7 +1177,7 @@ class JsonGenerator:
             json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return [str(out_path)]
-    def _make_record(self, row, stt_text: Optional[str]) -> dict:
+    def _make_record(self, row, stt_text: Optional[str], img_text: Optional[str] = None) -> dict:
         return {
             "message_id": row[_COL_MESSAGE_ID],
             "date":       row[_COL_DATE] or None,
@@ -1152,6 +1186,7 @@ class JsonGenerator:
             "text":       row[_COL_TEXT] or None,
             "media_path": row[_COL_MEDIA_PATH] or None,
             "stt_text":   stt_text,
+            "image_description": img_text,
         }
 
     def _write_json(self, path: str, records: List[dict], log: _LogCallback) -> None:
@@ -1253,6 +1288,7 @@ class MarkdownGenerator:
         log(f"📊 Строк получено: {len(rows)}")
 
         stt_map:    dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        img_map:    dict[int, str] = self._db.get_image_descriptions_for_chat(chat_id)
         safe_title = sanitize_filename(chat_title)
         topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
             else (_topic_suffix(topic_id) if topic_id else "")
@@ -1265,7 +1301,7 @@ class MarkdownGenerator:
         if not ai_split:
             lines: List[str] = [header]
             for row in rows:
-                lines.append(self._format_message(row, stt_map.get(row[_COL_MESSAGE_ID])))
+                lines.append(self._format_message(row, stt_map.get(row[_COL_MESSAGE_ID]), img_map.get(row[_COL_MESSAGE_ID])))
             out_path = os.path.join(self._output_dir, f"{base_name}.md")
             self._write_md(out_path, lines, log)
             return [out_path]
@@ -1279,7 +1315,8 @@ class MarkdownGenerator:
         for row in rows:
             msg_id  = row[_COL_MESSAGE_ID]
             stt     = stt_map.get(msg_id)
-            block   = self._format_message(row, stt)
+            img     = img_map.get(msg_id)
+            block   = self._format_message(row, stt, img)
             chunk.append(block)
             words += (
                 _word_count(row[_COL_TEXT])
@@ -1326,8 +1363,13 @@ class MarkdownGenerator:
         from core.utils import sanitize_filename
 
         stt_map: dict[int, str] = {}
+        img_map: dict[int, str] = {}
         try:
             stt_map = self._db.get_transcriptions_for_chat(chat_id)
+        except Exception:
+            pass
+        try:
+            img_map = self._db.get_image_descriptions_for_chat(chat_id)
         except Exception:
             pass
 
@@ -1377,6 +1419,9 @@ class MarkdownGenerator:
             stt = stt_map.get(msg_id)
             if stt:
                 lines.append(f"{indent}*(STT: {stt.strip()})*")
+            img = img_map.get(msg_id)
+            if img:
+                lines.append(f"{indent}*[Изображение: {img.strip()}]*")
 
             if depth == 0:
                 lines.append("\n---\n")
@@ -1384,7 +1429,7 @@ class MarkdownGenerator:
         out_path.write_text("\n".join(lines), encoding="utf-8")
         return [str(out_path)]
         
-    def _format_message(self, row, stt_text: Optional[str]) -> str:
+    def _format_message(self, row, stt_text: Optional[str], img_text: Optional[str] = None) -> str:
         """Форматирует одно сообщение в Markdown-блок."""
 
         raw_date = row[_COL_DATE] or ""
@@ -1397,6 +1442,8 @@ class MarkdownGenerator:
             lines.append(text)
         if stt_text:
             lines.append(f"\n*(STT: {stt_text.strip()})*")
+        if img_text:
+            lines.append(f"\n*[Изображение: {img_text.strip()}]*")
         lines.append("\n---\n")
         return "\n".join(lines) + "\n"
 
@@ -1487,6 +1534,7 @@ _HTML_TEMPLATE = """\
   .msg-media a:hover {{ text-decoration: underline; }}
   .msg-img {{ margin-top: 8px; max-width: 100%; max-height: 400px; border-radius: 8px; display: block; cursor: pointer; }}
   .msg-stt {{ margin-top: 6px; font-size: 0.82rem; color: #90a0b0; font-style: italic; padding-left: 4px; border-left: 2px solid #3a4a5a; }}
+  .msg-imgdesc {{ margin-top: 6px; font-size: 0.82rem; color: #a0b090; font-style: italic; padding-left: 4px; border-left: 2px solid #4a5a3a; }}
   .scroll-top {{
     position: fixed; bottom: 20px; right: 20px;
     background: #FF9500; color: #0e1117;
@@ -1630,6 +1678,7 @@ class HtmlGenerator:
         log(f"📊 Строк получено: {len(rows)}")
 
         stt_map:    dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        img_map:    dict[int, str] = self._db.get_image_descriptions_for_chat(chat_id)
         safe_title  = sanitize_filename(chat_title)
         topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
             else (_topic_suffix(topic_id) if topic_id else "")
@@ -1644,7 +1693,7 @@ class HtmlGenerator:
         if not ai_split:
             blocks: List[str] = []
             for row in rows:
-                blocks.append(self._format_message(row, stt_map.get(row[_COL_MESSAGE_ID]), row_dict))
+                blocks.append(self._format_message(row, stt_map.get(row[_COL_MESSAGE_ID]), row_dict, img_map.get(row[_COL_MESSAGE_ID])))
             out_path = os.path.join(self._output_dir, f"{base_name}.html")
             self._write_html(out_path, h_title, blocks, total, log)
             return [out_path]
@@ -1658,7 +1707,8 @@ class HtmlGenerator:
         for row in rows:
             msg_id = row[_COL_MESSAGE_ID]
             stt    = stt_map.get(msg_id)
-            block  = self._format_message(row, stt, row_dict)
+            img    = img_map.get(msg_id)
+            block  = self._format_message(row, stt, row_dict, img)
             chunk.append(block)
             words += _word_count(row[_COL_TEXT]) + _word_count(stt)
 
@@ -1699,8 +1749,13 @@ class HtmlGenerator:
         from core.utils import sanitize_filename
 
         stt_map: dict[int, str] = {}
+        img_map: dict[int, str] = {}
         try:
             stt_map = self._db.get_transcriptions_for_chat(chat_id)
+        except Exception:
+            pass
+        try:
+            img_map = self._db.get_image_descriptions_for_chat(chat_id)
         except Exception:
             pass
 
@@ -1763,6 +1818,11 @@ class HtmlGenerator:
                 stt_block = (
                     f'<div class="msg-stt">🎙 {html_lib.escape(stt.strip())}</div>'
                 )
+            img = img_map.get(msg_id)
+            if img:
+                stt_block += (
+                    f'<div class="msg-imgdesc">🖼 {html_lib.escape(img.strip())}</div>'
+                )
 
             depth_class = f"depth-{min(depth, 5)}"
 
@@ -1799,7 +1859,7 @@ class HtmlGenerator:
         out_path.write_text(html, encoding="utf-8")
         return [str(out_path)]
 
-    def _format_message(self, row, stt_text: Optional[str], row_dict: dict) -> str:
+    def _format_message(self, row, stt_text: Optional[str], row_dict: dict, img_text: Optional[str] = None) -> str:
         """Форматирует одно сообщение в HTML-блок по структуре макета."""
 
         msg_id   = row[_COL_MESSAGE_ID]
@@ -1884,6 +1944,11 @@ class HtmlGenerator:
         if stt_text:
             stt_block = (
                 f'<div class="msg-stt">🎙 {html_lib.escape(stt_text.strip())}</div>\n      '
+            )
+        # Описание изображения (VLM, FEAT-5) — рендерим в том же слоте шаблона
+        if img_text:
+            stt_block += (
+                f'<div class="msg-imgdesc">🖼 {html_lib.escape(img_text.strip())}</div>\n      '
             )
 
         return _HTML_MSG.format(

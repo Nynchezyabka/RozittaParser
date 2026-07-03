@@ -515,9 +515,12 @@ class SettingsPanel(QWidget):
 
         self._stt_voice = ChipButton("🎤", "Голосовые", "voice", True)
         self._stt_round = ChipButton("📹", "Кружочки", "video_note", True)
+        # FEAT-5: описания изображений (Florence-2), по умолчанию выключено
+        self._vlm_chip  = ChipButton("🖼", "Описание фото", "vlm", False)
 
         chips_row.addWidget(self._stt_voice)
         chips_row.addWidget(self._stt_round)
+        chips_row.addWidget(self._vlm_chip)
         chips_row.addStretch(1)
         layout.addLayout(chips_row)
         return card
@@ -1852,6 +1855,16 @@ class MainWindow(QMainWindow):
         self._on_stt_finished(self._last_collect_result)
 
     def _on_stt_finished(self, collect_result) -> None:
+        # FEAT-5: этап VLM (описания изображений) между STT и экспортом
+        vlm_chip = getattr(self._settings_screen, "_vlm_chip", None)
+        if vlm_chip is not None and vlm_chip.isActive():
+            self._set_status("busy", "Описание изображений...")
+            self._rozetta.set_tip("Описываю изображения...")
+            self._run_vlm(collect_result)
+            return
+        self._start_export_stage(collect_result)
+
+    def _start_export_stage(self, collect_result) -> None:
         fmts = self._settings_screen.get_export_formats()
         label = " + ".join(f.upper() for f in fmts)
         self._set_status("busy", f"Генерация {label}...")
@@ -1870,6 +1883,59 @@ class MainWindow(QMainWindow):
                     "Установите её командой и перезапустите приложение:"
                 ),
                 command = "pip install faster-whisper",
+            )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # VLM (FEAT-5): описания изображений
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _run_vlm(self, collect_result) -> None:
+        from core.vlm.worker import VLMWorker
+        from core.utils import sanitize_filename
+        from config import DB_FILENAME
+
+        chat_id = getattr(collect_result, "chat_id", None)
+        if chat_id is None:
+            self._start_export_stage(collect_result)
+            return
+
+        db_path = getattr(collect_result, "db_path", "") or ""
+        if not db_path:
+            chat_title = getattr(collect_result, "chat_title", "") or ""
+            chat_dir = os.path.join(str(self._cfg.output_dir), sanitize_filename(chat_title))
+            db_path = os.path.join(chat_dir, DB_FILENAME)
+
+        self._last_collect_result = collect_result
+        self._update_progress(0)
+        worker = VLMWorker(
+            db_path=db_path,
+            chat_id=chat_id,
+            translate=getattr(self._cfg, "vlm_translate", True),
+        )
+        worker.log_message.connect(self._log.append_info, Qt.UniqueConnection)
+        worker.progress.connect(self._update_progress, Qt.UniqueConnection)
+        worker.error.connect(self._on_vlm_error, Qt.UniqueConnection)
+        worker.finished.connect(self._on_vlm_finished_slot, Qt.UniqueConnection)
+        self._start_worker(worker)
+
+    def _on_vlm_finished_slot(self) -> None:
+        """Именованный слот для VLMWorker.finished (Qt.UniqueConnection требует не-лямбду)."""
+
+        self._start_export_stage(self._last_collect_result)
+
+    def _on_vlm_error(self, message: str) -> None:
+        self._log.append_error(f"⚠️ VLM ошибка (экспорт продолжается): {message}")
+        # Если проблема в отсутствии библиотек — показываем диалог с командой
+        if "transformers" in message.lower() or "torch" in message.lower():
+            self._auth_screen._show_install_dialog(
+                title   = "Требуются библиотеки для VLM",
+                text    = (
+                    "Для описания изображений нужны библиотеки "
+                    "<b>transformers</b>, <b>torch</b>, <b>pillow</b>, "
+                    "<b>einops</b>, <b>timm</b>.<br><br>"
+                    "Установите их командой и перезапустите приложение:"
+                ),
+                command = "pip install transformers torch pillow einops timm",
             )
 
     # ──────────────────────────────────────────────────────────────────────

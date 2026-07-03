@@ -101,6 +101,10 @@ STT_MODEL_DEFAULT:    str = "small"   # tiny | base | small | medium | large-v3
 STT_LANGUAGE_DEFAULT: str = "ru"      # ISO 639-1 код или "" для автоопределения
 VALID_STT_MODELS: tuple[str, ...] = ("tiny", "base", "small", "medium", "large-v3")
 
+# --- VLM (Florence-2, FEAT-5) ---
+VLM_CAPTION_MODEL:   str = "microsoft/Florence-2-base"      # подписи (en)
+VLM_TRANSLATE_MODEL: str = "Helsinki-NLP/opus-mt-en-ru"     # перевод en→ru
+
 # --- Валидные типы медиа (внутренние ключи, не UI-текст) ---
 VALID_MEDIA_TYPES: tuple[str, ...] = (
     "photo", "video", "videomessage", "voice", "file"
@@ -142,6 +146,7 @@ class AppConfig:
     split_mode:   str        = "none"
     stt_model:    str        = field(default=STT_MODEL_DEFAULT)
     stt_language: str        = field(default=STT_LANGUAGE_DEFAULT)
+    vlm_translate: bool      = True    # FEAT-5: переводить описания картинок en→ru
 
     # Поля, не сохраняемые в JSON (только runtime)
     output_dir:   str        = field(default="output", repr=False)
@@ -265,6 +270,7 @@ def load_config(path: str = CONFIG_FILE) -> AppConfig:
             split_mode    = str(data.get("split_mode", "none")),
             stt_model     = str(data.get("stt_model", STT_MODEL_DEFAULT)),
             stt_language  = str(data.get("stt_language", STT_LANGUAGE_DEFAULT)),
+            vlm_translate = bool(data.get("vlm_translate", True)),
             proxy_enabled = bool(data.get("proxy_enabled", False)),
             proxy_type    = str(data.get("proxy_type", "socks5")),
             proxy_host    = str(data.get("proxy_host", "127.0.0.1")),
@@ -311,6 +317,7 @@ def save_config(cfg: AppConfig, path: str = CONFIG_FILE) -> None:
         "split_mode":    cfg.split_mode,
         "stt_model":     cfg.stt_model,
         "stt_language":  cfg.stt_language,
+        "vlm_translate": cfg.vlm_translate,
         "proxy_enabled": cfg.proxy_enabled,
         "proxy_type":    cfg.proxy_type,
         "proxy_host":    cfg.proxy_host,
