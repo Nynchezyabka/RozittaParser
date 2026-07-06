@@ -88,9 +88,9 @@ class ParseParams:
     date_to:   Optional[date] = None
 
     # Фильтр пользователей
-    user_filter_mode: str = "messages-only"   # "messages-only" | "all-threads"
+    user_filter_mode: str = "messages_only"   # канон (#21): "messages_only" | "threads"
     user_ids: list[int] = field(default_factory=list)  # пусто = все
-    user_id: int        = 0;
+    user_id: int        = 0
     username: Optional[str] = None
 
     # Разбивка DOCX
@@ -218,6 +218,12 @@ class _UserModeButton(QPushButton):
 
 class ParseSettingsScreen(QWidget):
     """
+    ⚠️ ПРОТОТИП RD-редизайна. НЕ ПОДКЛЮЧЁН к MainWindow (ARCH-1, 2026-07-06).
+    Канонический экран настроек — ui/main_window.py::SettingsPanel.
+    НЕ вносить сюда фиксы и новые параметры; класс — референс для RD-9.
+    Перед подключением: достроить экспорт-секцию/options/персистентность
+    и канонизировать значения user_filter_mode (см. ARCH-2).
+
     Экран настроек парсинга (колонка 3 из прототипа).
 
     Сигналы (исходящие → MainWindow):
@@ -238,7 +244,7 @@ class ParseSettingsScreen(QWidget):
     """
 
     parse_requested        = Signal(object)   # ParseParams
-    load_members_requested = Signal(dict)     # chat dict
+    load_members_requested = Signal(object)   # chat dict (правило #4: не Signal(dict))
     log_message            = Signal(str)
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -486,9 +492,9 @@ class ParseSettingsScreen(QWidget):
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)
 
-        self._mode_only = _UserModeButton("💬", "Только сообщения", "messages-only")
+        self._mode_only = _UserModeButton("💬", "Только сообщения", "messages_only")
         self._mode_only.setChecked(True)
-        self._mode_threads = _UserModeButton("🗨️", "Все ветки с участием", "all-threads")
+        self._mode_threads = _UserModeButton("🗨️", "Все ветки с участием", "threads")
 
         # Взаимная эксклюзивность через QButtonGroup
         self._mode_group = QButtonGroup(self)
@@ -723,7 +729,7 @@ class ParseSettingsScreen(QWidget):
             None
         )
         mode_btn = self._mode_group.checkedButton()
-        u_mode = mode_btn.mode if isinstance(mode_btn, _UserModeButton) else "messages-only"
+        u_mode = mode_btn.mode if isinstance(mode_btn, _UserModeButton) else "messages_only"
 
         # Разбивка
         checked_split = self._split_group.checkedButton()
