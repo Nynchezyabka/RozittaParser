@@ -708,6 +708,29 @@ grep -n "^    def [^_]" features/parser/api.py features/export/generator.py
 # Проверить что у каждого либо есть self, либо есть @staticmethod строкой выше
 ```
 
+### 21. Florence-2 + transformers — pin 4.41.2 (FEAT-5)
+
+`microsoft/Florence-2-base` использует remote-код (`trust_remote_code=True`),
+который в `Florence2LanguageConfig.__init__` обращается к
+`self.forced_bos_token_id`. В `transformers>=5.0` этот атрибут убран из
+`PretrainedConfig` (переехал в `GenerationConfig`) → `AttributeError` при
+`from_pretrained` → воркер падает на каждом кандидате, описания не появляются.
+
+**Требование:** в окружении с VLM должен стоять `transformers==4.41.2`.
+Не обновлять `transformers` выше 4.41.2 без явного регрессионного теста
+Florence-2 (`diag_vlm.py` — должна пройти «Попытка A» без workaround'а).
+
+**Безопасность пина для других компонентов:**
+- `faster-whisper` не использует `transformers` в рантайме (только опционально
+  для CLI-конверсии HF→CT2 через `extra="conversion"`) — пин не ломает STT.
+- `telethon`, `PySide6`, `python-docx`, `cryptg`, `pyaes` — не зависят от
+  `transformers` вообще.
+- `ctranslate2` (используется faster-whisper) — тоже не зависит.
+
+**Дополнительно:** для `MarianTokenizer` (`Helsinki-NLP/opus-mt-en-ru`,
+переводчик en→ru в `core/vlm/manager.py`) требуется `sentencepiece` —
+он есть в `requirements.txt` и в `VLMManager.install()`.
+
 ---
 
 ## 🔄 Основные потоки выполнения

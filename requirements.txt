@@ -21,6 +21,18 @@ simpleeval
 # Раскомментируйте для расшифровки голосовых и кружочков:
 faster-whisper
 
+# ── Распознавание изображений VLM (опционально, тяжёлая зависимость ~2 ГБ) ────
+# Раскомментируйте для описания фото (FEAT-5, Florence-2 + перевод en→ru):
+# ⚠️ transformers>=5.x ломает remote-код microsoft/Florence-2-base
+#    (атрибут forced_bos_token_id убран из PretrainedConfig в 5.x) — pin 4.41.2.
+# ⚠️ sentencepiece нужен MarianTokenizer'у (Helsinki-NLP/opus-mt-en-ru).
+transformers==4.41.2
+torch
+pillow
+einops
+timm
+sentencepiece
+
 # ── Импорт сессии из Telegram Desktop (опционально) ───────────────────────────
 # Раскомментируйте для кнопки «Импорт из Telegram Desktop»:
 opentele2

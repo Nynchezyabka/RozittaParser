@@ -31,9 +31,50 @@ logger = logging.getLogger(__name__)
 _CAPTION_TASK = "<DETAILED_CAPTION>"
 
 # Пакеты, необходимые для работы Florence-2 (trust_remote_code)
-_REQUIRED_SPECS = ("transformers", "torch", "PIL", "einops", "timm")
+# ⚠️ transformers>=5.x ломает remote-код microsoft/Florence-2-base
+#    (forced_bos_token_id убран из PretrainedConfig в 5.x) — pin 4.41.2.
+# ⚠️ sentencepiece нужен MarianTokenizer'у (Helsinki-NLP/opus-mt-en-ru).
+_REQUIRED_SPECS = ("transformers", "torch", "PIL", "einops", "timm", "sentencepiece")
 
-_PIP_COMMAND = "pip install transformers torch pillow einops timm"
+_PIP_COMMAND = "pip install 'transformers==4.41.2' torch pillow einops timm sentencepiece"
+
+
+def _patch_flash_attn_imports():
+    """
+    Контекстный менеджер: вырезает 'flash_attn' из списка импортов remote-кода.
+
+    Florence-2 (microsoft/Florence-2-base) в modeling_florence2.py декларирует
+    `import flash_attn`. flash_attn — GPU-only (требует CUDA build), на CPU/Windows
+    не ставится. Без этого workaround transformers.dynamic_module_utils.check_imports()
+    бросает ImportError ДО того, как модель начнёт загружаться.
+
+    Сама модель flash_attn не использует при inference на CPU (мы на float32),
+    поэтому вырезание безопасно.
+
+    Канонический фикс — повторяет логику diag_vlm.py (попытка B).
+    Применяется через `with _patch_flash_attn_imports():` вокруг from_pretrained.
+
+    Возвращает: unittest.mock.patch context manager (или nullcontext, если
+    transformers ещё не установлен — тогда _ensure_model() позже бросит
+    VLMError с понятным сообщением).
+    """
+    from unittest.mock import patch
+    try:
+        from transformers.dynamic_module_utils import get_imports
+    except ImportError:
+        # transformers не установлен — _ensure_model() бросит VLMError.
+        from contextlib import nullcontext
+        return nullcontext()
+
+    def _fixed_get_imports(filename):
+        imports = get_imports(filename)
+        if "flash_attn" in imports:
+            imports.remove("flash_attn")
+        return imports
+
+    return patch(
+        "transformers.dynamic_module_utils.get_imports", _fixed_get_imports
+    )
 
 
 class VLMError(Exception):
@@ -85,12 +126,14 @@ class VLMManager:
             log(f"   {_PIP_COMMAND}")
             return False
 
-        log("📦 Устанавливаю transformers + torch + pillow + einops + timm...")
+        log("📦 Устанавливаю transformers==4.41.2 + torch + pillow + einops + "
+            "timm + sentencepiece...")
         log("⏳ torch — тяжёлый пакет, это может занять 5-15 минут...")
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install",
-                 "transformers", "torch", "pillow", "einops", "timm", "--quiet"],
+                 "transformers==4.41.2", "torch", "pillow", "einops", "timm",
+                 "sentencepiece", "--quiet"],
                 capture_output=True,
                 text=True,
                 timeout=1800,
@@ -148,16 +191,20 @@ class VLMManager:
         logger.info("VLMManager: загрузка Florence-2 '%s' (cpu)...", VLM_CAPTION_MODEL)
         t = time.perf_counter()
         try:
-            self._model = AutoModelForCausalLM.from_pretrained(
-                VLM_CAPTION_MODEL,
-                trust_remote_code=True,
-                torch_dtype=torch.float32,   # CPU
-            )
-            self._model.eval()
-            self._processor = AutoProcessor.from_pretrained(
-                VLM_CAPTION_MODEL,
-                trust_remote_code=True,
-            )
+            # flash_attn — GPU-only, на CPU/Windows не ставится. Remote-код
+            # Florence-2 декларирует его в импортах, без workaround from_pretrained
+            # падает с ImportError. См. _patch_flash_attn_imports().
+            with _patch_flash_attn_imports():
+                self._model = AutoModelForCausalLM.from_pretrained(
+                    VLM_CAPTION_MODEL,
+                    trust_remote_code=True,
+                    torch_dtype=torch.float32,   # CPU
+                )
+                self._model.eval()
+                self._processor = AutoProcessor.from_pretrained(
+                    VLM_CAPTION_MODEL,
+                    trust_remote_code=True,
+                )
             logger.info(
                 "✅ Florence-2 загружена за %.1fs", time.perf_counter() - t
             )
