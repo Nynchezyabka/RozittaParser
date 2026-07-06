@@ -622,17 +622,6 @@ class ParserService:
                     if params.user_ids and message.sender_id not in params.user_ids:
                         continue
 
-                    # Запоминаем посты с комментариями ДО проверки трекера:
-                    # иначе в инкрементальном режиме уже скачанные посты
-                    # отсекаются раньше регистрации и новые комментарии под
-                    # старыми постами не докачиваются (хвост BF-2)
-                    if (params.download_comments
-                            and linked_chat_id
-                            and chat_type == "channel"
-                            and message.replies
-                            and message.replies.replies > 0):
-                        posts_with_comments[message.id] = message.replies.replies
-
                     # Инкрементальный режим: пропускаем уже скачанные
                     if not params.re_download and tracker.is_downloaded(message.id):
                         continue
@@ -641,6 +630,14 @@ class ParserService:
                     if (params.filter_expression and _SIMPLEEVAL_OK
                             and not self._eval_filter(message, params.filter_expression)):
                         continue
+
+                    # Запоминаем посты с комментариями (sync — читаем атрибуты до task)
+                    if (params.download_comments
+                            and linked_chat_id
+                            and chat_type == "channel"
+                            and message.replies
+                            and message.replies.replies > 0):
+                        posts_with_comments[message.id] = message.replies.replies
 
                     # Определяем, требуется ли скачивание медиа для этого сообщения
                     needs_download = (
