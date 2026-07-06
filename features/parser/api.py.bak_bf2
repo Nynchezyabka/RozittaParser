@@ -41,7 +41,6 @@ from telethon import TelegramClient
 from telethon.errors import (
     BadRequestError,
     FloodWaitError as TelethonFloodWaitError,
-    MsgIdInvalidError,
     RPCError,
 )
 from telethon.tl.types import (
@@ -622,17 +621,6 @@ class ParserService:
                     if params.user_ids and message.sender_id not in params.user_ids:
                         continue
 
-                    # Запоминаем посты с комментариями ДО проверки трекера:
-                    # иначе в инкрементальном режиме уже скачанные посты
-                    # отсекаются раньше регистрации и новые комментарии под
-                    # старыми постами не докачиваются (хвост BF-2)
-                    if (params.download_comments
-                            and linked_chat_id
-                            and chat_type == "channel"
-                            and message.replies
-                            and message.replies.replies > 0):
-                        posts_with_comments[message.id] = message.replies.replies
-
                     # Инкрементальный режим: пропускаем уже скачанные
                     if not params.re_download and tracker.is_downloaded(message.id):
                         continue
@@ -641,6 +629,14 @@ class ParserService:
                     if (params.filter_expression and _SIMPLEEVAL_OK
                             and not self._eval_filter(message, params.filter_expression)):
                         continue
+
+                    # Запоминаем посты с комментариями (sync — читаем атрибуты до task)
+                    if (params.download_comments
+                            and linked_chat_id
+                            and chat_type == "channel"
+                            and message.replies
+                            and message.replies.replies > 0):
+                        posts_with_comments[message.id] = message.replies.replies
 
                     # Определяем, требуется ли скачивание медиа для этого сообщения
                     needs_download = (
@@ -1041,11 +1037,7 @@ class ParserService:
         """
         Скачивает комментарии к посту из linked discussion группы.
 
-        BF-2: итерация идёт по КАНАЛУ с reply_to=post_id — Telethon шлёт
-        GetRepliesRequest, и сервер возвращает ровно ветку комментариев
-        поста (физически они лежат в linked группе, но нумерация ID у
-        канала и группы независима, поэтому итерировать саму группу
-        с reply_to=post_id нельзя — это и был баг BF-2).
+        Комментарии хранятся в linked группе как reply_to=post_id.
         Сохраняются в БД с chat_id=channel_id (привязаны к каналу),
         is_comment=1, post_id=post_id.
 
@@ -1069,11 +1061,8 @@ class ParserService:
 
         while attempts <= _MAX_RETRIES:
             try:
-                # BF-2: итерируем по КАНАЛУ (GetRepliesRequest) — сервер
-                # отдаёт только ветку комментариев поста, спам из linked
-                # группы не попадает по определению протокола.
                 async for comment in self._client.iter_messages(
-                        channel_id,
+                        linked_chat_id,
                         reply_to=post_id,
                         limit=limit,
                 ):
@@ -1096,12 +1085,6 @@ class ParserService:
                 if comment_batch:
                     _insert(comment_batch)
                 break  # успешно завершили итерацию
-
-            except MsgIdInvalidError:
-                # BF-2: у поста нет/удалено обсуждение — не ошибка, 0 комментариев
-                self._log(f"    ℹ️ Пост #{post_id}: ветка обсуждения недоступна")
-                logger.info("parser: post %s has no discussion thread", post_id)
-                break
 
             except TelethonFloodWaitError as exc:
                 wait = exc.seconds + _FLOOD_BUFFER
