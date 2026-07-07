@@ -291,6 +291,10 @@ class DocxGenerator:
         self._topic_id     = topic_id   # ← задача 1: сохраняем для _build_path
         self._topic_name   = topic_name
         self._username     = username
+        # I11: маркеры режима в имени файла — чтобы экспорт с разными
+        # настройками не перезаписывал предыдущий
+        self._name_suffix  = ("_threads" if user_filter_mode == "threads" else "")
+        self._name_suffix += "_comments" if include_comments else ""
         os.makedirs(self._output_dir, exist_ok=True)
 
         # Загружаем все транскрипции чата одним запросом
@@ -918,7 +922,8 @@ class DocxGenerator:
         topic_part   = f"_{sanitize_filename(self._topic_name)}" if self._topic_name \
                     else (_topic_suffix(self._topic_id) if self._topic_id else "")
         user_part    = f"_{sanitize_filename(self._username)}" if self._username else ""
-        filename     = f"{safe_title}{topic_part}{user_part}_{kind}_{self._period_label}.docx"
+        mode_part    = getattr(self, "_name_suffix", "")  # I11
+        filename     = f"{safe_title}{topic_part}{user_part}{mode_part}_{kind}_{self._period_label}.docx"
         return os.path.join(self._output_dir, filename)
 
     def _save_doc(self, doc: Document, file_path: str) -> None:
@@ -1034,7 +1039,10 @@ class JsonGenerator:
         topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
             else (_topic_suffix(topic_id) if topic_id else "")
         user_part  = f"_{sanitize_filename(username)}" if username else ""
-        base_name  = f"{safe_title}{topic_part}{user_part}_{period_label}"
+        # I11: маркеры режима — файлы с разными настройками не перезаписываются
+        mode_part  = ("_threads" if user_filter_mode == "threads" else "")
+        mode_part += "_comments" if include_comments else ""
+        base_name  = f"{safe_title}{topic_part}{user_part}{mode_part}_{period_label}"
 
         # ── Без разбивки: один файл ────────────────────────────────────
         if not ai_split:
@@ -1257,7 +1265,10 @@ class MarkdownGenerator:
         topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
             else (_topic_suffix(topic_id) if topic_id else "")
         user_part  = f"_{sanitize_filename(username)}" if username else ""
-        base_name  = f"{safe_title}{topic_part}{user_part}_{period_label}"
+        # I11: маркеры режима — файлы с разными настройками не перезаписываются
+        mode_part  = ("_threads" if user_filter_mode == "threads" else "")
+        mode_part += "_comments" if include_comments else ""
+        base_name  = f"{safe_title}{topic_part}{user_part}{mode_part}_{period_label}"
 
         header = f"# {chat_title}\n\n"
 
@@ -1634,7 +1645,10 @@ class HtmlGenerator:
         topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
             else (_topic_suffix(topic_id) if topic_id else "")
         user_part  = f"_{sanitize_filename(username)}" if username else ""
-        base_name  = f"{safe_title}{topic_part}{user_part}_{period_label}"
+        # I11: маркеры режима — файлы с разными настройками не перезаписываются
+        mode_part  = ("_threads" if user_filter_mode == "threads" else "")
+        mode_part += "_comments" if include_comments else ""
+        base_name  = f"{safe_title}{topic_part}{user_part}{mode_part}_{period_label}"
         h_title     = html_lib.escape(chat_title)
 
         total    = len(rows)

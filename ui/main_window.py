@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QSizePolicy, QProgressBar, QStackedWidget,
     QFrame, QPushButton, QSpinBox, QComboBox,
-    QScrollArea, QGridLayout,
+    QScrollArea, QGridLayout, QDialog,
 )
 
 from config import AppConfig
@@ -382,6 +382,158 @@ class SettingsPanel(QWidget):
                     btn.setActive(key in active_keys)
 
     # ──────────────────────────────────────────────────────────────────────
+    # UI-CLEAN-4: ПРЕСЕТЫ
+    # ──────────────────────────────────────────────────────────────────────
+
+    # media: photo, video, file, voice, round; fmt: docx/json/md/html
+    _PRESETS = {
+        "archive": dict(
+            label="📦 Полный архив",
+            media=("photo", "video", "file", "voice", "round"),
+            comments=True, stt_voice=True, stt_round=True,
+            formats=("docx", "html"), ai_split=False,
+        ),
+        "text": dict(
+            label="📄 Только текст",
+            media=(),
+            comments=True, stt_voice=False, stt_round=False,
+            formats=("docx",), ai_split=False,
+        ),
+        "ai": dict(
+            label="🤖 Для нейросети",
+            media=("voice", "round"),
+            comments=True, stt_voice=True, stt_round=True,
+            formats=("md",), ai_split=True,
+        ),
+    }
+
+    @staticmethod
+    def _widget_set_on(widget, value: bool) -> None:
+        """Защитный сеттер: у кастомных виджетов API различается."""
+        if widget is None:
+            return
+        if hasattr(widget, "setActive"):
+            widget.setActive(bool(value))
+        elif hasattr(widget, "setChecked"):
+            widget.setChecked(bool(value))
+
+    @staticmethod
+    def _widget_on_change(widget, slot) -> None:
+        """Защитное подключение к первому доступному сигналу изменения."""
+        for sig_name in ("clicked", "toggled", "stateChanged"):
+            sig = getattr(widget, sig_name, None)
+            if sig is not None and hasattr(sig, "connect"):
+                sig.connect(slot)
+                return
+
+    def _build_presets_section(self) -> QWidget:
+        card, layout = self._card()
+        layout.addWidget(SectionTitle("⚡", "Быстрый выбор"))
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self._preset_buttons: dict[str, QPushButton] = {}
+
+        qss = (
+            f"QPushButton {{ background: transparent; color: {TEXT_SECONDARY};"
+            f" border: 1px solid {BORDER_HEX}; border-radius: 15px;"
+            f" padding: 5px 13px; font-size: 12px; }}"
+            f" QPushButton:checked {{ background-color: {ACCENT_ORANGE};"
+            f" color: {BG_PRIMARY}; border-color: {ACCENT_ORANGE};"
+            f" font-weight: 500; }}"
+        )
+
+        for key, spec in self._PRESETS.items():
+            btn = QPushButton(spec["label"])
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(qss)
+            btn.clicked.connect(lambda _=False, k=key: self._apply_preset(k))
+            self._preset_buttons[key] = btn
+            row.addWidget(btn)
+
+        self._preset_custom_btn = QPushButton("⚙️ Свой вариант")
+        self._preset_custom_btn.setCheckable(True)
+        self._preset_custom_btn.setEnabled(False)  # индикатор, не команда
+        self._preset_custom_btn.setStyleSheet(qss)
+        row.addWidget(self._preset_custom_btn)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        self._applying_preset = False
+        return card
+
+    def _wire_preset_watchers(self) -> None:
+        """Любое ручное изменение состава/формата → «Свой вариант».
+
+        Вызывается из _build() ПОСЛЕ сборки всех секций: виджеты
+        медиа/STT/форматов создаются позже секции пресетов (hotfix).
+        """
+        watched = [
+            self._media_photo, self._media_video, self._media_file,
+            self._media_voice, self._media_round,
+            self._stt_voice, self._stt_round,
+            self._toggle_comments, self._toggle_ai_split,
+            self._fmt_docx, self._fmt_json, self._fmt_md, self._fmt_html,
+        ]
+        for w in watched:
+            self._widget_on_change(w, self._mark_custom_preset)
+
+    def _apply_preset(self, key: str) -> None:
+        """Выставляет все настройки состава/формата по пресету."""
+        spec = self._PRESETS[key]
+        self._applying_preset = True
+        try:
+            media_map = {
+                "photo": self._media_photo, "video": self._media_video,
+                "file": self._media_file, "voice": self._media_voice,
+                "round": self._media_round,
+            }
+            for mkey, widget in media_map.items():
+                self._widget_set_on(widget, mkey in spec["media"])
+
+            self._widget_set_on(self._stt_voice, spec["stt_voice"])
+            self._widget_set_on(self._stt_round, spec["stt_round"])
+            self._widget_set_on(self._toggle_comments, spec["comments"])
+            self._widget_set_on(self._toggle_redownload, False)
+            self._widget_set_on(self._toggle_takeout, False)
+            self._widget_set_on(self._toggle_ai_split, spec["ai_split"])
+
+            fmt_map = {
+                "docx": self._fmt_docx, "json": self._fmt_json,
+                "md": self._fmt_md, "html": self._fmt_html,
+            }
+            for fkey, widget in fmt_map.items():
+                widget.setChecked(fkey in spec["formats"])
+
+            # Разбивка — единый файл
+            for btn in self._split_buttons:
+                btn.setChecked(btn.mode == "none")
+            self._split_mode = "none"
+
+            for pkey, btn in self._preset_buttons.items():
+                btn.setChecked(pkey == key)
+            self._preset_custom_btn.setChecked(False)
+            self._log_signal_safe(f"⚡ Пресет: {spec['label']}")
+        finally:
+            self._applying_preset = False
+
+    def _mark_custom_preset(self, *_args) -> None:
+        """Ручное изменение состава → индикатор «Свой вариант»."""
+        if getattr(self, "_applying_preset", False):
+            return
+        if not hasattr(self, "_preset_buttons"):
+            return
+        for btn in self._preset_buttons.values():
+            btn.setChecked(False)
+        self._preset_custom_btn.setChecked(True)
+
+    def _log_signal_safe(self, msg: str) -> None:
+        sig = getattr(self, "log_message", None)
+        if sig is not None and hasattr(sig, "emit"):
+            sig.emit(msg)
+
+    # ──────────────────────────────────────────────────────────────────────
     # ПОСТРОЕНИЕ UI
     # ──────────────────────────────────────────────────────────────────────
 
@@ -411,6 +563,7 @@ class SettingsPanel(QWidget):
         cl.setSpacing(12)
 
         cl.addWidget(self._build_chat_info())
+        cl.addWidget(self._build_presets_section())   # UI-CLEAN-4
         cl.addWidget(self._build_media_section())
         cl.addWidget(self._build_stt_section())
         cl.addWidget(self._build_date_section())
@@ -418,6 +571,7 @@ class SettingsPanel(QWidget):
         cl.addWidget(self._build_split_section())
         cl.addWidget(self._build_export_section())
         cl.addWidget(self._build_options_section())
+        self._wire_preset_watchers()   # UI-CLEAN-4 hotfix: после ВСЕХ секций
         cl.addStretch(1)
 
         scroll.setWidget(content)
@@ -432,15 +586,29 @@ class SettingsPanel(QWidget):
         layout.setSpacing(10)
         return card, layout
 
-    def _option_row(self, label: str, toggle: ToggleSwitch) -> QHBoxLayout:
+    def _option_row(self, label: str, toggle: ToggleSwitch,
+                    hint: Optional[str] = None) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(10)
         lbl = QLabel(label)
         lbl.setStyleSheet(
             f"color: {TEXT_PRIMARY}; font-size: 13px; background: transparent;"
         )
-        row.addWidget(lbl)
-        row.addStretch(1)
+        if hint:
+            # UI-CLEAN-3: подпись + серая подсказка простым языком
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            col.addWidget(lbl)
+            hint_lbl = QLabel(hint)
+            hint_lbl.setWordWrap(True)
+            hint_lbl.setStyleSheet(
+                f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+            )
+            col.addWidget(hint_lbl)
+            row.addLayout(col, 1)
+        else:
+            row.addWidget(lbl)
+            row.addStretch(1)
         row.addWidget(toggle)
         return row
 
@@ -543,12 +711,23 @@ class SettingsPanel(QWidget):
         card, layout = self._card()
         layout.addWidget(SectionTitle("👥", "Участники"))
 
+        # UI-CLEAN-3: объясняем, что фильтр влияет на документ, а не на скачивание
+        subtitle = QLabel(
+            "Скачивается всегда весь чат. Здесь вы выбираете, "
+            "чьи сообщения попадут в документ"
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+        )
+        layout.addWidget(subtitle)
+
         # Режим поиска
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)
 
         self._mode_btn_messages = QPushButton("Только сообщения")
-        self._mode_btn_all      = QPushButton("Все ветки")
+        self._mode_btn_all      = QPushButton("Сообщения + ответы")
 
         for btn in (self._mode_btn_messages, self._mode_btn_all):
             btn.setCheckable(True)
@@ -587,6 +766,15 @@ class SettingsPanel(QWidget):
         mode_row.addWidget(self._mode_btn_all)
         mode_row.addStretch(1)
         layout.addLayout(mode_row)
+
+        # UI-CLEAN-3: режимы недоступны, пока не выбран участник
+        self._mode_hint_lbl = QLabel("ℹ️ Станет доступно, когда выберете участника")
+        self._mode_hint_lbl.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+        )
+        layout.addWidget(self._mode_hint_lbl)
+        self._mode_btn_messages.setEnabled(False)
+        self._mode_btn_all.setEnabled(False)
 
         # Кнопка загрузки
         self._load_members_btn = QPushButton("👥  Загрузить участников")
@@ -642,6 +830,9 @@ class SettingsPanel(QWidget):
         self._members_combo.setFixedHeight(34)
         self._members_combo.addItem("Все участники", 0)
         self._members_combo.setStyleSheet(QSS_COMBOBOX)
+        self._members_combo.currentIndexChanged.connect(
+            self._update_mode_buttons_enabled
+        )
         layout.addWidget(self._members_combo)
 
         return card
@@ -804,9 +995,20 @@ class SettingsPanel(QWidget):
         self._toggle_redownload = ToggleSwitch(checked=False)
         self._toggle_takeout = ToggleSwitch(checked=False)
 
-        layout.addLayout(self._option_row("Включить комментарии", self._toggle_comments))
-        layout.addLayout(self._option_row("Перекачать медиа", self._toggle_redownload))
-        layout.addLayout(self._option_row("⚡ Takeout API (быстрее при VPN)", self._toggle_takeout))
+        layout.addLayout(self._option_row(
+            "Скачивать комментарии под постами", self._toggle_comments,
+            hint="То, что участники пишут в обсуждении под каждым постом канала. "
+                 "Скачанные комментарии попадут в документ",
+        ))
+        layout.addLayout(self._option_row(
+            "Скачать всё заново", self._toggle_redownload,
+            hint="Выключено: продолжим с места остановки, уже скачанное пропустим",
+        ))
+        layout.addLayout(self._option_row(
+            "⚡ Takeout API", self._toggle_takeout,
+            hint="Быстрее для больших чатов, особенно с VPN. "
+                 "Если не уверены — не включайте",
+        ))
         return card
 
     # ──────────────────────────────────────────────────────────────────────
@@ -817,6 +1019,17 @@ class SettingsPanel(QWidget):
         self._user_mode = mode
         self._mode_btn_messages.setChecked(mode == "messages_only")
         self._mode_btn_all.setChecked(mode == "threads")
+
+    def _update_mode_buttons_enabled(self, *_args) -> None:
+        """UI-CLEAN-3: режимы участника активны только при выбранном участнике."""
+        has_user = bool(self._members_combo.currentData())
+        self._mode_btn_messages.setEnabled(has_user)
+        self._mode_btn_all.setEnabled(has_user)
+        if hasattr(self, "_mode_hint_lbl"):
+            self._mode_hint_lbl.setVisible(not has_user)
+        if not has_user:
+            # без участника режим всегда «только сообщения» (канон #21)
+            self._set_user_mode("messages_only")
 
     def _on_split_mode(self, mode: str) -> None:
         self._split_mode = mode
@@ -910,6 +1123,93 @@ class SettingsPanel(QWidget):
     def set_parsing(self, active: bool) -> None:
         self._parsing = active
         self.setEnabled(not active)
+
+
+class ConfirmStartDialog(QDialog):
+    """UI-CLEAN-3: окно «Проверьте перед стартом» (утверждённый макет A).
+
+    Показывает пользователю, что именно будет скачано и собрано
+    в документ, ДО запуска парсинга.
+
+    Args:
+        rows: список кортежей (название, значение, акцент: bool)
+              из MainWindow._build_start_summary().
+    """
+
+    def __init__(self, rows: list, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Проверьте перед стартом")
+        self.setModal(True)
+        self.setMinimumWidth(430)
+        self.setStyleSheet(f"QDialog {{ background-color: {BG_PRIMARY}; }}")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 16)
+        root.setSpacing(6)
+
+        header = QLabel("Проверьте перед стартом")
+        header.setStyleSheet(
+            f"color: {TEXT_PRIMARY}; font-size: 16px; font-weight: 500;"
+            " background: transparent;"
+        )
+        root.addWidget(header)
+
+        sub = QLabel("Вот что сейчас будет скачано и собрано в документ")
+        sub.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent;"
+        )
+        root.addWidget(sub)
+        root.addSpacing(8)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(7)
+        for i, (name, value, accent) in enumerate(rows):
+            name_lbl = QLabel(name)
+            name_lbl.setStyleSheet(
+                f"color: {TEXT_SECONDARY}; font-size: 13px; background: transparent;"
+            )
+            value_lbl = QLabel(value)
+            value_lbl.setWordWrap(True)
+            color = ACCENT_ORANGE if accent else TEXT_PRIMARY
+            value_lbl.setStyleSheet(
+                f"color: {color}; font-size: 13px; background: transparent;"
+            )
+            grid.addWidget(name_lbl, i, 0, Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(value_lbl, i, 1)
+        grid.setColumnStretch(1, 1)
+        root.addLayout(grid)
+        root.addSpacing(10)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        btn_row.addStretch(1)
+
+        edit_btn = QPushButton("Изменить")
+        edit_btn.setFixedHeight(32)
+        edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {OVERLAY2_HEX};"
+            f" border: 1px solid {BORDER_HEX}; border-radius: {RADIUS_MD}px;"
+            f" color: {TEXT_PRIMARY}; font-size: 13px; padding: 0 16px; }}"
+            f" QPushButton:hover {{ background-color: {OVERLAY_HEX}; }}"
+        )
+        edit_btn.clicked.connect(self.reject)
+
+        start_btn = QPushButton("▶  Начать")
+        start_btn.setFixedHeight(32)
+        start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        start_btn.setDefault(True)
+        start_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {ACCENT_ORANGE}; border: none;"
+            f" border-radius: {RADIUS_MD}px; color: {BG_PRIMARY};"
+            f" font-size: 13px; font-weight: 500; padding: 0 18px; }}"
+        )
+        start_btn.clicked.connect(self.accept)
+
+        btn_row.addWidget(edit_btn)
+        btn_row.addWidget(start_btn)
+        root.addLayout(btn_row)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1722,7 +2022,94 @@ class MainWindow(QMainWindow):
             if self._current_step >= 1:
                 self._switch_tab(1)
             return
+
+        # UI-CLEAN-3 P2: окно «Проверьте перед стартом»
+        dialog = ConfirmStartDialog(self._build_start_summary(params), parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
         self._on_parse_requested(params)
+
+    def _build_start_summary(self, params: ParseParams) -> list:
+        """UI-CLEAN-3: строки сводки для окна подтверждения.
+
+        Returns:
+            Список кортежей (название, значение, акцент: bool).
+        """
+        chat = params.chat or {}
+        title = chat.get("title", "—")
+        is_channel = chat.get("type") == "channel"
+        chat_val = f"{title} (канал)" if is_channel else title
+
+        if params.date_from or params.date_to:
+            d_from = params.date_from.strftime("%d.%m.%Y") if params.date_from else "…"
+            d_to = params.date_to.strftime("%d.%m.%Y") if params.date_to else "…"
+            period_val = f"{d_from} — {d_to}"
+        else:
+            period_val = "за всё время"
+
+        media_names = [
+            name for flag, name in (
+                (params.download_photo, "фото"),
+                (params.download_video, "видео"),
+                (params.download_voice, "голосовые"),
+                (params.download_videomessage, "кружочки"),
+                (params.download_file, "файлы"),
+            ) if flag
+        ]
+        media_val = ", ".join(media_names) if media_names else "только текст"
+
+        if is_channel:
+            comments_val = ("скачаем и добавим в документ"
+                            if params.include_comments else "не скачиваем")
+        else:
+            comments_val = "нет (доступны только в каналах)"
+
+        if params.user_id:
+            who = params.username or f"ID {params.user_id}"
+            mode = ("сообщения + ответы"
+                    if params.user_filter_mode == "threads" else "только сообщения")
+            user_val = f"{who} · {mode}"
+        else:
+            user_val = "все"
+
+        formats = [
+            f.upper()
+            for f in (self._settings_screen.get_export_formats() or ["docx"])
+        ]
+        split_names = {"none": "одним файлом", "day": "по дням",
+                       "month": "по месяцам", "post": "по постам"}
+        split_val = split_names.get(params.split_mode, params.split_mode)
+
+        rows = [
+            ("Чат", chat_val, False),
+            ("Период", period_val, False),
+            ("Файлы", media_val, False),
+            ("Комментарии", comments_val, bool(params.include_comments)),
+            ("Участники", user_val, False),
+            ("Документ", f"{', '.join(formats)} · {split_val}", False),
+        ]
+
+        stt_names = [
+            name for flag, name in (
+                (params.stt_voice, "голосовые"),
+                (params.stt_videomessage, "кружочки"),
+            ) if flag
+        ]
+        if stt_names:
+            rows.append(("Речь в текст", ", ".join(stt_names), False))
+        # FEAT-5: здесь появится строка «Описание изображений» при включённом VLM
+
+        # UI-CLEAN-3 P3: в канале сообщения участников — это комментарии.
+        # Участник выбран, а комментарии выключены → документ будет почти пуст.
+        if is_channel and params.user_id and not params.include_comments:
+            rows.append((
+                "⚠️ Внимание",
+                "В канале сообщения участников — это комментарии. "
+                "Комментарии выключены, поэтому документ по выбранному "
+                "участнику окажется почти пустым",
+                True,
+            ))
+        return rows
 
     def _on_parse_requested(self, params: ParseParams) -> None:
         session_file = self._cfg.session_path + ".session"
