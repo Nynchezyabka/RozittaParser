@@ -910,7 +910,8 @@ class ParserService:
             "chat_id": chat_id,
             "message_id": message.id,
             "topic_id": effective_topic_id,
-            "user_id": message.sender_id,
+            # UNKNOWN-1: скрытый отправитель («от имени канала») → атрибутируем чату
+            "user_id": message.sender_id if message.sender_id is not None else chat_id,
             "username": sender_name,
             "date": date_str,
             "text": text,
@@ -1265,7 +1266,9 @@ class ParserService:
             if hasattr(from_id, "user_id"):
                 return f"User_{from_id.user_id}"
 
-        return "Unknown"
+        # UNKNOWN-1: from_id=None И sender=None — Telegram скрывает отправителя
+        # у комментариев «от имени канала». Автор — сам канал (как в клиенте).
+        return self._chat_title or "Unknown"
     @staticmethod
     def _eval_filter(message: Message, expression: str) -> bool:
         """
@@ -1332,7 +1335,8 @@ class ParserService:
             "chat_id": chat_id,
             "message_id": message.id,
             "topic_id": effective_topic_id,
-            "user_id": message.sender_id,
+            # UNKNOWN-1: скрытый отправитель («от имени канала») → атрибутируем чату
+            "user_id": message.sender_id if message.sender_id is not None else chat_id,
             "username": sender_name,
             "date": date_str,
             "text": message.text or "",
