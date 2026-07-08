@@ -76,6 +76,24 @@ _SEPARATOR = "─" * 60
 #        merge_group_id, merge_part_index
 # FROM messages
 #
+def _tg_message_link(row):
+    """I15: приватная ссылка t.me/c/... на сообщение.
+
+    Посты: t.me/c/<id>/<msg>; комментарии: t.me/c/<id>/<post>?comment=<msg>.
+    Открывается участникам чата; для публичных каналов тоже работает.
+    Возвращает None, если данных недостаточно.
+    """
+    chat_id = row[_COL_CHAT_ID]
+    msg_id  = row[_COL_MESSAGE_ID]
+    if not chat_id or not msg_id:
+        return None
+    s = str(chat_id)
+    internal = s[4:] if s.startswith("-100") else s.lstrip("-")
+    if row[_COL_IS_COMMENT] and row[_COL_POST_ID]:
+        return f"https://t.me/c/{internal}/{row[_COL_POST_ID]}?comment={msg_id}"
+    return f"https://t.me/c/{internal}/{msg_id}"
+
+
 _COL_ID             = 0
 _COL_CHAT_ID        = 1
 _COL_MESSAGE_ID     = 2
@@ -1155,12 +1173,73 @@ class JsonGenerator:
         return {
             "message_id": row[_COL_MESSAGE_ID],
             "date":       row[_COL_DATE] or None,
+            "reply_to_msg_id": row[_COL_REPLY_TO],
+            "tg_link":    _tg_message_link(row),
             "sender_id":  row[_COL_USER_ID],
             "username":   row[_COL_USERNAME] or None,
             "text":       row[_COL_TEXT] or None,
             "media_path": row[_COL_MEDIA_PATH] or None,
             "stt_text":   stt_text,
         }
+
+    def generate_by_posts(
+        self,
+        chat_id:          int,
+        chat_title:       str,
+        user_id:          "Optional[int]" = None,
+        include_comments: bool            = True,
+        period_label:     str             = "fullchat",
+        date_from:        "Optional[str]" = None,
+        date_to:          "Optional[str]" = None,
+        log:              "_LogCallback"  = None,
+    ) -> "List[str]":
+        """I14: режим «по постам» — JSON-файл на каждый пост канала."""
+        log = log or logger.info
+        log("📋 Загружаю сообщения из БД для JSON-экспорта по постам...")
+        rows = self._db.get_messages(
+            chat_id,
+            user_id          = user_id,
+            include_comments = include_comments,
+            date_from        = date_from,
+            date_to          = date_to,
+        )
+        if not rows:
+            raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
+
+        stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        safe_title = sanitize_filename(chat_title)
+        mode_part  = "_comments" if include_comments else ""
+
+        posts = [r for r in rows if not r[_COL_IS_COMMENT]]
+        if not posts:
+            raise EmptyDataError(
+                f"В чате {chat_id} нет постов (режим «по постам» — для каналов)")
+        comments_by_post: dict[int, list] = {}
+        for r in rows:
+            if r[_COL_IS_COMMENT]:
+                comments_by_post.setdefault(r[_COL_POST_ID], []).append(r)
+
+        out_paths: "List[str]" = []
+        for post in posts:
+            pid = post[_COL_MESSAGE_ID]
+            payload = [{
+                "chat":     chat_title,
+                "post_id":  pid,
+                "post":     self._make_record(post, stt_map.get(pid)),
+                "comments": [
+                    self._make_record(c, stt_map.get(c[_COL_MESSAGE_ID]))
+                    for c in comments_by_post.get(pid, [])
+                ],
+            }]
+            out_path = os.path.join(
+                self._output_dir,
+                f"{safe_title}_post_{pid}{mode_part}_{period_label}.json",
+            )
+            self._write_json(out_path, payload, log)
+            out_paths.append(out_path)
+
+        log(f"✅ JSON по постам: {len(posts)} файл(ов)")
+        return out_paths
 
     def _write_json(self, path: str, records: List[dict], log: _LogCallback) -> None:
         log(f"💾 Записываю JSON: {os.path.basename(path)} ({len(records)} сообщений)")
@@ -1272,11 +1351,18 @@ class MarkdownGenerator:
 
         header = f"# {chat_title}\n\n"
 
+        # I13: карта id→автор для маркеров «в ответ на»
+        id2name = {r[_COL_MESSAGE_ID]: (r[_COL_USERNAME] or f"id:{r[_COL_USER_ID]}")
+                   for r in rows}
+
         # ── Без разбивки: один файл ────────────────────────────────────
         if not ai_split:
             lines: List[str] = [header]
             for row in rows:
-                lines.append(self._format_message(row, stt_map.get(row[_COL_MESSAGE_ID])))
+                lines.append(self._format_message(
+                    row, stt_map.get(row[_COL_MESSAGE_ID]),
+                    reply_author=id2name.get(row[_COL_REPLY_TO]),
+                ))
             out_path = os.path.join(self._output_dir, f"{base_name}.md")
             self._write_md(out_path, lines, log)
             return [out_path]
@@ -1290,7 +1376,8 @@ class MarkdownGenerator:
         for row in rows:
             msg_id  = row[_COL_MESSAGE_ID]
             stt     = stt_map.get(msg_id)
-            block   = self._format_message(row, stt)
+            block   = self._format_message(
+                row, stt, reply_author=id2name.get(row[_COL_REPLY_TO]))
             chunk.append(block)
             words += (
                 _word_count(row[_COL_TEXT])
@@ -1317,6 +1404,85 @@ class MarkdownGenerator:
             out_paths.append(path)
 
         log(f"✅ Markdown готов: {len(rows)} сообщений → {len(out_paths)} файл(ов)")
+        return out_paths
+
+    def generate_by_posts(
+        self,
+        chat_id:          int,
+        chat_title:       str,
+        user_id:          "Optional[int]" = None,
+        include_comments: bool            = True,
+        period_label:     str             = "fullchat",
+        date_from:        "Optional[str]" = None,
+        date_to:          "Optional[str]" = None,
+        log:              "_LogCallback"  = None,
+    ) -> "List[str]":
+        """I12: режим «по постам» — MD-файл на каждый пост канала.
+
+        Файл = заголовок с номером и датой поста (самоописание для RAG),
+        текст поста, затем его комментарии в хронологии. Комментарии,
+        чей пост не найден (удалён), пропускаются с записью в лог.
+        """
+        log = log or logger.info
+        log("📋 Загружаю сообщения из БД для MD-экспорта по постам...")
+        rows = self._db.get_messages(
+            chat_id,
+            user_id          = user_id,
+            include_comments = include_comments,
+            date_from        = date_from,
+            date_to          = date_to,
+        )
+        if not rows:
+            raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
+
+        stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        safe_title = sanitize_filename(chat_title)
+        mode_part  = "_comments" if include_comments else ""
+        # I13: карта id→автор для маркеров «в ответ на»
+        id2name = {r[_COL_MESSAGE_ID]: (r[_COL_USERNAME] or f"id:{r[_COL_USER_ID]}")
+                   for r in rows}
+
+        posts = [r for r in rows if not r[_COL_IS_COMMENT]]
+        comments_by_post: dict[int, list] = {}
+        for r in rows:
+            if r[_COL_IS_COMMENT]:
+                comments_by_post.setdefault(r[_COL_POST_ID], []).append(r)
+
+        if not posts:
+            raise EmptyDataError(
+                f"В чате {chat_id} нет постов (режим «по постам» — для каналов)")
+
+        known_ids = {p[_COL_MESSAGE_ID] for p in posts}
+        orphans = sum(len(v) for k, v in comments_by_post.items()
+                      if k not in known_ids)
+        if orphans:
+            log(f"⚠️ Комментариев без родительского поста: {orphans} (пропущены)")
+
+        out_paths: "List[str]" = []
+        for post in posts:
+            pid  = post[_COL_MESSAGE_ID]
+            date = str(post[_COL_DATE] or "")[:10]
+            lines: "List[str]" = [
+                f"# {chat_title} — пост #{pid} ({date})\n\n",
+                self._format_message(post, stt_map.get(pid)),  # пост — корень
+            ]
+            post_comments = comments_by_post.get(pid, [])
+            if post_comments:
+                lines.append(f"\n## 💬 Комментарии ({len(post_comments)})\n\n")
+                for c in post_comments:
+                    lines.append(self._format_message(
+                        c, stt_map.get(c[_COL_MESSAGE_ID]),
+                        reply_author=id2name.get(c[_COL_REPLY_TO]),
+                    ))
+
+            out_path = os.path.join(
+                self._output_dir,
+                f"{safe_title}_post_{pid}{mode_part}_{period_label}.md",
+            )
+            self._write_md(out_path, lines, log)
+            out_paths.append(out_path)
+
+        log(f"✅ MD по постам: {len(posts)} файл(ов)")
         return out_paths
 
     # ── Вспомогательные ───────────────────────────────────────────────
@@ -1395,7 +1561,8 @@ class MarkdownGenerator:
         out_path.write_text("\n".join(lines), encoding="utf-8")
         return [str(out_path)]
         
-    def _format_message(self, row, stt_text: Optional[str]) -> str:
+    def _format_message(self, row, stt_text: Optional[str],
+                        reply_author: Optional[str] = None) -> str:
         """Форматирует одно сообщение в Markdown-блок."""
 
         raw_date = row[_COL_DATE] or ""
@@ -1403,7 +1570,14 @@ class MarkdownGenerator:
         author   = row[_COL_USERNAME] or f"id:{row[_COL_USER_ID]}" or "Неизвестно"
         text     = (row[_COL_TEXT] or "").strip()
 
-        lines = [f"**[{date_str}] {author}:**"]
+        head = f"**[{date_str}] {author}:**"
+        link = _tg_message_link(row)
+        if link:
+            head += f" [↗]({link})"          # I15: переход к оригиналу
+        lines = [head]
+        if reply_author:
+            # I13: контекст диалога вне thread-режима
+            lines.append(f"*(в ответ на: {reply_author})*")
         if text:
             lines.append(text)
         if stt_text:
@@ -1912,6 +2086,65 @@ class HtmlGenerator:
             media_block   = media_block,
             stt_block     = stt_block,
         )
+
+    def generate_by_posts(
+        self,
+        chat_id:          int,
+        chat_title:       str,
+        user_id:          "Optional[int]" = None,
+        include_comments: bool            = True,
+        period_label:     str             = "fullchat",
+        date_from:        "Optional[str]" = None,
+        date_to:          "Optional[str]" = None,
+        log:              "_LogCallback"  = None,
+    ) -> "List[str]":
+        """I14: режим «по постам» — HTML-страница на каждый пост канала."""
+        log = log or logger.info
+        log("📋 Загружаю сообщения из БД для HTML-экспорта по постам...")
+        rows = self._db.get_messages(
+            chat_id,
+            user_id          = user_id,
+            include_comments = include_comments,
+            date_from        = date_from,
+            date_to          = date_to,
+        )
+        if not rows:
+            raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
+
+        stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        safe_title = sanitize_filename(chat_title)
+        h_title    = html_lib.escape(chat_title)
+        mode_part  = "_comments" if include_comments else ""
+        row_dict   = {row[_COL_MESSAGE_ID]: row for row in rows}
+
+        posts = [r for r in rows if not r[_COL_IS_COMMENT]]
+        if not posts:
+            raise EmptyDataError(
+                f"В чате {chat_id} нет постов (режим «по постам» — для каналов)")
+        comments_by_post: dict[int, list] = {}
+        for r in rows:
+            if r[_COL_IS_COMMENT]:
+                comments_by_post.setdefault(r[_COL_POST_ID], []).append(r)
+
+        out_paths: "List[str]" = []
+        for post in posts:
+            pid = post[_COL_MESSAGE_ID]
+            blocks: "List[str]" = [
+                self._format_message(post, stt_map.get(pid), row_dict)
+            ]
+            for c in comments_by_post.get(pid, []):
+                blocks.append(self._format_message(
+                    c, stt_map.get(c[_COL_MESSAGE_ID]), row_dict))
+            out_path = os.path.join(
+                self._output_dir,
+                f"{safe_title}_post_{pid}{mode_part}_{period_label}.html",
+            )
+            self._write_html(out_path, f"{h_title} — пост #{pid}",
+                             blocks, len(blocks), log)
+            out_paths.append(out_path)
+
+        log(f"✅ HTML по постам: {len(posts)} файл(ов)")
+        return out_paths
 
     def _write_html(
         self,

@@ -197,7 +197,22 @@ class ExportWorker(QThread):
                 # ── JSON ──────────────────────────────────────────────────
                 if "json" in formats:
                     jgen = JsonGenerator(db=db, output_dir=p.output_dir)
-                    json_paths = jgen.generate(
+                    if p.split_mode == "post":
+                        # I14: файл на пост + его комментарии
+                        json_paths = jgen.generate_by_posts(
+                            chat_id          = p.chat_id,
+                            chat_title       = p.chat_title,
+                            user_id          = p.user_id,
+                            include_comments = p.include_comments,
+                            period_label     = p.period_label,
+                            date_from        = p.date_from,
+                            date_to          = p.date_to,
+                            log              = self._log,
+                        )
+                        all_files.extend(json_paths)
+                        json_paths = []
+                    else:
+                        json_paths = jgen.generate(
                         chat_id          = p.chat_id,
                         chat_title       = p.chat_title,
                         topic_id         = p.topic_id,
@@ -218,7 +233,22 @@ class ExportWorker(QThread):
                 # ── Markdown ───────────────────────────────────────────────
                 if "md" in formats:
                     mdgen = MarkdownGenerator(db=db, output_dir=p.output_dir)
-                    md_paths = mdgen.generate(
+                    if p.split_mode == "post":
+                        # I12: файл на пост + его комментарии (для RAG-корпуса)
+                        md_paths = mdgen.generate_by_posts(
+                            chat_id          = p.chat_id,
+                            chat_title       = p.chat_title,
+                            user_id          = p.user_id,
+                            include_comments = p.include_comments,
+                            period_label     = p.period_label,
+                            date_from        = p.date_from,
+                            date_to          = p.date_to,
+                            log              = self._log,
+                        )
+                        all_files.extend(md_paths)
+                        md_paths = []
+                    else:
+                        md_paths = mdgen.generate(
                         chat_id          = p.chat_id,
                         chat_title       = p.chat_title,
                         topic_id         = p.topic_id,
@@ -239,7 +269,22 @@ class ExportWorker(QThread):
                 # ── HTML ──────────────────────────────────────────────────
                 if "html" in formats:
                     hgen = HtmlGenerator(db=db, output_dir=p.output_dir)
-                    html_paths = hgen.generate(
+                    if p.split_mode == "post":
+                        # I14: страница на пост + его комментарии
+                        html_paths = hgen.generate_by_posts(
+                            chat_id          = p.chat_id,
+                            chat_title       = p.chat_title,
+                            user_id          = p.user_id,
+                            include_comments = p.include_comments,
+                            period_label     = p.period_label,
+                            date_from        = p.date_from,
+                            date_to          = p.date_to,
+                            log              = self._log,
+                        )
+                        all_files.extend(html_paths)
+                        html_paths = []
+                    else:
+                        html_paths = hgen.generate(
                         chat_id              = p.chat_id,
                         chat_title           = p.chat_title,
                         topic_id             = p.topic_id,
