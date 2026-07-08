@@ -1,87 +1,103 @@
-# 🐸 Rozitta Parser 
+# 🐸 Rozitta Parser
 
 [![Telegram](https://img.shields.io/badge/Telegram-Вступить_в_группу-2CA5E0?style=for-the-badge&logo=telegram)](https://t.me/rozittaparser)
+[![Releases](https://img.shields.io/github/v/release/Nynchezyabka/RozittaParser?style=for-the-badge&color=f59f1e)](https://github.com/Nynchezyabka/RozittaParser/releases)
 
-## 🗺️ [Интерактивная карта проекта (с заделом на две будущих версии интерфейса)](https://nynchezyabka.github.io/RozittaParser/map.html)
-[viki](https://deepwiki.com/Nynchezyabka/RozittaParser)
+> Сохраняйте и изучайте свои Telegram-чаты — локально, приватно, офлайн.  
+> А для расшифровки аудио и видео в текст используйте **Rozitta Transcriber** — [репозиторий](https://github.com/Nynchezyabka/RozittaTranscriber).
 
-[English](#rozitta-parser) | [🇷🇺 Русский](#rozitta-parser-v15)
+**Rozitta Parser** — десктопное приложение, которое скачивает ваши Telegram-чаты
+(группы, каналы с комментариями, форумы, личные диалоги) в локальную базу
+и собирает из них читаемые документы — или готовый корпус для нейросети.
 
-> Back up and explore your Telegram chats — locally, privately, offline.
-**Rozitta Parser** is a desktop GUI app that exports messages, media, 
-and voice notes from any Telegram chat you're a member of — 
-groups, channels, forums with topics, and private conversations.
+🗺️ [Интерактивная карта проекта](https://nynchezyabka.github.io/RozittaParser/map.html) · 📖 [DeepWiki](https://deepwiki.com/Nynchezyabka/RozittaParser) · [🇬🇧 English below](#-rozitta-parser-english)
 
-![Screenshot_17](https://github.com/user-attachments/assets/09fd78d7-c6ee-4f31-affc-140aea1e3c8d)
-
-### ✨ Features
-
-- 📁 **Full backup** — messages from groups, channels, forums with topics
-- 🧠 **AI-Ready export** — Markdown with adjustable chunk size (default 300k words) 
-  for NotebookLM and other AI tools
-- 📝 **DOCX** — readable documents, split by day / month / post
-- 🌐 **HTML** — clean web‑ready export with message structure
-- 🎙️ **Speech-to-Text** — transcribe voice messages and "circles"
-  via local Whisper (no cloud, no API key)
-- 🖼️ **Media archive** — photos, videos, files with folder structure
-- 🔒 **100% local** — sessions and data never leave your computer
-
-### 🚀 Use case: Telegram → NotebookLM
-
-Thousands of messages in your chats = a knowledge base waiting to happen.
-Export any chat to Markdown, upload to NotebookLM, ask questions.
-
-### 🛠 Install
-```bash
-git clone https://github.com/Nynchezyabka/RozittaParser.git
-cd RozittaParser
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-source .venv/bin/activate  # Linux/macOS
-pip install -r requirements.txt
-python main.py
-```
-Requires Python 3.10–3.13. Python 3.14 requires Microsoft C++ Build Tools (see issue #35).
-
-> ⚠️ For personal use only — chats you are a member of.
-> Never share your `.session` file with anyone.
+![Главное окно](https://github.com/user-attachments/assets/6f46f659-6d82-4dc3-829f-c0fb71549783)
 
 ---
 
+## 🚀 Быстрый старт (2 минуты, без установки)
 
+1. Скачайте **готовую сборку** из [Releases](https://github.com/Nynchezyabka/RozittaParser/releases) и распакуйте папку.
+2. Запустите `RozittaParser.exe`.
+3. Войдите в Telegram (см. [авторизацию](#-авторизация)).
+4. Выберите чат → нажмите пресет **«⚡ Полный архив»** → «Начать».
 
-# 🐸 Rozitta Parser v1.7.3
-[🇬🇧 English](#rozitta-parser) | [Русский](#rozitta-parser-v15)
-
-> Сохраняйте и изучайте свои Telegram‑чаты — локально, приватно, офлайн.
-
-**Rozitta Parser** — десктопное приложение для архивирования сообщений, медиа и голосовых заметок из любых чатов, где вы участвуете: группы, каналы, форумы с топиками, личные диалоги.
-
----
-
-## ✨ Возможности
-
-- 📁 **Полный бэкап** — сообщения, фото, видео, файлы
-- 🧠 **AI-Ready** — Markdown с настраиваемым размером чанка (по умолчанию 300k слов) для NotebookLM
-- 📝 **DOCX** — читаемые документы с разбивкой по дням/месяцам/постам
-- 🌐 **HTML** — чистая веб‑страница
-- 🎙️ **Speech-to-Text** — расшифровка голосовых и кружочков через локальный Whisper (без облака)
-- 🔒 **Всё локально** — сессии и данные не покидают ваш компьютер
+Программа покажет окно **«Проверьте перед стартом»** — вы всегда видите,
+что именно будет скачано, до запуска.
 
 ---
 
-## 🚀 Быстрый старт (3 минуты)
+## ✨ Что умеет
 
-### 1. Получите ключи API (если впервые)
-1. Зайдите на [my.telegram.org](https://my.telegram.org)
-2. Войдите под любым своим аккаунтом
-3. Перейдите в **API development tools**
-4. Создайте приложение (название любое)
-5. Скопируйте **api_id** и **api_hash**
+- 📁 **Полный бэкап** — сообщения, фото, видео, файлы, голосовые из групп,
+  каналов, форумов с топиками и личных диалогов
+- 💬 **Комментарии под постами** — обсуждения каналов скачиваются вместе
+  с постами и попадают в документ (в т.ч. отдельными файлами «пост + его обсуждение»)
+- 🎙️ **Речь в текст** — расшифровка голосовых и кружочков локальным Whisper:
+  без облака, без API-ключей, тексты попадают прямо в документ.  
+  Для расшифровки видео и длинных аудио используйте [Rozitta Transcriber](https://github.com/Nynchezyabka/RozittaTranscriber).
+- ⚡ **Пресеты одним кликом** — «Полный архив», «Только текст»
+  и «🤖 Для нейросети» выставляют все настройки сами
+- 🧠 **Готовый корпус для ИИ** — Markdown с разбивкой на чанки (по умолчанию
+  300k слов) для NotebookLM, AnythingLLM, open-notebook и других RAG-инструментов
+- 👥 **Фильтр по участнику** — «только сообщения» или «сообщения + ответы»
+  (ветки диалогов с контекстом, деревом в HTML и отступами в DOCX/MD)
+- 📝 **Четыре формата** — DOCX, Markdown, HTML, JSON; разбивка единым файлом,
+  по дням, месяцам или постам
+- 🔒 **Всё локально** — сессия, база SQLite и файлы не покидают ваш компьютер
 
-**Важно:** ключи **не привязаны к номеру телефона**. Вы можете использовать ключи от одного аккаунта, чтобы войти в другой.
+---
 
-### 2. Установите программу
+## 💡 Зачем это нужно (живые сценарии)
+
+**Учебный курс или группа.** Поток закончится — а архив с разборами
+останется у вас: выпуски, комментарии, расшифрованные голосовые. Пресет
+«🤖 Для нейросети» собирает из него корпус, которому можно задавать вопросы
+через NotebookLM или локальный RAG: *«разбирался ли похожий случай и в каком
+выпуске?»*
+
+**Семейные чаты и память.** Годы переписки, голосовых и фото — в читаемом
+документе, который не зависит ни от телефона, ни от серверов.
+
+**Работа с клиентами.** Вся история договорённостей по проекту — в одном
+файле с поиском: *«что мы согласовали по террасе в марте?»*
+
+---
+
+## 🔑 Авторизация
+
+**Классический вход:** api_id + api_hash + номер телефона + код из Telegram.
+
+<details>
+<summary>Где взять api_id и api_hash (1 минута)</summary>
+
+1. Зайдите на [my.telegram.org](https://my.telegram.org) и войдите под своим аккаунтом
+2. **API development tools** → создайте приложение (название любое)
+3. Скопируйте **api_id** и **api_hash**
+
+Ключи идентифицируют *приложение*, а не аккаунт: подойдут ключи от любого
+вашего аккаунта или другого проекта.
+</details>
+
+**Вход через tdata (без ключей):** укажите путь к папке Telegram Desktop
+(например, `%APPDATA%\Telegram Desktop\tdata`), предварительно закрыв сам
+Telegram Desktop. ⚠️ При включённом прокси импорт tdata может не сработать —
+временно отключите прокси или используйте классический вход.
+
+---
+
+## 🛡️ Rozitta не банит аккаунты
+
+- Запросы к Telegram — **не чаще 1 в секунду** (лимит Telegram — 30/сек, мы далеко от него)
+- Автоматические паузы при FloodWait (встроено в Telethon)
+- Приложение только **читает** данные: не рассылает, не спамит, не создаёт ботов
+- Поддержка прокси (SOCKS5 / MTProto) для сложных сетей
+
+---
+
+## 🛠 Установка из исходников (для разработчиков)
+
 ```bash
 git clone https://github.com/Nynchezyabka/RozittaParser.git
 cd RozittaParser
@@ -91,97 +107,74 @@ source .venv/bin/activate     # Linux/macOS
 pip install -r requirements.txt
 python main.py
 ```
-**Для macOS:**  
-Откройте **Терминал** и выполните команду:
 
-```bash
-xattr -cr RozittaParser-macOS-Intel-x64.app
-```
-На некоторых версиях macOS может открыться стандартно: в настройках безопасности нажать на кнопку "всё равно открыть".
+Требуется Python 3.10–3.13 (3.14 — см. [issue #35](https://github.com/Nynchezyabka/RozittaParser/issues/35)).
 
-**Требуется Python 3.10–3.13.** Python 3.14 требует установки Microsoft C++ Build Tools (см. [issue #35](https://github.com/Nynchezyabka/RozittaParser/issues/35)).
-
-### 3. Авторизуйтесь
-- **Классический вход:** введите api_id, api_hash и номер телефона, затем код из Telegram.
-- **Вход через tdata (Telegram Desktop):** 1. Закройте открытый Telegram Desktop во избежание конфликтов сессий. 2. Укажите путь к папке `tdata` (например, `%APPDATA%\Telegram Desktop\tdata`).  
-  ⚠️ *На данный момент импорт через tdata может не работать, если используется прокси. Рекомендуется временно отключать прокси при импорте tdata или использовать классический вход.*
-
----
-
-## 🛡️ Rozitta **НЕ банит** (почему)
-
-- ✅ Все запросы к Telegram делаются **не чаще 1 раза в секунду** (Telegram рекомендует 30 запросов/сек — мы далеко от лимита)
-- ✅ Автоматические паузы при FloodWait (Telethon встроен)
-- ✅ Поддержка прокси (SOCKS5 / MTProto) для сложных сетей
-- ✅ Приложение только **читает** данные, не отправляет спам, не создаёт ботов
-
-
----
-
-## 📱 Для начинающих (и тех, кто не хочет разбираться)
-
-Если вы не программист — скачайте **готовую сборку** (портабельную версию) из [релизов](https://github.com/Nynchezyabka/RozittaParser/releases).  
-Распакуйте папку, запустите `RozittaParser.exe` — и всё работает.
-
-(В будущем появится **лайт‑режим** с одной кнопкой «Архивировать чат» — пока в разработке.)
+**macOS:** после распаковки сборки выполните `xattr -cr RozittaParser-macOS-Intel-x64.app`
+или разрешите запуск в настройках безопасности.
 
 ---
 
 ## 🔧 Частые вопросы
 
-### Где взять api_id и api_hash?
-На [my.telegram.org](https://my.telegram.org) → API development tools → создать приложение.
+<details>
+<summary><b>Можно без api-ключей?</b></summary>
+Да — вход через tdata (см. «Авторизация»).
+</details>
 
-### А можно без ключей?
-Да, если у вас установлен Telegram Desktop. Укажите в программе путь к папке `tdata` (например, `C:\Users\Имя\AppData\Roaming\Telegram Desktop\tdata`).  
-⚠️ *Примечание:* импорт через tdata может не работать, если включён прокси. Временно отключите прокси в настройках или используйте классический вход.
+<details>
+<summary><b>Что будет, если передам ключи другу?</b></summary>
+Он войдёт под своим номером через ваше «приложение». За нарушения блокируется
+его аккаунт, а не ваши ключи. Но передавать ключи посторонним не стоит.
+</details>
 
-### У меня уже есть ключи от другого проекта. Подойдут?
-Да. Ключи идентифицируют **приложение**, а не аккаунт. Используйте их с любым номером.
+<details>
+<summary><b>Меня блокировали в другой программе — можно запускать Rozitta?</b></summary>
+Да. Блокировка API обычно временная (3–7 дней) и не связана с Rozitta —
+она не вызывает повторного бана благодаря щадящим лимитам.
+</details>
 
-### Что будет, если я передам свои ключи другу?
-Друг сможет войти в Telegram под своим номером, используя ваше приложение. Если он нарушит правила, блокировку получит **его аккаунт**, а не ваши ключи. Тем не менее, передавать ключи посторонним не рекомендуется.
-
-### Меня заблокировали при использовании другой программы. Можно ли запустить Rozitta?
-Да, блокировка аккаунта обычно временная (3–7 дней) и касается только доступа к API. Сам аккаунт остаётся рабочим. Подождите, пока ограничение снимется, и используйте Rozitta — она не вызовет повторного бана.
-
----
-
-## 👩‍💻 Для разработчиков
-
-Проект создан в формате **vibecoding** — я не программист, но мне очень нужны были именно такие функции.  
-Спасибо, что нашёлся добрый человек, который помог с рефакторингом в  Claude Code! И ещё один, который помогает теперь тут на github.  
-Телеграм сейчас работает нестабильно, не все функции протестированы.  
-Выкладываю как есть — с открытым кодом и просьбой о помощи.
-
-Если вы опытный разработчик и вам интересен живой проект с душой —  
-буду рада помощи с любыми задачами из [Issues](https://github.com/Nynchezyabka/RozittaParser/issues).  
-Pull Requests и критика приветствуются.
-
-- **Для контрибьюторов:** [CONTRIBUTING.md](CONTRIBUTING.md) – как помочь, собирать, тестировать.
-- **Архитектура и план баг-фикса:** [ARCHITECTURE.md](ARCHITECTURE.md) – схема модулей, три критических бага, контракты.
-- **Группа в Telegram** [![Telegram](https://img.shields.io/badge/Telegram-Вступить_в_группу-2CA5E0?style=for-the-badge&logo=telegram)](https://t.me/rozittaparser)
+<details>
+<summary><b>Куда сохраняются данные?</b></summary>
+В папку <code>output/&lt;название чата&gt;/</code> рядом с программой: база SQLite,
+медиа по папкам и готовые документы. Всё портативно — можно перенести на флешке.
+</details>
 
 ---
 
-## ⚠️ Важно
+## 🐸 Семейство Rozitta
 
-Rozitta Parser предназначена для **личного использования** — сохранения чатов, в которых вы участвуете.  
-Не используйте для сбора данных без ведома участников, массового скрейпинга или любых целей, нарушающих правила Telegram и законодательство.
+**Rozitta** — это семейство локальных инструментов для работы с текстами и знаниями. Каждый инструмент решает свою задачу, а вместе они превращают разрозненные данные (Telegram-чаты, аудио, видео) в структурированный корпус для поиска, анализа и работы с ИИ. Всё работает локально — данные остаются у вас.
+
+| Инструмент | Статус | Назначение |
+|------------|--------|------------|
+| ✅ [**Rozitta Parser**](https://github.com/Nynchezyabka/RozittaParser) | готов | Парсинг Telegram-чатов, чанкинг, подготовка RAG-корпуса |
+| ✅ [**Rozitta Transcriber**](https://github.com/Nynchezyabka/RozittaTrancriber) | готов | Аудио/видео → Markdown с таймкодами и диаризацией |
+| 🔜 **Rozitta Библиотекарь** | в планах | Локальный поиск и вопросы по архиву |
+
+**Поток данных:**
+
+
+```
+Видео/аудио ──▶ Rozitta Transcriber ──▶ .md ──▶ Rozitta Parser ──▶ RAG-корпус
+                                                              │
+                                                              ▼
+                                                      Rozitta Библиотекарь (🔜)
+```
 
 ---
 
-## 📋 Планы на следующие версии
+## 📋 Планы
 
-- Доработка списка активных участников с возможностью экспорта в отдельный файл
-- Экспорт постов с комментариями отдельными файлами
-- STT видео
-- Тестирование на macOS и Linux
-- Английская версия интерфейса
-- Лайт-версия для начинающих пользователей
-- Обновление интерактивной карты проекта
-- Распознавание изображений (VLM/Florence-2) — описание картинок для контекста
-- Telegram-бот для удалённого управления архивированием
+- 🖼️ **Распознавание изображений** (VLM/Florence-2) — описания картинок
+  в документе и поиск по содержимому фото; доставка отдельным скачиваемым
+  компонентом
+- 📚 **«Розитта-Библиотекарь»** — локальный семантический поиск и вопросы
+  по скачанному архиву
+- 🧪 Тестирование на macOS и Linux
+- 🌍 Английская версия интерфейса
+- 🧰 Обслуживание базы из приложения (исправления без SQL)
+- 🤖 Telegram-бот для удалённого управления архивированием
 
 ---
 
@@ -189,3 +182,44 @@ Rozitta Parser предназначена для **личного использ
 
 [![CloudTips](https://img.shields.io/badge/CloudTips-QR--код-blue?style=for-the-badge&logo=visa&logoColor=white)](https://pay.cloudtips.ru/p/c77c3d90)
 [![Boosty](https://img.shields.io/badge/Boosty-Поддержать-orange?style=for-the-badge&logo=boosty&logoColor=white)](https://boosty.to/nynchezyabka/donate)
+
+---
+
+# 🐸 Rozitta Parser (English)
+
+> Back up and explore your Telegram chats — locally, privately, offline.
+
+**Rozitta Parser** is a desktop GUI app that downloads your Telegram chats
+(groups, channels **with comments**, forums, private conversations) into
+a local database and builds readable documents — or a ready-to-use corpus
+for AI tools. For transcribing audio/video into text, check out
+**[Rozitta Transcriber](https://github.com/Nynchezyabka/RozittaTranscriber)**.
+
+### ✨ Features
+
+- 📁 **Full backup** — messages, media and voice notes from any chat you're in
+- 💬 **Channel comments** — post discussions are downloaded and exported,
+  including one-file-per-post mode
+- 🎙️ **Speech-to-Text** — local Whisper transcription of voice messages
+  and "circles"; no cloud, no API key. For longer media, use Rozitta Transcriber.
+- ⚡ **One-click presets** — "Full archive", "Text only", "For AI"
+- 🧠 **AI-ready export** — chunked Markdown (300k words) for NotebookLM,
+  AnythingLLM, open-notebook and other RAG tools
+- 👥 **Per-participant export** — messages only, or full reply threads
+  rendered as trees
+- 📝 **Four formats** — DOCX, Markdown, HTML, JSON
+- 🔒 **100% local** — your session and data never leave your computer
+
+### 🚀 Quick start
+
+Grab the portable build from
+[Releases](https://github.com/Nynchezyabka/RozittaParser/releases), unpack,
+run `RozittaParser.exe`, sign in, pick a chat, hit the **"Full archive"**
+preset. A confirmation screen shows exactly what will be downloaded before
+anything starts.
+
+Source install: Python 3.10–3.13, `pip install -r requirements.txt`,
+`python main.py`.
+
+> ⚠️ For personal use only — chats you are a member of.
+> Never share your `.session` file.
