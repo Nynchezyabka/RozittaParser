@@ -4,6 +4,11 @@ Telethon>=1.35.0
 python-docx>=1.1.0
 python-dotenv>=1.2.2
 
+# ── База знаний для ИИ (пресет #96) ──────────────────────────────────────────
+# python-frontmatter: идемпотентная работа с YAML front-matter в Markdown.
+# Pure-Python, транзитивно тянет только PyYAML (уже нужен Telethon).
+python-frontmatter>=1.0.0
+
 # ── Ускорение шифрования Telethon ─────────────────────────────────────────────
 # cryptg даёт 10-20x прирост скорости MTProto — рекомендуется
 cryptg

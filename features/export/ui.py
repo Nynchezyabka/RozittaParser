@@ -95,10 +95,21 @@ class ExportParams:
     ai_split_chunk_words: int = 300_000
     date_from:            Optional[str] = None   # "YYYY-MM-DD"
     date_to:              Optional[str] = None   # "YYYY-MM-DD" (включительно)
+    # ── Пресет «🧠 База знаний для ИИ» (#96) ────────────────────────────────
+    # Если True — после экспорта вызывается KnowledgeBaseBuilder: строит
+    # 00_Огалвление.md, ИНСТРУКЦИЯ_ДЛЯ_ИИ.md (+CLAUDE.md+AGENTS.md),
+    # archive_passport.json и обогащает каждый MD-файл YAML-шапкой.
+    # Если при этом "md" нет в export_formats — автоматически добавляется
+    # (пресет рассчитан на нетехнических пользователей, MD обязателен).
+    build_kb:         bool          = False
 
     def __post_init__(self):
         if self.export_formats is None:
             self.export_formats = ["docx"]
+        # Пресет базы знаний требует MD-файлы — добавляем автоматически.
+        # Дублируем защиту: если MD уже есть — не добавляем второй раз.
+        if self.build_kb and "md" not in self.export_formats:
+            self.export_formats = list(self.export_formats) + ["md"]
 
 
 # ==============================================================================
@@ -300,7 +311,41 @@ class ExportWorker(QThread):
                         log                  = self._log,
                     )
                     all_files.extend(html_paths)
-    
+
+                # ── База знаний для ИИ (пресет #96) ──────────────────────
+                # Внимание: вызывается ВНУТРИ `with DBManager(...) as db:`,
+                # потому что KnowledgeBaseBuilder использует db (read-only).
+                if p.build_kb:
+                    try:
+                        from features.export.knowledge_base import KnowledgeBaseBuilder
+                        builder = KnowledgeBaseBuilder(db=db, output_dir=p.output_dir)
+
+                        # 1. YAML-обогащение каждого MD-файла (до build(),
+                        #    чтобы оглавление и паспорт видели обновлённые файлы).
+                        md_files = [f for f in all_files if f.endswith(".md")]
+                        if md_files:
+                            builder.enrich_md_files(
+                                md_files, p.chat_id, p.chat_title,
+                                log=self._log,
+                            )
+
+                        # 2. Сборка артефактов: 00_Оглавление.md,
+                        #    ИНСТРУКЦИЯ_ДЛЯ_ИИ.md, CLAUDE.md, AGENTS.md,
+                        #    archive_passport.json.
+                        artifacts = builder.build(
+                            chat_id        = p.chat_id,
+                            chat_title     = p.chat_title,
+                            period_label   = p.period_label,
+                            exported_files = all_files,
+                            log            = self._log,
+                        )
+                        all_files.extend(artifacts)
+                    except Exception as exc:
+                        # База знаний — необязательная надстройка над экспортом.
+                        # Любой сбой в ней НЕ должен ронять успешно собранный экспорт.
+                        logger.exception("ExportWorker: KB builder failed")
+                        self._log(f"⚠️ База знаний: сбой — {exc}")
+
             if self._is_running:
                 self._log(f"🎉 Готово! Создано файлов: {len(all_files)}")
                 for f in all_files:
