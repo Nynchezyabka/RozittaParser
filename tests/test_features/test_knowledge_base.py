@@ -78,7 +78,8 @@ class TestKBSmoke:
         db = DBManager(str(tmp_path / "test.db"))
         builder = KnowledgeBaseBuilder(db=db, output_dir=str(tmp_path))
         assert builder is not None
-        db.close() if hasattr(db, "close") else None
+        if hasattr(db, "close"):
+            db.close()
 
     def test_build_signature(self):
         """Сигнатура build(...) соответствует контракту (правило #20).
