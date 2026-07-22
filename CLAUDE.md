@@ -675,6 +675,21 @@ marked-negative ID уже после запроса.
 Ошибка `takes N positional arguments but N+1 were given` = пропущен `self` в сигнатуре
 instance-метода.
 
+### #21. Пресет базы знаний (KB) — YAML-обогащение НЕ в MarkdownGenerator
+
+Пресет `"kb"` добавляет YAML front-matter и 5 артефактов **пост-обработкой**
+в `features/export/knowledge_base.py`. `MarkdownGenerator` и другие генераторы
+НЕ меняются. Чекбокс KB в UI — редактируемый (не залочен пресетом). Переключение
+KB не сбрасывает текущий пресет в «Свой вариант» (`_toggle_build_kb` НЕ в
+`_wire_preset_watchers`).
+
+При `build_kb=True` и отсутствии MD в форматах — MD добавляется автоматически
+(в `ExportParams.__post_init__`).
+
+ИНСТРУКЦИЯ_ДЛЯ_ИИ.md, CLAUDE.md и AGENTS.md — НЕ идентичные копии:
+ИНСТРУКЦИЯ_ДЛЯ_ИИ.md — базовая инструкция, CLAUDE.md — базовая + добавка
+для Claude Code, AGENTS.md — базовая + добавка для OpenAI Agents.
+
 **Правила:**
 
 ```python

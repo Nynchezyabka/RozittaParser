@@ -52,6 +52,53 @@ INDEX_FILENAME = "00_Оглавление.md"
 INSTRUCTION_RU = "ИНСТРУКЦИЯ_ДЛЯ_ИИ.md"
 INSTRUCTION_CLAUDE = "CLAUDE.md"
 INSTRUCTION_AGENTS = "AGENTS.md"
+
+
+# ── KB preset stage 10c (agent addenda) ──
+_CLAUDE_ADDENDUM = (
+    "\n\n## Рекомендации для Claude\n\n"
+    "Этот архив предназначен для работы в **Claude Code** — агенте-помощнике "
+    "разработчика.\n\n"
+    "### Как использовать\n\n"
+    "- Файл `CLAUDE.md` — ваш контекст. Claude Code автоматически прочитает "
+    "его при запуске в папке архива.\n"
+    "- Секция «Режимы работы» выше — ваши инструкции по ответам. Начинайте "
+    "с режима «Архивариус».\n\n"
+    "### Дополнительные правила\n\n"
+    "- **Ответы на русском языке**, даже если вопрос задан на английском.\n"
+    "- **Не предлагайте изменения кода** Rozitta Parser — архив уже "
+    "выгружен, он read-only.\n"
+    "- **Ссылайтесь на конкретные файлы и посты**: «согласно "
+    "`Дрессировщик_post_142_comments_2025-01.md`, пост #142 от 15.01.2025…».\n"
+    "- Если пользователь просит что-то вне архива — переключайтесь в "
+    "режим «Свободный советник» и явно помечайте: «это не из архива».\n"
+)
+
+
+# ── KB preset stage 10c (agent addenda) ──
+_AGENTS_ADDENDUM = (
+    "\n\n## Рекомендации для OpenAI Agents\n\n"
+    "Этот архив предназначен для работы с **Codex** и другими "
+    "OpenAI-агентами.\n\n"
+    "### Как использовать\n\n"
+    "- Файл `AGENTS.md` — ваш контекст. OpenAI Agents прочитают "
+    "его как системный промпт при работе в папке архива.\n"
+    "- Секция «Режимы работы» выше — ваши инструкции по ответам. "
+    "Начинайте с режима «Архивариус».\n\n"
+    "### Дополнительные правила\n\n"
+    "- **Ответы на русском языке**, даже если вопрос задан на английском.\n"
+    "- **Не предлагайте изменения кода** — архив уже выгружен, "
+    "он read-only.\n"
+    "- **Ссылайтесь на конкретные файлы и посты**: «согласно "
+    "`Дрессировщик_post_142_comments_2025-01.md`, пост #142 от "
+    "15.01.2025…».\n"
+    "- Если пользователь просит что-то вне архива — "
+    "переключайтесь в режим «Свободный советник» и явно "
+    "помечайте: «это не из архива».\n"
+    "- Используйте `/search` и `/read` для поиска по файлам, "
+    "не догадывайте содержание.\n"
+)
+
 PASSPORT_FILENAME = "archive_passport.json"
 
 # Маппинг file_type → "[тип медиа]" для оглавления и эвристики «О чём пост».
@@ -502,7 +549,7 @@ class KnowledgeBaseBuilder:
 
         # 2. Инструкция (3 файла)
         instruction_paths = self._build_instruction(
-            chat_id, chat_title, chat_meta, log
+            chat_id, chat_title, chat_meta, exported_files, log  # ── KB preset stage 10b (dynamic instruction) ──
         )
 
         # Список сгенерированных артефактов (без паспорта — он в конце)
@@ -883,24 +930,44 @@ class KnowledgeBaseBuilder:
 
     def _build_instruction(
         self,
-        chat_id:    int,
-        chat_title: str,
-        chat_meta:  dict,
-        log:        _LogCallback,
+        chat_id:        int,
+        chat_title:     str,
+        chat_meta:      dict,
+        exported_files: List[str],
+        log:            _LogCallback,
     ) -> List[str]:
-        """Этап 6: строит ИНСТРУКЦИЯ_ДЛЯ_ИИ.md + CLAUDE.md + AGENTS.md."""
+        """Этап 6: строит ИНСТРУКЦИЯ_ДЛЯ_ИИ.md + CLAUDE.md + AGENTS.md.
+
+        ИНСТРУКЦИЯ_ДЛЯ_ИИ.md — полная базовая инструкция.
+        CLAUDE.md — базовая + добавка для Claude Code.
+        AGENTS.md — базовая + добавка для OpenAI Agents.
+        """
         log("  Построение инструкции для ИИ…")
-        text = self._render_instruction_text(chat_title, chat_meta)
+        text = self._render_instruction_text(chat_title, chat_meta, exported_files)  # ── KB preset stage 10b (dynamic instruction) ──
+        # ── KB fix step2 (signature + addenda) ──
+        _AGENT_ADDENDA: Dict[str, str] = {
+            INSTRUCTION_CLAUDE: _CLAUDE_ADDENDUM,
+            INSTRUCTION_AGENTS: _AGENTS_ADDENDUM,
+        }
         paths: List[str] = []
         for filename in (INSTRUCTION_RU, INSTRUCTION_CLAUDE, INSTRUCTION_AGENTS):
             p = self._output_dir / filename
-            p.write_text(text, encoding="utf-8")
+            p.write_text(text + _AGENT_ADDENDA.get(filename, ""), encoding="utf-8")
             paths.append(str(p))
         log(f"  Инструкция: {len(paths)} файла")
         return paths
 
-    def _render_instruction_text(self, chat_title: str, chat_meta: dict) -> str:
-        """Шаблон инструкции для ИИ (этап 6)."""
+    def _render_instruction_text(  # ── KB preset stage 10b (dynamic instruction) ──
+        self,
+        chat_title:     str,
+        chat_meta:      dict,
+        exported_files: List[str],
+    ) -> str:
+        """Шаблон инструкции для ИИ (этап 6).
+
+        Секция «Структура архива» строится динамически на основе
+        анализа exported_files — имена файлов определяют их роль.
+        """
         chat_type = chat_meta.get("type") or "неизвестен"
         period = (f"{_format_date(chat_meta.get('period_min'))} — "
                   f"{_format_date(chat_meta.get('period_max'))}")
@@ -926,16 +993,13 @@ class KnowledgeBaseBuilder:
         lines.extend([
             f"- **Участников:** {participants}",
             "",
-            "## Структура архива",
-            "",
-            f"- `00_Оглавление.md` — **ГЛАВНАЯ ТОЧКА ВХОДА**. Таблица всех "
-            f"постов (или месяцев для диалога) со ссылками на файлы. "
-            f"Любой поиск начинай с него.",
-            f"- `archive_passport.json` — машиночитаемый паспорт архива.",
-            f"- MD-файлы постов/чанков — основной контент. Каждый имеет "
-            f"YAML-шапку с метаданными (chat, post, date, author, type).",
-            f"- Папка `media/` — медиафайлы (фото, видео, голосовые).",
-            "",
+        ])
+
+        # ── Динамическая секция «Структура архива» ──────────────────
+        lines.extend(self._render_archive_structure(
+            chat_title, chat_meta, exported_files))
+
+        lines.extend([
             "## Режимы работы",
             "",
             "По умолчанию — **Архивариус**. Переключение по явной формулировке.",
@@ -994,6 +1058,145 @@ class KnowledgeBaseBuilder:
             "",
         ])
         return "\n".join(lines)
+
+    # ── KB preset stage 10b (dynamic instruction) ──
+    def _render_archive_structure(
+        self,
+        chat_title:     str,
+        chat_meta:      dict,
+        exported_files: List[str],
+    ) -> List[str]:
+        """Строит динамическую секцию «Структура архива» для инструкции ИИ.
+
+        Анализирует имена MD-файлов из exported_files и описывает
+        конкретные шаблоны имён вместо абстрактного «MD-файлы».
+        """
+        md_files = [f for f in exported_files if f.endswith(".md")]
+        has_posts = any(re.search(r"_post_\d+", Path(f).name) for f in md_files)
+        has_chunks = any(re.search(r"_part_\d+\.md$", Path(f).name) for f in md_files)
+        has_threads = any("_threads_" in Path(f).name for f in md_files)
+        has_media = any("media" in f for f in exported_files)
+
+        # Примеры имён файлов для описания (до 2 каждого типа)
+        post_examples = []
+        chat_examples = []
+        chunk_examples = []
+        thread_examples = []
+        for f in md_files:
+            name = Path(f).name
+            if re.search(r"_post_\d+", name) and len(post_examples) < 2:
+                post_examples.append(f"`{name}`")
+            if re.search(r"_part_\d+\.md$", name) and len(chunk_examples) < 2:
+                chunk_examples.append(f"`{name}`")
+            if "_threads_" in name and len(thread_examples) < 2:
+                thread_examples.append(f"`{name}`")
+            if (not re.search(r"_post_\d+", name)
+                    and not re.search(r"_part_\d+", name)
+                    and "_threads_" not in name
+                    and len(chat_examples) < 2):
+                chat_examples.append(f"`{name}`")
+
+        posts_count = chat_meta.get("posts_count", 0)
+        is_channel = chat_meta.get("type") == "channel"
+        lines: List[str] = ["## Структура архива", ""]
+
+        # ── Оглавление ───────────────────────────────────────────────
+        if is_channel and posts_count > 0:
+            lines.extend([
+                "- `00_Оглавление.md` — таблица всех постов: номер, дата, "
+                "заголовок, ссылка на файл. Это **файловый индекс** для "
+                "быстрого перехода к нужному посту.",
+                "",
+                "  **Важно:** столбец «О чём» содержит **авторские заголовки** "
+                "постов. Они часто метафоричны, ироничны или не раскрывают "
+                "содержание (например: «ОДНА ФРАЗА, КОТОРАЯ ЗАСТАВИЛА "
+                "ЗАВИСНУТЬ» — пост про вычислимость сознания). Для понимания "
+                "темы поста — читай полные тексты файлов, не ориентируйся "
+                "только по заголовкам.",
+                "",
+            ])
+        else:
+            lines.extend([
+                "- `00_Оглавление.md` — помесячная таблица сообщений со "
+                "ссылками на файлы. Для диалогов также содержит хронокарту "
+                "(всплески и паузы активности).",
+                "",
+            ])
+
+        # ── Файлы постов ─────────────────────────────────────────────
+        if has_posts:
+            lines.extend([
+                "- Файлы постов — каждый пост канала в отдельном MD-файле "
+                "вместе с его комментариями:",
+            ])
+            if post_examples:
+                lines.append(f"  пример: {post_examples[0]}")
+            lines.extend([
+                "  ID в имени файла — номер сообщения-поста в Telegram. "
+                "Каждый файл имеет YAML-шапку с метаданными "
+                "(chat, post, date, author, type, comments_count).",
+                "",
+            ])
+
+        # ── Файлы чанков ─────────────────────────────────────────────
+        if has_chunks:
+            lines.extend([
+                "- Чанки — части большого архива, разбитые по объёму:",
+            ])
+            if chunk_examples:
+                lines.append(f"  пример: {chunk_examples[0]}")
+            lines.extend([
+                "  Номер части нарастает. Каждый чанк — самодостаточный "
+                "фрагмент переписки.",
+                "",
+            ])
+
+        # ── Треды ────────────────────────────────────────────────────
+        if has_threads:
+            lines.extend([
+                "- Ветки (треды) — сообщения пользователя и ответы на них:",
+            ])
+            if thread_examples:
+                lines.append(f"  пример: {thread_examples[0]}")
+            lines.extend([
+                "  Глубина ответа показана отступами и маркером «↳».",
+                "",
+            ])
+
+        # ── Обычный файл чата ────────────────────────────────────────
+        if not has_posts and not has_chunks and chat_examples:
+            lines.extend([
+                "- Полный архив переписки в одном файле:",
+            ])
+            lines.append(f"  {chat_examples[0]}")
+            lines.extend([
+                "  Содержит все сообщения в хронологическом порядке. "
+                "Каждое сообщение имеет YAML-шапку с метаданными.",
+                "",
+            ])
+        elif chat_examples and not has_posts:
+            lines.extend([
+                "- Архив переписки:",
+            ])
+            lines.append(f"  пример: {chat_examples[0]}")
+            lines.extend([""])
+
+        # ── Паспорт ──────────────────────────────────────────────────
+        lines.extend([
+            "- `archive_passport.json` — машиночитаемый паспорт архива "
+            "(версия, даты, счётчики, список всех файлов).",
+        ])
+
+        # ── Медиа ────────────────────────────────────────────────────
+        if has_media:
+            lines.extend([
+                "- Папка `media/` — медиафайлы (фото, видео, голосовые, "
+                "файлы). Голосовые и кружочки, расшифрованные через STT, "
+                "имеют текстовую расшифровку прямо в MD-файле поста.",
+            ])
+
+        lines.append("")
+        return lines
 
     def _build_passport(
         self,

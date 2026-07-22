@@ -405,7 +405,14 @@ class SettingsPanel(QWidget):
             comments=True, stt_voice=True, stt_round=True,
             formats=("md",), ai_split=True,
         ),
-    }
+        "kb": dict(
+            label="🧠 База знаний для ИИ",
+            media=("voice", "round"),
+            comments=True, stt_voice=True, stt_round=True,
+            formats=("md",), ai_split=False,
+            build_kb=True,
+        ),
+    }  # ── KB preset stage 10 (UI) ──
 
     @staticmethod
     def _widget_set_on(widget, value: bool) -> None:
@@ -474,6 +481,8 @@ class SettingsPanel(QWidget):
             self._media_voice, self._media_round,
             self._stt_voice, self._stt_round,
             self._toggle_comments, self._toggle_ai_split,
+            # _toggle_build_kb намеренно НЕ в watched: чекбокс редактируемый,
+            # переключение KB не сбрасывает текущий пресет (Variant B, #96)
             self._fmt_docx, self._fmt_json, self._fmt_md, self._fmt_html,
         ]
         for w in watched:
@@ -498,6 +507,7 @@ class SettingsPanel(QWidget):
             self._widget_set_on(self._toggle_redownload, False)
             self._widget_set_on(self._toggle_takeout, False)
             self._widget_set_on(self._toggle_ai_split, spec["ai_split"])
+            self._widget_set_on(self._toggle_build_kb, spec.get("build_kb", False))  # ── KB preset stage 10 (UI) ──
 
             fmt_map = {
                 "docx": self._fmt_docx, "json": self._fmt_json,
@@ -961,6 +971,19 @@ class SettingsPanel(QWidget):
             f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
         )
         layout.addWidget(ai_hint)
+
+        # ── KB toggle ───────────────────────────────────────────────────
+        self._toggle_build_kb = ToggleSwitch(checked=False)  # ── KB preset stage 10 (UI) ──
+        kb_row = self._option_row(
+            self.tr("🧠  Создать оглавление и инструкцию для ИИ"),
+            self._toggle_build_kb,
+            hint=self.tr(
+                "Подготовит архив для внешних LLM: оглавление, "
+                "инструкция, YAML-метаданные, паспорт архива"
+            ),
+        )
+        layout.addLayout(kb_row)
+
         return card
 
     def get_export_formats(self) -> list:
@@ -986,6 +1009,11 @@ class SettingsPanel(QWidget):
         """Возвращает размер AI-чанка в словах."""
 
         return self._ai_chunk_spin.value()
+
+    def get_build_kb(self) -> bool:
+        """Возвращает состояние чекбокса 'База знаний для ИИ'."""  # ── KB preset stage 10 (UI) ──
+
+        return self._toggle_build_kb.isChecked()
 
     def _build_options_section(self) -> ModernCard:
         card, layout = self._card()
@@ -2099,6 +2127,10 @@ class MainWindow(QMainWindow):
             rows.append(("Речь в текст", ", ".join(stt_names), False))
         # FEAT-5: здесь появится строка «Описание изображений» при включённом VLM
 
+        # ── KB preset stage 10 (UI) ──
+        if self._settings_screen.get_build_kb():
+            rows.append((self.tr("База знаний для ИИ"), self.tr("✓ Вкл"), True))
+
         # UI-CLEAN-3 P3: в канале сообщения участников — это комментарии.
         # Участник выбран, а комментарии выключены → документ будет почти пуст.
         if is_channel and params.user_id and not params.include_comments:
@@ -2308,6 +2340,7 @@ class MainWindow(QMainWindow):
             export_formats=self._settings_screen.get_export_formats(),
             ai_split=self._settings_screen.get_ai_split(),
             ai_split_chunk_words=self._settings_screen.get_ai_split_chunk_words() if hasattr(self._settings_screen, 'get_ai_split_chunk_words') else 300_000,
+            build_kb=self._settings_screen.get_build_kb(),  # ── KB preset stage 10 (UI) ──
             date_from=date_from_str,
             date_to=date_to_str,
         )
