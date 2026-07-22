@@ -1031,6 +1031,301 @@ class DBManager:
         return int(row[0]) if row else 0
 
     # ------------------------------------------------------------------
+    # База знаний для ИИ (#96) — read-only методы для пресета
+    # ------------------------------------------------------------------
+    # Все методы ниже — детерминированные чтения из БД для генерации
+    # артефактов базы знаний (оглавление, паспорт, хронокарта).
+    # Не используют LLM/сеть — только SQL-агрегации.
+    # ------------------------------------------------------------------
+
+    def get_chat_info(self, chat_id: int) -> dict:
+        """
+        Метаданные чата для archive_passport.json и шапки оглавления.
+
+        Объединяет данные из chats и cached_dialogs:
+          - chats:       title, type, linked_chat_id
+          - cached_dialogs: participants_count (если есть — точнее),
+                            has_comments, is_linked_discussion
+
+        participants_count:
+          - приоритет 1: cached_dialogs.participants_count (от Telegram API)
+          - приоритет 2: COUNT(DISTINCT user_id) из messages (фактическое
+            число авторов, видимых в выгрузке — всегда <= participants_count)
+
+        Возвращает dict (ключи могут быть None, если чат не найден):
+            title, type, linked_chat_id,
+            posts_count           — число постов канала (is_comment=0),
+            messages_count        — все сообщения включая комментарии,
+            comments_count        — только комментарии (is_comment=1),
+            participants_count    — int (0 если нет ни участников, ни авторов),
+            has_comments          — bool,
+            is_linked_discussion  — bool,
+            period_min, period_max — ISO-строки (мин/макс date из messages).
+        """
+        sql = """
+            SELECT
+                c.title            AS title,
+                c.type             AS type,
+                c.linked_chat_id   AS linked_chat_id,
+                cd.participants_count AS participants_count,
+                cd.has_comments    AS has_comments,
+                cd.is_linked_discussion AS is_linked_discussion,
+                (SELECT COUNT(*)   FROM messages
+                 WHERE chat_id = ? AND is_comment = 0)        AS posts_count,
+                (SELECT COUNT(*)   FROM messages
+                 WHERE chat_id = ?)                           AS messages_count,
+                (SELECT COUNT(*)   FROM messages
+                 WHERE chat_id = ? AND is_comment = 1)        AS comments_count,
+                (SELECT COUNT(DISTINCT user_id) FROM messages
+                 WHERE chat_id = ? AND user_id IS NOT NULL)   AS authors_count,
+                (SELECT MIN(date)  FROM messages
+                 WHERE chat_id = ?)                           AS period_min,
+                (SELECT MAX(date)  FROM messages
+                 WHERE chat_id = ?)                           AS period_max
+            FROM chats c
+            LEFT JOIN cached_dialogs cd ON cd.chat_id = c.chat_id
+            WHERE c.chat_id = ?
+        """
+        params: tuple = (chat_id,) * 6 + (chat_id,)
+        with self._cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+
+        if row is None:
+            # Чат не найден в таблице chats — возвращаем пустую структуру
+            # с возможными данными из messages (минимальная деградация).
+            sql_fallback = """
+                SELECT
+                    COUNT(*) FILTER (WHERE is_comment = 0)  AS posts_count,
+                    COUNT(*)                                AS messages_count,
+                    COUNT(*) FILTER (WHERE is_comment = 1)  AS comments_count,
+                    COUNT(DISTINCT user_id)                 AS authors_count,
+                    MIN(date), MAX(date)
+                FROM messages WHERE chat_id = ?
+            """
+            with self._cursor() as cur:
+                cur.execute(sql_fallback, (chat_id,))
+                f = cur.fetchone()
+            return {
+                "title":                None,
+                "type":                 None,
+                "linked_chat_id":       None,
+                "posts_count":          int(f[0]) if f else 0,
+                "messages_count":       int(f[1]) if f else 0,
+                "comments_count":       int(f[2]) if f else 0,
+                "participants_count":   int(f[3]) if f else 0,
+                "has_comments":         False,
+                "is_linked_discussion": False,
+                "period_min":           f[4] if f else None,
+                "period_max":           f[5] if f else None,
+            }
+
+        participants_count = (
+            row["participants_count"]
+            if row["participants_count"] is not None
+            else (row["authors_count"] or 0)
+        )
+        return {
+            "title":                row["title"],
+            "type":                 row["type"],
+            "linked_chat_id":       row["linked_chat_id"],
+            "posts_count":          int(row["posts_count"] or 0),
+            "messages_count":       int(row["messages_count"] or 0),
+            "comments_count":       int(row["comments_count"] or 0),
+            "participants_count":   int(participants_count),
+            "has_comments":         bool(row["has_comments"]),
+            "is_linked_discussion": bool(row["is_linked_discussion"]),
+            "period_min":           row["period_min"],
+            "period_max":           row["period_max"],
+        }
+
+    def get_post_metadata(self, chat_id: int) -> List[sqlite3.Row]:
+        """
+        Список постов канала для оглавления «База знаний для ИИ».
+
+        Возвращает ВСЕ посты канала (is_comment = 0), в отличие от
+        get_distinct_post_ids() который возвращает только посты с
+        комментариями (post_id IS NOT NULL). Для оглавления нужны все посты.
+
+        Каждая строка содержит:
+            message_id, date, user_id, username, text, file_type, media_path,
+            comments_count (число комментариев к этому посту, 0 если нет).
+
+        Сортировка: ORDER BY date ASC (хронологическая).
+
+        Args:
+            chat_id: ID чата.
+
+        Returns:
+            Список sqlite3.Row.
+        """
+        sql = """
+            SELECT
+                m.message_id    AS message_id,
+                m.date          AS date,
+                m.user_id       AS user_id,
+                m.username      AS username,
+                m.text          AS text,
+                m.file_type     AS file_type,
+                m.media_path    AS media_path,
+                (SELECT COUNT(*) FROM messages c
+                 WHERE c.chat_id = m.chat_id
+                   AND c.post_id = m.message_id
+                   AND c.is_comment = 1) AS comments_count
+            FROM messages m
+            WHERE m.chat_id = ? AND m.is_comment = 0
+            ORDER BY m.date ASC
+        """
+        with self._cursor() as cur:
+            cur.execute(sql, (chat_id,))
+            return cur.fetchall()
+
+    def get_media_for_post(
+        self, chat_id: int, post_id: int
+    ) -> List[sqlite3.Row]:
+        """
+        Все медиафайлы поста и его комментариев (для колонки «Файлы» оглавления).
+
+        Возвращает сообщения с file_type IS NOT NULL, принадлежащие посту:
+        - сам пост (message_id = post_id),
+        - его комментарии (post_id = post_id AND is_comment = 1).
+
+        Каждая строка: message_id, date, user_id, username, file_type,
+        media_path, is_comment (1 если это медиа в комментарии, иначе 0).
+
+        Args:
+            chat_id: ID чата.
+            post_id: ID поста (message_id основного сообщения).
+
+        Returns:
+            Список sqlite3.Row, ORDER BY date ASC.
+        """
+        sql = """
+            SELECT
+                message_id,
+                date,
+                user_id,
+                username,
+                file_type,
+                media_path,
+                is_comment
+            FROM messages
+            WHERE chat_id = ?
+              AND (message_id = ? OR post_id = ?)
+              AND file_type IS NOT NULL
+              AND media_path IS NOT NULL
+            ORDER BY date ASC
+        """
+        with self._cursor() as cur:
+            cur.execute(sql, (chat_id, post_id, post_id))
+            return cur.fetchall()
+
+    def get_chronological_map(self, chat_id: int) -> dict:
+        """
+        Хронологическая карта чата — для диалогов и групп БЕЗ постов канала.
+
+        Возвращает:
+          - messages_by_month: [{ym: "YYYY-MM", count: int}]
+            (только месяцы с > 0 сообщений, отсортированы по ym ASC)
+          - user_shares: [{user_id, username, count, pct: float 0..100}]
+            (отсортированы по count DESC)
+          - pauses: [{from_date, to_date, days: int}]
+            (только паузы > 14 дней, отсортированы хронологически)
+          - messages_count: int (общее число сообщений в чате)
+
+        Для каналов (с постами) метод всё равно отрабатывает — вызов решает,
+        нужно ли использовать результат. В хронокарту входят ВСЕ сообщения
+        чата, включая комментарии, чтобы корректно оценить активность.
+
+        Args:
+            chat_id: ID чата.
+
+        Returns:
+            dict со ключами выше. Если сообщений нет — пустая структура.
+        """
+        # 1. Помесячная агрегация
+        sql_months = """
+            SELECT
+                strftime('%Y-%m', date) AS ym,
+                COUNT(*)                AS cnt
+            FROM messages
+            WHERE chat_id = ?
+            GROUP BY ym
+            ORDER BY ym ASC
+        """
+        with self._cursor() as cur:
+            cur.execute(sql_months, (chat_id,))
+            monthly = [
+                {"ym": row["ym"], "count": int(row["cnt"])}
+                for row in cur.fetchall()
+            ]
+
+        # 2. Доли участников
+        sql_users = """
+            SELECT
+                user_id,
+                COALESCE(NULLIF(username, ''), NULL) AS username,
+                COUNT(*)                              AS cnt
+            FROM messages
+            WHERE chat_id = ? AND user_id IS NOT NULL
+            GROUP BY user_id
+            ORDER BY cnt DESC
+        """
+        with self._cursor() as cur:
+            cur.execute(sql_users, (chat_id,))
+            user_rows = cur.fetchall()
+
+        total = sum(int(r["cnt"]) for r in user_rows) or 1  # защита от /0
+        user_shares = [
+            {
+                "user_id":  r["user_id"],
+                "username": r["username"],
+                "count":    int(r["cnt"]),
+                "pct":      round(int(r["cnt"]) * 100.0 / total, 2),
+            }
+            for r in user_rows
+        ]
+
+        # 3. Паузы > 14 дней между соседними сообщениями
+        sql_dates = """
+            SELECT DISTINCT date
+            FROM messages
+            WHERE chat_id = ?
+            ORDER BY date ASC
+        """
+        with self._cursor() as cur:
+            cur.execute(sql_dates, (chat_id,))
+            dates = [row["date"] for row in cur.fetchall()]
+
+        pauses: List[dict] = []
+        if len(dates) >= 2:
+            from datetime import datetime as _dt
+            # Литерал 14 (дней) — общий для core.database и features.export.knowledge_base.
+            # Не импортируем константу из KB-модуля, чтобы избежать циклической
+            # зависимости (KB-модуль импортирует DBManager).
+            _PAUSE_THRESHOLD_DAYS = 14
+            for i in range(1, len(dates)):
+                try:
+                    d1 = _dt.fromisoformat(dates[i - 1].replace(" ", "T"))
+                    d2 = _dt.fromisoformat(dates[i].replace(" ", "T"))
+                except (ValueError, AttributeError):
+                    continue
+                delta_days = (d2 - d1).days
+                if delta_days > _PAUSE_THRESHOLD_DAYS:
+                    pauses.append({
+                        "from_date": dates[i - 1],
+                        "to_date":   dates[i],
+                        "days":      delta_days,
+                    })
+
+        return {
+            "messages_by_month": monthly,
+            "user_shares":       user_shares,
+            "pauses":            pauses,
+            "messages_count":    sum(m["count"] for m in monthly),
+        }
+
+    # ------------------------------------------------------------------
     # Методы для склейки сообщений (MergerService)
     # ------------------------------------------------------------------
 
