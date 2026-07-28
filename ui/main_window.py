@@ -1757,6 +1757,39 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self._stop_btn, 0)
 
         start_layout.addLayout(btn_row)
+
+        # ── Кнопка «Обновить архив» (Update Archive stage 1b, вариант A1) ────
+        # Вторичная плоская кнопка под «НАЧАТЬ ПАРСИНГ». На чатах без архива
+        # открывает диалог-перенаправление на первый парсинг.
+        self._update_archive_btn = QPushButton("\U0001F504  Обновить архив")
+        self._update_archive_btn.setFixedHeight(32)
+        self._update_archive_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_archive_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba(255, 140, 0, 0.08);
+                border: 1px solid rgba(255, 140, 0, 0.35);
+                border-radius: {RADIUS_MD}px;
+                color: {ACCENT_ORANGE};
+                font-size: 12px;
+                font-weight: 600;
+                font-family: {FONT_FAMILY};
+            }}
+            QPushButton:hover {{
+                background-color: rgba(255, 140, 0, 0.18);
+                border-color: {ACCENT_ORANGE};
+            }}
+            QPushButton:pressed {{
+                background-color: rgba(255, 140, 0, 0.25);
+            }}
+            QPushButton:disabled {{
+                background-color: rgba(80, 80, 80, 0.10);
+                border-color: rgba(120, 120, 120, 0.25);
+                color: #888888;
+            }}
+        """)
+        start_layout.addSpacing(8)
+        start_layout.addWidget(self._update_archive_btn)
+
         layout.addWidget(start_wrap)
 
         return panel
@@ -1787,6 +1820,10 @@ class MainWindow(QMainWindow):
         self._chats_screen.log_message.connect(self._log.append_info)
         self._chats_screen.request_topics.connect(self._on_request_topics)
         self._chats_screen.refresh_requested.connect(self._on_refresh_chats)
+        # Update Archive stage 1: правый клик на чате → обновление архива
+        self._chats_screen.update_archive_requested.connect(
+            self._run_update_archive, Qt.UniqueConnection
+        )
 
         # SettingsPanel
         self._settings_screen.parse_requested.connect(self._on_parse_requested)
@@ -1801,6 +1838,10 @@ class MainWindow(QMainWindow):
         # StartBtn / StopBtn в правой панели
         self._start_btn.clicked.connect(self._on_start_btn_clicked)
         self._stop_btn.clicked.connect(self._on_stop_clicked)
+        # Update Archive stage 1b: видимая кнопка в правой панели (вариант A1)
+        self._update_archive_btn.clicked.connect(
+            self._on_update_archive_btn_clicked, Qt.UniqueConnection
+        )
 
     # ──────────────────────────────────────────────────────────────────────
     # НАВИГАЦИЯ
@@ -2380,6 +2421,215 @@ class MainWindow(QMainWindow):
         self._log.append_error(f"❌ Ошибка экспорта: {message}")
         self._set_status("online", "Авторизован")
         self._show_toast(f"Ошибка экспорта: {message[:50]}", "error")
+
+    # ──────────────────────────────────────────────────────────────────────
+    # UPDATE ARCHIVE — кнопка в правой панели (stage 1b, вариант A1)
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _on_update_archive_btn_clicked(self) -> None:
+        """Точка входа A1: видимая кнопка «Обновить архив» в правой панели.
+
+        Логика:
+          1. Чат не выбран → toast + переключение на вкладку «Чаты».
+          2. Чат выбран, архива нет → диалог-перенаправление на парсинг.
+          3. Чат выбран, архив есть → _run_update_archive(chat).
+        """
+        chat = self._settings_screen._current_chat
+        if not chat:
+            self._show_toast("Сначала выберите чат", "info", 2500)
+            if self._current_step >= 1:
+                self._switch_tab(1)
+            return
+
+        title = chat.get("title") or "Без названия"
+        if self._has_archive_passport(chat):
+            # Архив существует → запускаем обновление (stub Шага 1)
+            self._run_update_archive(chat)
+        else:
+            # Архива нет → мягко перенаправляем на первый парсинг
+            self._show_no_archive_dialog(chat)
+
+    def _has_archive_passport(self, chat: dict) -> bool:
+        """Проверяет наличие archive_passport.json в папке чата.
+
+        Папка: <output_dir>/<sanitize_filename(title)>/archive_passport.json
+        """
+        import os as _os
+        from core.utils import sanitize_filename
+
+        title = chat.get("title")
+        if not title:
+            return False
+        try:
+            chat_dir = _os.path.join(
+                str(self._cfg.output_dir), sanitize_filename(title)
+            )
+            passport = _os.path.join(chat_dir, "archive_passport.json")
+            return _os.path.isfile(passport)
+        except Exception:
+            return False
+
+    def _show_no_archive_dialog(self, chat: dict) -> None:
+        """Диалог «Архив ещё не создан» — предложение пройти первый парсинг."""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout,
+        )
+
+        title = chat.get("title") or "Без названия"
+        short = title[:40] + "…" if len(title) > 40 else title
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Архив ещё не создан")
+        dlg.setFixedSize(420, 200)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background-color: {BG_PRIMARY};
+                color: {TEXT_PRIMARY};
+            }}
+            QLabel {{
+                background: transparent;
+                color: {TEXT_PRIMARY};
+                font-family: {FONT_FAMILY};
+            }}
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(10)
+
+        icon_lbl = QLabel("\U0001F4E6")  # 📦
+        icon_lbl.setStyleSheet("font-size: 28px; background: transparent;")
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_lbl)
+
+        heading = QLabel("Архив ещё не создан")
+        heading.setStyleSheet(
+            f"font-size: 15px; font-weight: 700; "
+            f"color: {ACCENT_ORANGE}; background: transparent;"
+        )
+        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(heading)
+
+        body = QLabel(
+            f"У чата «{short}» нет сохранённого архива.\n"
+            "Запустите первый парсинг, чтобы создать архив —\n"
+            "затем его можно будет обновлять."
+        )
+        body.setStyleSheet(
+            f"font-size: 12px; color: {TEXT_SECONDARY}; background: transparent;"
+        )
+        body.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        body.setWordWrap(True)
+        layout.addWidget(body)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        btn_row.addStretch()
+
+        btn_cancel = QPushButton("Отмена")
+        btn_cancel.setFixedHeight(32)
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: 1px solid {BORDER_HEX};
+                border-radius: {RADIUS_MD}px;
+                color: {TEXT_SECONDARY};
+                font-size: 12px;
+                font-weight: 500;
+                padding: 0 18px;
+                font-family: {FONT_FAMILY};
+            }}
+            QPushButton:hover {{
+                border-color: {TEXT_SECONDARY};
+                color: {TEXT_PRIMARY};
+            }}
+        """)
+        btn_cancel.clicked.connect(dlg.reject)
+
+        btn_go = QPushButton("▶  Перейти к парсингу")
+        btn_go.setFixedHeight(32)
+        btn_go.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_go.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_ORANGE};
+                border: 1px solid {ACCENT_ORANGE};
+                border-radius: {RADIUS_MD}px;
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 18px;
+                font-family: {FONT_FAMILY};
+            }}
+            QPushButton:hover {{
+                background-color: #E08500;
+                border-color: #E08500;
+            }}
+        """)
+        btn_go.clicked.connect(dlg.accept)
+
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_go)
+        layout.addLayout(btn_row)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._switch_tab(2)  # на вкладку «Настройки парсинга»
+            self._show_toast("Настройте параметры и нажмите «Начать парсинг»", "info", 3000)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # ОБНОВЛЕНИЕ АРХИВА — Update Archive stage 1 (stub)
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _run_update_archive(self, chat: dict) -> None:
+        """Запускает фоновое обновление архива чата (Шаг 1 stub)."""
+        from features.update_archive.worker import UpdateArchiveWorker
+
+        # Guard: не запускать второй UpdateArchiveWorker
+        for w in self._active_workers:
+            if isinstance(w, UpdateArchiveWorker):
+                logger.warning("_run_update_archive: уже запущен, пропускаем")
+                return
+
+        title = chat.get("title", "?") or "?"
+        self._set_status("busy", "Обновление архива...")
+        self._rozetta.set_state("process")
+        self._rozetta.set_tip("Обновляю архив...")
+        self._log.append_info(f"\N{CYCLONE} Обновление архива: \u00ab{title}\u00bb")
+
+        worker = UpdateArchiveWorker(chat=chat, cfg=self._cfg)
+        worker.log_message.connect(self._log.append_info, Qt.UniqueConnection)
+        worker.progress.connect(self._update_progress, Qt.UniqueConnection)
+        worker.character_state.connect(self._rozetta.set_state, Qt.UniqueConnection)
+        worker.finished.connect(self._on_update_archive_finished, Qt.UniqueConnection)
+        worker.error.connect(self._on_update_archive_error, Qt.UniqueConnection)
+        self._start_worker(worker)
+
+    def _on_update_archive_finished(self, report: dict) -> None:
+        """Слот: UpdateArchiveWorker.finished — показать отчёт."""
+        from features.update_archive.report_dialog import UpdateReportDialog
+
+        self._update_progress(100)
+        self._rozetta.set_state("success")
+        self._rozetta.set_tip("Архив обновлён")
+        self._set_status("online", "Авторизован")
+        self._log.append_success("\N{WHITE HEAVY CHECK MARK} Обновление архива завершено")
+
+        # Показать диалог отчёта
+        dlg = UpdateReportDialog(report, parent=self)
+        dlg.exec()
+
+        self._show_toast("Архив обновлён", "success")
+
+    def _on_update_archive_error(self, message: str) -> None:
+        """Слот: UpdateArchiveWorker.error."""
+        self._update_progress(0)
+        self._rozetta.set_state("error")
+        self._rozetta.set_tip("Ошибка обновления")
+        self._set_status("online", "Авторизован")
+        self._log.append_error(f"\N{CROSS MARK} Ошибка обновления архива: {message}")
+        self._show_toast(f"Ошибка: {message[:60]}", "error")
 
     # ──────────────────────────────────────────────────────────────────────
     # ОБЩИЕ СЛОТЫ
