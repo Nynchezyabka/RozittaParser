@@ -361,6 +361,7 @@ class ChatItemWidget(QWidget):
     clicked = Signal(object)  # chat dict
     dclicked = Signal(object)  # chat dict
     topics_clicked = Signal(object)  # chat_id (object — Telegram ID > 2^31)
+    update_archive_requested = Signal(object)  # chat dict — Update Archive stage 1
 
     def __init__(self, chat: dict, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -377,6 +378,10 @@ class ChatItemWidget(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(72)
+
+        # Контекстное меню (правый клик) — Update Archive stage 1
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
 
         row = QHBoxLayout(self)
         row.setContentsMargins(10, 6, 10, 6)
@@ -563,6 +568,27 @@ class ChatItemWidget(QWidget):
     def mouseDoubleClickEvent(self, _e) -> None:
         self.dclicked.emit(self._chat)
 
+    # ──────────────────────────────────────────────────────────────────────
+    # КОНТЕКСТНОЕ МЕНЮ — Update Archive stage 1
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _show_context_menu(self, pos) -> None:
+        """Контекстное меню чата: «Обновить архив» (stub Шага 1)."""
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: #1e1e2e; color: {TEXT_PRIMARY}; "
+            f"border: 1px solid {BORDER_HEX}; padding: 4px; }}"
+            f"QMenu::item {{ padding: 6px 16px; }}"
+            f"QMenu::item:selected {{ background: {ACCENT_SOFT_ORANGE}; }}"
+        )
+        act_update = menu.addAction("\N{CYCLONE} Обновить архив")
+        act_update.triggered.connect(
+            lambda: self.update_archive_requested.emit(self._chat)
+        )
+        menu.exec(self.mapToGlobal(pos))
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION HEADER WIDGET
@@ -664,6 +690,7 @@ class CollapsibleSection(QWidget):
     item_clicked = Signal(object)  # chat dict
     item_dclicked = Signal(object)  # chat dict
     topics_clicked = Signal(object)  # chat_id (object — Telegram ID > 2^31)
+    update_archive_requested = Signal(object)  # chat dict — Update Archive stage 1
 
     def __init__(self, chat_type: str,
                  parent: Optional[QWidget] = None) -> None:
@@ -713,6 +740,7 @@ class CollapsibleSection(QWidget):
                 w.clicked.connect(self._on_click)
                 w.dclicked.connect(self.item_dclicked)
                 w.topics_clicked.connect(self.topics_clicked)
+                w.update_archive_requested.connect(self.update_archive_requested)
                 self._bl.addWidget(w)
                 self._items.append(w)
 
@@ -766,6 +794,7 @@ class CollapsibleChatsWidget(QScrollArea):
     item_selected = Signal(object)  # выбор одиночным кликом
     item_activated = Signal(object)  # двойной клик → сразу подтвердить
     topics_clicked = Signal(object)  # кнопка «ветки» нажата (object — Telegram ID > 2^31)
+    update_archive_requested = Signal(object)  # chat dict — Update Archive stage 1
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -785,6 +814,7 @@ class CollapsibleChatsWidget(QScrollArea):
             sec.item_clicked.connect(self._on_sel)
             sec.item_dclicked.connect(self.item_activated)
             sec.topics_clicked.connect(self.topics_clicked)
+            sec.update_archive_requested.connect(self.update_archive_requested)
             lay.addWidget(sec)
             self._sections[t] = sec
             sec.setVisible(False)
@@ -857,6 +887,7 @@ class ChatsScreen(QWidget):
     character_state = Signal(str)
     request_topics = Signal(object)  # chat_id (object — Telegram ID > 2^31)
     refresh_requested = Signal()
+    update_archive_requested = Signal(object)  # chat dict — Update Archive stage 1
 
     def __init__(self, cfg: AppConfig,
                  parent: Optional[QWidget] = None) -> None:
@@ -983,6 +1014,9 @@ class ChatsScreen(QWidget):
 
         # ── Список чатов ──────────────────────────────────────────────────
         self._chats_widget = CollapsibleChatsWidget(self)
+        self._chats_widget.update_archive_requested.connect(
+            self.update_archive_requested
+        )  # Update Archive stage 1
         self._chats_widget.item_selected.connect(self._on_sel)
         self._chats_widget.item_activated.connect(self._on_activated)
         self._chats_widget.topics_clicked.connect(self._on_topics_clicked)
