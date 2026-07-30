@@ -51,6 +51,30 @@ _WAL_PRAGMAS = (
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 0.3
 
+
+def _telegram_user_id_variants(uid: int) -> list[int]:
+    """
+    Возвращает оба варианта Telegram ID: raw-positive и marked-negative.
+
+    Telethon sender_id возвращает raw-positive ID (напр. 3783247484),
+    а парсер сохраняет в БД marked-negative формат (-1003783247484).
+    Эта функция возвращает оба варианта для корректной фильтрации.
+
+    Формула: marked = -(1_000_000_000_000 + raw)
+    Обратная: raw = -(marked + 1_000_000_000_000)
+    """
+    if uid > 0:
+        return [uid, -(1_000_000_000_000 + uid)]
+    elif uid < -1_000_000_000_000:
+        return [uid, -(uid + 1_000_000_000_000)]
+    else:
+        return [uid]
+
+
+# Публичный алиас: используется features/export/filters.py (FEAT-6).
+# Отдельной строкой — чтобы merge ветки csp не конфликтовал.
+telegram_user_id_variants = _telegram_user_id_variants
+
 # ---------------------------------------------------------------------------
 # Схема базы данных
 # ---------------------------------------------------------------------------
@@ -564,6 +588,7 @@ class DBManager:
         *,
         topic_id:         Optional[int] = None,
         user_id:          Optional[int] = None,
+        user_ids:         Optional[List[int]] = None,
         include_comments: bool          = False,
         date_from:        Optional[str] = None,   # "YYYY-MM-DD"
         date_to:          Optional[str] = None,   # "YYYY-MM-DD" (включительно)
@@ -574,7 +599,11 @@ class DBManager:
         Args:
             chat_id:          ID чата (нормализованный).
             topic_id:         Фильтр по топику форума.
-            user_id:          Фильтр по отправителю.
+            user_id:          Фильтр по отправителю (один).
+            user_ids:         Фильтр по отправителям (несколько, FEAT-6).
+                              Объединяется с user_id по OR. Каждый ID
+                              разворачивается в bare+marked варианты (B1/B3),
+                              поэтому канал-отправитель находится в любой форме.
             include_comments: Включать ли комментарии (is_comment = 1).
             date_from:        Фильтр по дате с:.
             date_to:          Фильтр по дате по:.
@@ -588,9 +617,21 @@ class DBManager:
             conditions.append("topic_id = ?")
             params.append(topic_id)
 
+        wanted_ids: List[int] = []
         if user_id is not None:
-            conditions.append("user_id = ?")
-            params.append(user_id)
+            wanted_ids.append(user_id)
+        if user_ids:
+            wanted_ids.extend(user_ids)
+
+        if wanted_ids:
+            expanded: List[int] = []
+            for uid in wanted_ids:
+                for variant in _telegram_user_id_variants(uid):
+                    if variant not in expanded:
+                        expanded.append(variant)
+            placeholders = ",".join("?" * len(expanded))
+            conditions.append(f"user_id IN ({placeholders})")
+            params.extend(expanded)
 
         if not include_comments:
             conditions.append("is_comment = 0")

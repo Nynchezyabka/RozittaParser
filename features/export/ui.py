@@ -54,6 +54,9 @@ logger = logging.getLogger(__name__)
 _LogCallback = Callable[[str], None]
 
 
+from features.export.filters import NO_FILTER, UserFilter
+
+
 # ==============================================================================
 # ExportParams
 # ==============================================================================
@@ -87,6 +90,9 @@ class ExportParams:
     user_id:          Optional[int] = None
     username:          Optional[str] = None
     user_filter_mode:  str           = "none"   # "none" | "messages_only" | "threads"
+    # FEAT-6: фильтр участников. Режим "include" режет в SQL,
+    # "exclude" оставляет строки и заменяет их заглушкой.
+    user_filter:       "UserFilter"  = NO_FILTER
     include_comments:  bool          = False
     output_dir:       str           = "output"
     db_path:          str           = "output/telegram_archive.db"
@@ -187,7 +193,7 @@ class ExportWorker(QThread):
 
                 # ── DOCX ──────────────────────────────────────────────────
                 if "docx" in formats:
-                    gen = DocxGenerator(db=db, output_dir=p.output_dir)
+                    gen = DocxGenerator(db=db, output_dir=p.output_dir, user_filter=p.user_filter)
                     files = gen.generate(
                         chat_id          = p.chat_id,
                         chat_title       = p.chat_title,
@@ -207,7 +213,7 @@ class ExportWorker(QThread):
 
                 # ── JSON ──────────────────────────────────────────────────
                 if "json" in formats:
-                    jgen = JsonGenerator(db=db, output_dir=p.output_dir)
+                    jgen = JsonGenerator(db=db, output_dir=p.output_dir, user_filter=p.user_filter)
                     if p.split_mode == "post":
                         # I14: файл на пост + его комментарии
                         json_paths = jgen.generate_by_posts(
@@ -243,7 +249,7 @@ class ExportWorker(QThread):
 
                 # ── Markdown ───────────────────────────────────────────────
                 if "md" in formats:
-                    mdgen = MarkdownGenerator(db=db, output_dir=p.output_dir)
+                    mdgen = MarkdownGenerator(db=db, output_dir=p.output_dir, user_filter=p.user_filter)
                     if p.split_mode == "post":
                         # I12: файл на пост + его комментарии (для RAG-корпуса)
                         md_paths = mdgen.generate_by_posts(
@@ -279,7 +285,7 @@ class ExportWorker(QThread):
 
                 # ── HTML ──────────────────────────────────────────────────
                 if "html" in formats:
-                    hgen = HtmlGenerator(db=db, output_dir=p.output_dir)
+                    hgen = HtmlGenerator(db=db, output_dir=p.output_dir, user_filter=p.user_filter)
                     if p.split_mode == "post":
                         # I14: страница на пост + его комментарии
                         html_paths = hgen.generate_by_posts(
