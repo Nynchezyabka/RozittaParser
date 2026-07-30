@@ -156,7 +156,9 @@ class UserFilter:
         (правило I11 — разные настройки не должны давать одно имя файла).
         """
         raw = ",".join(str(i) for i in sorted(self.ids))
-        return hashlib.md5(raw.encode("utf-8")).hexdigest()[:4]
+        # sha256, а не md5: хеш здесь — идентификатор набора ID для
+        # имени файла, не защита, но md5 ловят сканеры безопасности.
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:4]
 
     def name_part(self) -> str:
         """

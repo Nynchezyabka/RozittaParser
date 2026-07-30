@@ -6,8 +6,6 @@ FEAT-6 — имена файлов и шапка документа.
 fullchat, _to_), имена участников — данные, остаются как есть.
 """
 
-import pytest
-
 from features.export.filters import (
     MODE_EXCLUDE,
     MODE_INCLUDE,

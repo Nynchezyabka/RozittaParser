@@ -6,7 +6,6 @@ FEAT-6 — заглушки скрытых участников в готовы�
 """
 
 import json
-import os
 
 import pytest
 
@@ -18,7 +17,7 @@ from features.export.generator import (
     MarkdownGenerator,
 )
 
-SECRET = "СЕКРЕТНЫЙ_ТЕКСТ_БОБА"
+HIDDEN_TEXT = "СЕКРЕТНЫЙ_ТЕКСТ_БОБА"
 VISIBLE_A = "видимый текст алисы"
 VISIBLE_C = "видимый текст кэрол"
 
@@ -41,7 +40,7 @@ def db_three_senders():
                 "chat_id": -1001, "message_id": 2,
                 "date": "2024-01-15 10:02:00",
                 "topic_id": None, "user_id": 222, "username": "Bob",
-                "text": SECRET,
+                "text": HIDDEN_TEXT,
                 "media_path": None, "file_type": None, "file_size": None,
                 "reply_to_msg_id": None, "post_id": None,
                 "is_comment": 0, "from_linked_group": 0,
@@ -78,7 +77,7 @@ class TestMarkdownPlaceholder:
         gen = MarkdownGenerator(db_three_senders, output_dir=str(tmp_path),
                                 user_filter=exclude_bob)
         out = _read(gen.generate(-1001, "Тест", period_label="all")[0])
-        assert SECRET not in out
+        assert HIDDEN_TEXT not in out
 
     def test_placeholder_present(self, db_three_senders, exclude_bob, tmp_path):
         gen = MarkdownGenerator(db_three_senders, output_dir=str(tmp_path),
@@ -111,7 +110,7 @@ class TestMarkdownPlaceholder:
         """Контроль: без фильтра текст на месте."""
         gen = MarkdownGenerator(db_three_senders, output_dir=str(tmp_path))
         out = _read(gen.generate(-1001, "Тест", period_label="all")[0])
-        assert SECRET in out
+        assert HIDDEN_TEXT in out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -123,7 +122,7 @@ class TestJsonPlaceholder:
         gen = JsonGenerator(db_three_senders, output_dir=str(tmp_path),
                             user_filter=exclude_bob)
         out = _read(gen.generate(-1001, "Тест", period_label="all")[0])
-        assert SECRET not in out
+        assert HIDDEN_TEXT not in out
 
     def test_message_count_unchanged(self, db_three_senders, exclude_bob, tmp_path):
         """Скрытое сообщение остаётся в выгрузке — не удаляется."""
@@ -136,7 +135,7 @@ class TestJsonPlaceholder:
     def test_without_filter_text_present(self, db_three_senders, tmp_path):
         gen = JsonGenerator(db_three_senders, output_dir=str(tmp_path))
         out = _read(gen.generate(-1001, "Тест", period_label="all")[0])
-        assert SECRET in out
+        assert HIDDEN_TEXT in out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -148,7 +147,7 @@ class TestHtmlPlaceholder:
         gen = HtmlGenerator(db_three_senders, output_dir=str(tmp_path),
                             user_filter=exclude_bob)
         out = _read(gen.generate(-1001, "Тест", period_label="all")[0])
-        assert SECRET not in out
+        assert HIDDEN_TEXT not in out
 
     def test_placeholder_present(self, db_three_senders, exclude_bob, tmp_path):
         gen = HtmlGenerator(db_three_senders, output_dir=str(tmp_path),
@@ -159,7 +158,7 @@ class TestHtmlPlaceholder:
     def test_without_filter_text_present(self, db_three_senders, tmp_path):
         gen = HtmlGenerator(db_three_senders, output_dir=str(tmp_path))
         out = _read(gen.generate(-1001, "Тест", period_label="all")[0])
-        assert SECRET in out
+        assert HIDDEN_TEXT in out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -177,7 +176,7 @@ class TestHiddenMediaAndStt:
                 "chat_id": -1001, "message_id": 1,
                 "date": "2024-01-15 10:01:00",
                 "topic_id": None, "user_id": 222, "username": "Bob",
-                "text": SECRET,
+                "text": HIDDEN_TEXT,
                 "media_path": str(media), "file_type": "photo",
                 "file_size": 3,
                 "reply_to_msg_id": None, "post_id": None,
@@ -187,7 +186,7 @@ class TestHiddenMediaAndStt:
                                     user_filter=UserFilter.make("exclude", [222]))
             out = _read(gen.generate(-1001, "Тест", period_label="all")[0])
 
-        assert SECRET not in out
+        assert HIDDEN_TEXT not in out
         assert "secret_photo.jpg" not in out
         assert media.exists(), "файл медиа удалять нельзя"
 
@@ -206,10 +205,10 @@ class TestHiddenMediaAndStt:
                 "reply_to_msg_id": None, "post_id": None,
                 "is_comment": 0, "from_linked_group": 0,
             }])
-            db.insert_transcription(message_id=1, peer_id=-1001, text=SECRET)
+            db.insert_transcription(message_id=1, peer_id=-1001, text=HIDDEN_TEXT)
 
             gen = MarkdownGenerator(db, output_dir=str(tmp_path),
                                     user_filter=UserFilter.make("exclude", [222]))
             out = _read(gen.generate(-1001, "Тест", period_label="all")[0])
 
-        assert SECRET not in out
+        assert HIDDEN_TEXT not in out

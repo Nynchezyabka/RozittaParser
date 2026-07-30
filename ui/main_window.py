@@ -45,7 +45,7 @@ from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QSizePolicy, QProgressBar, QStackedWidget,
-    QFrame, QPushButton, QSpinBox, QComboBox,
+    QFrame, QPushButton, QSpinBox,
     QScrollArea, QGridLayout, QDialog,
     QListWidget, QListWidgetItem, QLineEdit,
 )
@@ -60,7 +60,7 @@ from core.ui_shared.styles import (
     OVERLAY_HEX, OVERLAY2_HEX, BORDER_HEX,
     RADIUS_MD, FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_SMALL,
     COLOR_SUCCESS, COLOR_ERROR, COLOR_WARNING,
-    QSS_PROGRESS, QSS_INPUT, QSS_COMBOBOX,
+    QSS_PROGRESS, QSS_INPUT,
 )
 from core.ui_shared.widgets import (
     RozittaWidget, LogWidget,

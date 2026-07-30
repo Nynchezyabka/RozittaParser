@@ -38,6 +38,7 @@ third-party-app/
 .idea/
 .DS_Store
 patches/
+patch_*.py
 
 #Ignore vscode AI rules
 .github\instructions\codacy.instructions.md
