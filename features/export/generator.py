@@ -68,6 +68,14 @@ _SEPARATOR = "─" * 60
 
 
 # ==============================================================================
+from features.export.filters import (
+    NO_FILTER,
+    PLACEHOLDER_MEDIA_TEXT,
+    PLACEHOLDER_SHOW_AUTHOR,
+    PLACEHOLDER_TEXT,
+    UserFilter,
+)
+
 # Индексы колонок из DBManager.get_messages() / get_post_with_comments()
 # ==============================================================================
 # SELECT id, chat_id, message_id, topic_id, user_id, username,
@@ -111,6 +119,80 @@ _COL_IS_COMMENT     = 13
 _COL_LINKED_CHAT    = 14
 _COL_MERGE_GROUP_ID = 15   # ← задача 5: merge groups
 _COL_MERGE_PART_IDX = 16   # ← задача 5: порядок части внутри группы
+
+# ── FEAT-6: заглушки скрытых участников ───────────────────────────────────────
+
+def _hide_row(row):
+    """
+    Заменяет строку сообщения на кортеж-заглушку.
+
+    Сохраняются: message_id, date, user_id, username, reply_to — за счёт этого
+    продолжают работать закладки, ссылки «в ответ на» и порядок сообщений.
+    Стираются: текст и все поля медиа. Файл медиа на диске не трогается.
+
+    Возвращается обычный кортеж: в generator.py колонки читаются только по
+    индексам, поэтому для рендера он неотличим от sqlite3.Row.
+    """
+    vals = list(row)
+    had_media = bool(vals[_COL_MEDIA_PATH])
+    vals[_COL_TEXT]       = PLACEHOLDER_MEDIA_TEXT if had_media else PLACEHOLDER_TEXT
+    vals[_COL_MEDIA_PATH] = None
+    vals[_COL_FILE_TYPE]  = None
+    vals[_COL_FILE_SIZE]  = None
+    if not PLACEHOLDER_SHOW_AUTHOR:
+        vals[_COL_USERNAME] = "—"
+    return tuple(vals)
+
+
+def _filter_name_part(user_filter) -> str:
+    """
+    Фрагмент имени файла от фильтра участников (FEAT-6).
+
+    Пустая строка — когда фильтра нет или когда имя уже даёт существующий
+    user_part (ровно один выбранный в режиме "include").
+
+    Без этого фрагмента выгрузка с фильтром и полный архив того же чата
+    за тот же период получают одно имя, и вторая молча затирает первую
+    (правило I11 — разные настройки не должны давать одно имя файла).
+    """
+    if user_filter is None:
+        return ""
+    part = user_filter.name_part()
+    return f"_{part}" if part else ""
+
+
+def _apply_user_filter(rows, user_filter, stt_map=None):
+    """
+    Применяет фильтр участников к загруженным строкам.
+
+    Режим "exclude": строки выбранных участников заменяются заглушкой,
+    их расшифровки убираются из stt_map — иначе текст голосового скрытого
+    участника уехал бы в документ мимо заглушки.
+
+    Режим "include" фильтруется на уровне SQL (get_messages(user_ids=...)),
+    здесь не обрабатывается.
+
+    Returns:
+        (rows, stt_map) — всегда пара, даже если stt_map не передавался.
+    """
+    if user_filter is None or not user_filter.is_active:
+        return rows, stt_map
+
+    out      = []
+    hidden   = set()
+    for row in rows:
+        if user_filter.is_hidden(row[_COL_USER_ID]):
+            hidden.add(row[_COL_MESSAGE_ID])
+            out.append(_hide_row(row))
+        else:
+            out.append(row)
+
+    if hidden and stt_map:
+        stt_map = {k: v for k, v in stt_map.items() if k not in hidden}
+
+    return out, stt_map
+
+
 
 
 # ==============================================================================
@@ -250,9 +332,11 @@ class DocxGenerator:
         output_dir: Корневая папка для сохранения DOCX-файлов.
     """
 
-    def __init__(self, db: DBManager, output_dir: str = "output") -> None:
+    def __init__(self, db: DBManager, output_dir: str = "output",
+                 user_filter: "UserFilter" = NO_FILTER) -> None:
         self._db          = db
         self._output_dir  = output_dir
+        self._user_filter = user_filter
         self._log: _LogCallback = logger.info
 
         # Текущий контекст (устанавливается в generate() для _build_path)
@@ -359,10 +443,12 @@ class DocxGenerator:
                     chat_id          = chat_id,
                     topic_id         = topic_id,
                     user_id          = user_id,
+                    user_ids         = self._user_filter.sql_ids(),
                     include_comments = include_comments,
                     date_from        = date_from,
                     date_to          = date_to,
                 )
+                messages, _ = _apply_user_filter(messages, self._user_filter)
                 if not messages:
                     raise EmptyDataError(chat_id, topic_id)
 
@@ -577,10 +663,12 @@ class DocxGenerator:
             chat_id          = chat_id,
             topic_id         = topic_id,
             user_id          = user_id,
+            user_ids         = self._user_filter.sql_ids(),
             include_comments = False,
             date_from        = date_from,
             date_to          = date_to,
         )
+        posts, _ = _apply_user_filter(posts, self._user_filter)
         if not posts:
             raise EmptyDataError(chat_id, topic_id)
 
@@ -940,6 +1028,7 @@ class DocxGenerator:
         topic_part   = f"_{sanitize_filename(self._topic_name)}" if self._topic_name \
                     else (_topic_suffix(self._topic_id) if self._topic_id else "")
         user_part    = f"_{sanitize_filename(self._username)}" if self._username else ""
+        user_part += _filter_name_part(self._user_filter)
         mode_part    = getattr(self, "_name_suffix", "")  # I11
         filename     = f"{safe_title}{topic_part}{user_part}{mode_part}_{kind}_{self._period_label}.docx"
         return os.path.join(self._output_dir, filename)
@@ -980,9 +1069,11 @@ class JsonGenerator:
     Нет Qt-зависимостей. Нет Telethon-зависимостей. Только stdlib + DBManager.
     """
 
-    def __init__(self, db: DBManager, output_dir: str = "output") -> None:
+    def __init__(self, db: DBManager, output_dir: str = "output",
+                 user_filter: "UserFilter" = NO_FILTER) -> None:
         self._db         = db
         self._output_dir = output_dir
+        self._user_filter = user_filter
 
     def generate(
         self,
@@ -1042,6 +1133,7 @@ class JsonGenerator:
             chat_id,
             topic_id         = topic_id,
             user_id          = user_id,
+            user_ids         = self._user_filter.sql_ids(),
             include_comments = include_comments,
             date_from        = date_from,
             date_to          = date_to,
@@ -1053,10 +1145,12 @@ class JsonGenerator:
         log(f"📊 Строк получено: {len(rows)}")
 
         stt_map:   dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
         safe_title = sanitize_filename(chat_title)
         topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
             else (_topic_suffix(topic_id) if topic_id else "")
         user_part  = f"_{sanitize_filename(username)}" if username else ""
+        user_part += _filter_name_part(self._user_filter)
         # I11: маркеры режима — файлы с разными настройками не перезаписываются
         mode_part  = ("_threads" if user_filter_mode == "threads" else "")
         mode_part += "_comments" if include_comments else ""
@@ -1199,6 +1293,7 @@ class JsonGenerator:
         rows = self._db.get_messages(
             chat_id,
             user_id          = user_id,
+            user_ids         = self._user_filter.sql_ids(),
             include_comments = include_comments,
             date_from        = date_from,
             date_to          = date_to,
@@ -1207,6 +1302,7 @@ class JsonGenerator:
             raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
 
         stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
         safe_title = sanitize_filename(chat_title)
         mode_part  = "_comments" if include_comments else ""
 
@@ -1270,9 +1366,11 @@ class MarkdownGenerator:
     Нет Qt-зависимостей. Нет Telethon-зависимостей. Только stdlib + DBManager.
     """
 
-    def __init__(self, db: DBManager, output_dir: str = "output") -> None:
+    def __init__(self, db: DBManager, output_dir: str = "output",
+                 user_filter: "UserFilter" = NO_FILTER) -> None:
         self._db         = db
         self._output_dir = output_dir
+        self._user_filter = user_filter
 
     def generate(
         self,
@@ -1329,6 +1427,7 @@ class MarkdownGenerator:
             chat_id,
             topic_id         = topic_id,
             user_id          = user_id,
+            user_ids         = self._user_filter.sql_ids(),
             include_comments = include_comments,
             date_from        = date_from,
             date_to          = date_to,
@@ -1340,10 +1439,12 @@ class MarkdownGenerator:
         log(f"📊 Строк получено: {len(rows)}")
 
         stt_map:    dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
         safe_title = sanitize_filename(chat_title)
         topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
             else (_topic_suffix(topic_id) if topic_id else "")
         user_part  = f"_{sanitize_filename(username)}" if username else ""
+        user_part += _filter_name_part(self._user_filter)
         # I11: маркеры режима — файлы с разными настройками не перезаписываются
         mode_part  = ("_threads" if user_filter_mode == "threads" else "")
         mode_part += "_comments" if include_comments else ""
@@ -1428,6 +1529,7 @@ class MarkdownGenerator:
         rows = self._db.get_messages(
             chat_id,
             user_id          = user_id,
+            user_ids         = self._user_filter.sql_ids(),
             include_comments = include_comments,
             date_from        = date_from,
             date_to          = date_to,
@@ -1436,6 +1538,7 @@ class MarkdownGenerator:
             raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
 
         stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
         safe_title = sanitize_filename(chat_title)
         mode_part  = "_comments" if include_comments else ""
         # I13: карта id→автор для маркеров «в ответ на»
@@ -1744,9 +1847,11 @@ class HtmlGenerator:
     Нет Qt-зависимостей. Нет Telethon-зависимостей. Только stdlib + DBManager.
     """
 
-    def __init__(self, db: DBManager, output_dir: str = "output") -> None:
+    def __init__(self, db: DBManager, output_dir: str = "output",
+                 user_filter: "UserFilter" = NO_FILTER) -> None:
         self._db         = db
         self._output_dir = output_dir
+        self._user_filter = user_filter
 
     def generate(
         self,
@@ -1804,6 +1909,7 @@ class HtmlGenerator:
             chat_id,
             topic_id         = topic_id,
             user_id          = user_id,
+            user_ids         = self._user_filter.sql_ids(),
             include_comments = include_comments,
             date_from        = date_from,
             date_to          = date_to,
@@ -1815,10 +1921,12 @@ class HtmlGenerator:
         log(f"📊 Строк получено: {len(rows)}")
 
         stt_map:    dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
         safe_title  = sanitize_filename(chat_title)
         topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
             else (_topic_suffix(topic_id) if topic_id else "")
         user_part  = f"_{sanitize_filename(username)}" if username else ""
+        user_part += _filter_name_part(self._user_filter)
         # I11: маркеры режима — файлы с разными настройками не перезаписываются
         mode_part  = ("_threads" if user_filter_mode == "threads" else "")
         mode_part += "_comments" if include_comments else ""
@@ -2104,6 +2212,7 @@ class HtmlGenerator:
         rows = self._db.get_messages(
             chat_id,
             user_id          = user_id,
+            user_ids         = self._user_filter.sql_ids(),
             include_comments = include_comments,
             date_from        = date_from,
             date_to          = date_to,
@@ -2112,6 +2221,7 @@ class HtmlGenerator:
             raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
 
         stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
+        rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
         safe_title = sanitize_filename(chat_title)
         h_title    = html_lib.escape(chat_title)
         mode_part  = "_comments" if include_comments else ""

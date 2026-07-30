@@ -35,10 +35,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import tempfile
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QColor, QFont
 from PySide6.QtMultimedia import QSoundEffect
 
 from PySide6.QtWidgets import (
@@ -46,10 +47,12 @@ from PySide6.QtWidgets import (
     QLabel, QSizePolicy, QProgressBar, QStackedWidget,
     QFrame, QPushButton, QSpinBox, QComboBox,
     QScrollArea, QGridLayout, QDialog,
+    QListWidget, QListWidgetItem, QLineEdit,
 )
 
 from config import AppConfig
 from core.database import DBManager
+from features.export.filters import UserFilter
 from core.ui_shared.styles import (
     BG_PRIMARY, ACCENT_ORANGE, ACCENT_PINK,
     ACCENT_SOFT_ORANGE,
@@ -358,12 +361,15 @@ class SettingsPanel(QWidget):
         """Восстанавливает последние настройки из AppConfig после сборки UI."""
 
         # Режим разбивки
+        # Ровно одна кнопка активна: setChecked(True) без снятия остальных
+        # оставлял «Единый» подсвеченным вместе с сохранённым режимом,
+        # а _split_mode уходил в сохранённый — выгрузка шла не туда.
         if cfg.split_mode and cfg.split_mode != "none":
-            for btn in self._split_buttons:
-                if btn.mode == cfg.split_mode:
-                    btn.setChecked(True)
-                    self._split_mode = cfg.split_mode
-                    break
+            known = {btn.mode for btn in self._split_buttons}
+            if cfg.split_mode in known:
+                for btn in self._split_buttons:
+                    btn.setChecked(btn.mode == cfg.split_mode)
+                self._split_mode = cfg.split_mode
 
         # Медиафильтр — cfg.media_filter хранит ключи: ["photo", "video", ...]
         # Маппинг ключ → атрибут кнопки
@@ -834,16 +840,62 @@ class SettingsPanel(QWidget):
         self._export_members_btn.clicked.connect(self._on_export_members_clicked)
         layout.addWidget(self._export_members_btn)
 
-        # Выпадающий список пользователей
-        self._members_combo = QComboBox()
-        self._members_combo.setEnabled(False)
-        self._members_combo.setFixedHeight(34)
-        self._members_combo.addItem("Все участники", 0)
-        self._members_combo.setStyleSheet(QSS_COMBOBOX)
-        self._members_combo.currentIndexChanged.connect(
-            self._update_mode_buttons_enabled
+        # ── FEAT-6: фильтр участников — режим, поиск, список с отметками ──
+        self._pfilter_mode:     str  = "none"
+        self._pfilter_selected: dict = {}
+
+        pf_row = QHBoxLayout()
+        pf_row.setSpacing(6)
+        self._pf_buttons: dict = {}
+        for _mode, _caption in (("none",    "Все"),
+                                ("include", "Только выбранные"),
+                                ("exclude", "Кроме выбранных")):
+            _btn = QPushButton(_caption)
+            _btn.setCheckable(True)
+            _btn.setFixedHeight(30)
+            _btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            _btn.clicked.connect(
+                lambda _checked=False, m=_mode: self._set_participant_mode(m)
+            )
+            self._pf_buttons[_mode] = _btn
+            pf_row.addWidget(_btn)
+        self._pf_buttons["none"].setChecked(True)
+        layout.addLayout(pf_row)
+
+        self._members_search = QLineEdit()
+        self._members_search.setPlaceholderText("Поиск участника")
+        self._members_search.setClearButtonEnabled(True)
+        self._members_search.setFixedHeight(30)
+        self._members_search.setStyleSheet(QSS_INPUT)
+        self._members_search.setEnabled(False)
+        self._members_search.textChanged.connect(self._filter_members_list)
+        layout.addWidget(self._members_search)
+
+        self._members_list = QListWidget()
+        self._members_list.setFixedHeight(150)
+        self._members_list.setEnabled(False)
+        self._members_list.itemChanged.connect(self._on_member_item_changed)
+        layout.addWidget(self._members_list)
+
+        self._members_count_lbl = QLabel("Фильтр выключен — в выгрузке все")
+        self._members_count_lbl.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
         )
-        layout.addWidget(self._members_combo)
+        layout.addWidget(self._members_count_lbl)
+
+        # MembersWorker получает date_from/date_to — список зависит от периода,
+        # но в интерфейсе это нигде не было сказано.
+        self._members_period_lbl = QLabel(
+            "ℹ️ Список собран за выбранный период. Измените даты — "
+            "загрузите участников заново."
+        )
+        self._members_period_lbl.setWordWrap(True)
+        self._members_period_lbl.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+        )
+        layout.addWidget(self._members_period_lbl)
+
+        self._apply_participant_mode_style()
 
         return card
 
@@ -1049,8 +1101,16 @@ class SettingsPanel(QWidget):
         self._mode_btn_all.setChecked(mode == "threads")
 
     def _update_mode_buttons_enabled(self, *_args) -> None:
-        """UI-CLEAN-3: режимы участника активны только при выбранном участнике."""
-        has_user = bool(self._members_combo.currentData())
+        """
+        UI-CLEAN-3: режимы участника активны только при выбранном участнике.
+
+        FEAT-6: режим веток требует РОВНО ОДНОГО отмеченного в режиме
+        «только выбранные» — get_thread_pairs(chat_id, user_id) принимает
+        один ID, мультивыбор и исключение в нём смысла не имеют.
+        """
+        mode     = getattr(self, "_pfilter_mode", "none")
+        selected = getattr(self, "_pfilter_selected", {})
+        has_user = (mode == "include" and len(selected) == 1)
         self._mode_btn_messages.setEnabled(has_user)
         self._mode_btn_all.setEnabled(has_user)
         if hasattr(self, "_mode_hint_lbl"):
@@ -1076,6 +1136,177 @@ class SettingsPanel(QWidget):
         filepath= export_participants_docx(users, title, f'./output/{title}')
 
         self.log_message.emit(f"Экспортировано {len(users)} участников => {filepath}")
+
+    # ──────────────────────────────────────────────────────────────────────
+    # FEAT-6: фильтр участников
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _set_participant_mode(self, mode: str) -> None:
+        """Переключает режим фильтра: none / include / exclude."""
+        self._pfilter_mode = mode
+        for _m, _btn in self._pf_buttons.items():
+            _btn.setChecked(_m == mode)
+
+        active = (mode != "none") and bool(self._members_list.count())
+        self._members_list.setEnabled(active)
+        self._members_search.setEnabled(active)
+
+        self._apply_participant_mode_style()
+        self._refresh_member_items()
+        self._update_members_count_label()
+        self._update_mode_buttons_enabled()
+
+    def _indicator_icon_path(self, kind: str) -> str:
+        """
+        Путь к PNG-иконке индикатора списка: "cross" или "check".
+
+        Рисуется QPainter'ом при первом обращении и кладётся в системный
+        temp. Так крестик получается настоящим, но в сборку не нужно
+        добавлять файлы (никаких правок --add-data в PyInstaller).
+        """
+        cache = getattr(self, "_indicator_icons", None)
+        if cache is None:
+            cache = {}
+            self._indicator_icons = cache
+        path = cache.get(kind)
+        if path and os.path.isfile(path):
+            return path
+
+        from PySide6.QtGui import QPainter, QPen, QPixmap
+
+        size = 14
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pm)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            pen = QPen(QColor(COLOR_ERROR if kind == "cross" else ACCENT_ORANGE))
+            pen.setWidth(2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            if kind == "cross":
+                m = 4
+                painter.drawLine(m, m, size - m, size - m)
+                painter.drawLine(size - m, m, m, size - m)
+            else:
+                painter.drawLine(3, 8, 6, 11)
+                painter.drawLine(6, 11, 11, 4)
+        finally:
+            painter.end()
+
+        path = os.path.join(
+            tempfile.gettempdir(), f"rozitta_indicator_{kind}.png"
+        )
+        pm.save(path, "PNG")
+        cache[kind] = path
+        return path
+
+    def _apply_participant_mode_style(self) -> None:
+        """
+        Оформление списка и кнопок режима.
+
+        В режиме «кроме выбранных» в квадратике красный крестик; кнопка
+        режима при этом выглядит как остальные — красный на кнопке читался
+        как ошибка, а не как выбранный режим.
+        """
+        icon = self._indicator_icon_path(
+            "cross" if self._pfilter_mode == "exclude" else "check"
+        )
+        icon_url = icon.replace("\\", "/")
+
+        self._members_list.setStyleSheet(
+            f"QListWidget {{ background-color: {OVERLAY2_HEX};"
+            f" border: 1px solid {BORDER_HEX};"
+            f" border-radius: {RADIUS_MD}px;"
+            f" color: {TEXT_PRIMARY};"
+            f" font-size: {FONT_SIZE_BODY}px; }}"
+            "QListWidget::item { padding: 4px 6px; }"
+            "QListWidget::indicator { width: 14px; height: 14px;"
+            f" border: 1px solid {BORDER_HEX}; border-radius: 3px;"
+            " background: transparent; }"
+            f"QListWidget::indicator:checked {{ image: url({icon_url}); }}"
+        )
+
+        for _m, _btn in self._pf_buttons.items():
+            on = (_m == self._pfilter_mode)
+            fg = ACCENT_ORANGE if on else TEXT_SECONDARY
+            bd = ACCENT_ORANGE if on else BORDER_HEX
+            _btn.setStyleSheet(
+                f"QPushButton {{ background-color: {OVERLAY2_HEX};"
+                f" border: 1px solid {bd};"
+                f" border-radius: {RADIUS_MD}px;"
+                f" color: {fg}; font-size: 11px; }}"
+                f"QPushButton:hover {{ background-color: {OVERLAY_HEX}; }}"
+            )
+
+    def _refresh_member_items(self) -> None:
+        """
+        Исключённые — серые и зачёркнутые, выбранные — полужирные.
+
+        Крестик рисует индикатор (см. _indicator_icon_path), поэтому
+        префикса в тексте больше нет.
+        """
+        self._members_list.blockSignals(True)
+        try:
+            for i in range(self._members_list.count()):
+                item = self._members_list.item(i)
+                data = item.data(Qt.ItemDataRole.UserRole) or {}
+                name = data.get("name", "")
+                checked = item.checkState() == Qt.CheckState.Checked
+                excluded = checked and self._pfilter_mode == "exclude"
+
+                font: QFont = item.font()
+                font.setStrikeOut(excluded)
+                font.setBold(checked and self._pfilter_mode == "include")
+                item.setFont(font)
+
+                item.setText(name)
+                item.setForeground(
+                    QColor(TEXT_SECONDARY if excluded else TEXT_PRIMARY)
+                )
+        finally:
+            self._members_list.blockSignals(False)
+
+    def _on_member_item_changed(self, item: QListWidgetItem) -> None:
+        data = item.data(Qt.ItemDataRole.UserRole) or {}
+        uid = data.get("id")
+        if not uid:
+            return
+        if item.checkState() == Qt.CheckState.Checked:
+            self._pfilter_selected[uid] = data.get("name") or str(uid)
+        else:
+            self._pfilter_selected.pop(uid, None)
+
+        self._refresh_member_items()
+        self._update_members_count_label()
+        self._update_mode_buttons_enabled()
+
+    def _filter_members_list(self, text: str) -> None:
+        """Поиск по списку: скрывает несовпавшие строки, отметки сохраняются."""
+        needle = (text or "").strip().lower()
+        for i in range(self._members_list.count()):
+            item = self._members_list.item(i)
+            data = item.data(Qt.ItemDataRole.UserRole) or {}
+            name = (data.get("name") or "").lower()
+            item.setHidden(bool(needle) and needle not in name)
+
+    def _update_members_count_label(self) -> None:
+        n = len(self._pfilter_selected)
+        if self._pfilter_mode == "none":
+            text = "Фильтр выключен — в выгрузке все"
+        elif self._pfilter_mode == "include":
+            text = f"В выгрузке только: {n}"
+        else:
+            text = f"Исключено из выгрузки: {n} (останутся заглушки)"
+        self._members_count_lbl.setText(text)
+
+    def get_user_filter(self) -> UserFilter:
+        """FEAT-6: фильтр участников для ExportParams."""
+        mode = getattr(self, "_pfilter_mode", "none")
+        selected = getattr(self, "_pfilter_selected", {})
+        if mode == "none" or not selected:
+            return UserFilter.make("none", [])
+        return UserFilter.make(mode, list(selected.keys()), dict(selected))
     # ──────────────────────────────────────────────────────────────────────
     # ПУБЛИЧНЫЙ API (совместим с ParseSettingsScreen)
     # ──────────────────────────────────────────────────────────────────────
@@ -1089,33 +1320,48 @@ class SettingsPanel(QWidget):
 
     def populate_members(self, users: list[dict]) -> None:
         self._members_cache = users.copy()
-        self._members_combo.clear()
-        self._members_combo.addItem("Все участники", 0)  # для пункта "Все" оставляем число 0
-        for user in users:
-            uid = user.get("id", 0)
-            name = user.get("name", str(uid))
-            self._members_combo.addItem(name, user)  # ← заменили uid на user
-        self._members_combo.setEnabled(True)
-        self._members_combo.setCurrentIndex(0)
+        self._pfilter_selected.clear()
+
+        self._members_list.blockSignals(True)
+        try:
+            self._members_list.clear()
+            for user in users:
+                uid  = user.get("id", 0)
+                name = user.get("name", str(uid))
+                item = QListWidgetItem(name)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setData(Qt.ItemDataRole.UserRole,
+                             {"id": uid, "name": name})
+                self._members_list.addItem(item)
+        finally:
+            self._members_list.blockSignals(False)
+
+        active = self._pfilter_mode != "none"
+        self._members_list.setEnabled(active)
+        self._members_search.setEnabled(active)
+        self._members_search.clear()
+
+        self._refresh_member_items()
+        self._update_members_count_label()
+        self._update_mode_buttons_enabled()
         self.log_message.emit(f"Загружено участников: {len(users)}")
 
     def get_params(self) -> Optional[ParseParams]:
         if self._current_chat is None:
             return None
 
-        selected_data = self._members_combo.currentData()
-
-        if selected_data is None:
-            self.user_id = None
-            self.username = None
-        elif isinstance(selected_data, dict):
-            # Новый вариант: данные — словарь с полями id и name
-            self.user_id = selected_data.get("id") or None
-            self.username = selected_data.get("name") or None
+        # FEAT-6: user_id/username выводятся из выбора.
+        # Ровно один отмеченный в режиме «только выбранные» сохраняет старое
+        # поведение: суффикс имени файла и доступный режим веток.
+        # Любой другой случай — None, имя файла соберёт UserFilter.name_part().
+        if (self._pfilter_mode == "include"
+                and len(self._pfilter_selected) == 1):
+            _uid = next(iter(self._pfilter_selected))
+            self.user_id  = _uid or None
+            self.username = self._pfilter_selected[_uid] or None
         else:
-            # Старый вариант: данные — число (user_id)
-            selected_user_id = int(selected_data or 0)
-            self.user_id = None if selected_user_id == 0 else selected_user_id
+            self.user_id  = None
             self.username = None
 
         # Даты
@@ -2133,7 +2379,15 @@ class MainWindow(QMainWindow):
         else:
             comments_val = "нет (доступны только в каналах)"
 
-        if params.user_id:
+        # FEAT-6: считаем от фильтра, а не от params.user_id — при мультивыборе
+        # и в режиме «кроме выбранных» user_id всегда None, и строка всегда
+        # показывала «все», что было неправдой.
+        _uf = self._settings_screen.get_user_filter()
+        if _uf.is_active:
+            user_val = _uf.header_line(max_names=5)
+            if _uf.mode == "include" and params.user_filter_mode == "threads":
+                user_val += " · сообщения + ответы"
+        elif params.user_id:
             who = params.username or f"ID {params.user_id}"
             mode = ("сообщения + ответы"
                     if params.user_filter_mode == "threads" else "только сообщения")
@@ -2374,6 +2628,7 @@ class MainWindow(QMainWindow):
             user_id=params.user_id or None,
             username=params.username if params else None,
             user_filter_mode=params.user_filter_mode if params else "none",
+            user_filter=self._settings_screen.get_user_filter(),
             include_comments=params.include_comments if params else False,
             output_dir=chat_dir,
             db_path=db_path,
