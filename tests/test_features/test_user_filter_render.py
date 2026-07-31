@@ -12,6 +12,7 @@ import pytest
 from core.database import DBManager
 from features.export.filters import UserFilter
 from features.export.generator import (
+    DocxGenerator,
     HtmlGenerator,
     JsonGenerator,
     MarkdownGenerator,
@@ -212,3 +213,141 @@ class TestHiddenMediaAndStt:
             out = _read(gen.generate(-1001, "Тест", period_label="all")[0])
 
         assert HIDDEN_TEXT not in out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Режим «по постам»: фильтр применяется только к комментариям (D-1, D-2)
+# ──────────────────────────────────────────────────────────────────────────────
+
+POST_TEXT       = "ТЕКСТ_ПОСТА_КАНАЛА"
+COMMENT_MARIA   = "МАРКЕР_КОММЕНТАРИЯ_МАРИИ"
+COMMENT_STT     = "МАРКЕР_РАСШИФРОВКИ_МАРИИ"
+COMMENT_IVAN    = "МАРКЕР_КОММЕНТАРИЯ_ИВАНА"
+CHANNEL_ID      = -1001
+MARIA, IVAN     = 111, 222
+POST_NAMES      = {MARIA: "Мария", IVAN: "Иван"}
+
+
+@pytest.fixture
+def db_channel(tmp_path):
+    """Канал: пост от имени канала + комментарии Марии (с голосовым) и Ивана."""
+    voice = tmp_path / "voice_101.ogg"
+    voice.write_bytes(b"x")
+    base = {
+        "chat_id": CHANNEL_ID, "topic_id": None, "media_path": None,
+        "file_type": None, "file_size": None, "from_linked_group": 0,
+    }
+    with DBManager(":memory:") as db:
+        db.insert_messages_batch([
+            {**base, "message_id": 100, "date": "2024-01-15 10:00:00",
+             "user_id": CHANNEL_ID, "username": "Канал", "text": POST_TEXT,
+             "reply_to_msg_id": None, "post_id": None, "is_comment": 0},
+            {**base, "message_id": 101, "date": "2024-01-15 10:05:00",
+             "user_id": MARIA, "username": "Мария", "text": COMMENT_MARIA,
+             "media_path": str(voice), "file_type": "voice", "file_size": 1,
+             "reply_to_msg_id": 100, "post_id": 100, "is_comment": 1},
+            {**base, "message_id": 102, "date": "2024-01-15 10:06:00",
+             "user_id": IVAN, "username": "Иван", "text": COMMENT_IVAN,
+             "reply_to_msg_id": 100, "post_id": 100, "is_comment": 1},
+        ])
+        db.insert_transcription(101, CHANNEL_ID, COMMENT_STT)
+        yield db
+
+
+def _by_posts_text(db, out_dir, generator_cls, user_filter, user_id=None):
+    """
+    Запускает выгрузку «по постам» и возвращает склеенный текст файлов.
+
+    user_id передаётся как его передаёт UI: при «только выбранные» с одним
+    отмеченным ExportWorker кладёт туда его id. Без этого тест не проверяет
+    реальный путь — а именно там легаси-фильтр вымывал посты.
+    """
+    gen = generator_cls(db, output_dir=str(out_dir), user_filter=user_filter)
+    if generator_cls is DocxGenerator:
+        files = gen.generate(chat_id=CHANNEL_ID, chat_title="Канал",
+                             split_mode="post", include_comments=True,
+                             user_id=user_id, period_label="fullchat")
+        import docx
+        return "\n".join(p.text for f in files
+                          for p in docx.Document(f).paragraphs)
+    files = gen.generate_by_posts(chat_id=CHANNEL_ID, chat_title="Канал",
+                                  user_id=user_id, include_comments=True,
+                                  period_label="fullchat")
+    return "\n".join(open(f, encoding="utf-8").read() for f in files)
+
+
+ALL_FOUR = [DocxGenerator, MarkdownGenerator, JsonGenerator, HtmlGenerator]
+
+
+class TestByPostsCommentFilter:
+    """
+    Режим «по постам»: пост печатается всегда целиком, фильтр действует
+    только на комментарии.
+    """
+
+    @pytest.mark.parametrize("generator_cls", ALL_FOUR)
+    def test_exclude_hides_comment_everywhere(self, db_channel, tmp_path,
+                                              generator_cls):
+        """
+        D-1: три вещи утекали по трём разным причинам, поэтому три проверки.
+        DOCX брал комментарии вторым запросом мимо фильтра; расшифровка
+        держалась на обнулении file_type в _hide_row(), которого здесь не было.
+        """
+        uf = UserFilter.make("exclude", [MARIA], POST_NAMES)
+        body = _by_posts_text(db_channel, tmp_path, generator_cls, uf)
+
+        assert COMMENT_MARIA not in body, "текст скрытого комментария в файле"
+        assert "voice_101" not in body, "медиа скрытого комментария в файле"
+        assert COMMENT_STT not in body, "расшифровка скрытого комментария в файле"
+
+    @pytest.mark.parametrize("generator_cls", ALL_FOUR)
+    def test_exclude_keeps_post_and_others(self, db_channel, tmp_path,
+                                           generator_cls):
+        """Пост и чужие комментарии остаются нетронутыми."""
+        uf = UserFilter.make("exclude", [MARIA], POST_NAMES)
+        body = _by_posts_text(db_channel, tmp_path, generator_cls, uf)
+
+        assert POST_TEXT in body, "пост исчез или стал заглушкой"
+        assert COMMENT_IVAN in body, "чужой комментарий пропал"
+
+    @pytest.mark.parametrize("generator_cls", ALL_FOUR)
+    def test_include_keeps_post_and_selected_only(self, db_channel, tmp_path,
+                                                  generator_cls):
+        """
+        D-2: раньше «только Мария» не оставляло ни одного поста (посты идут
+        от имени канала) и падало с EmptyDataError.
+        """
+        uf = UserFilter.make("include", [MARIA], POST_NAMES)
+        body = _by_posts_text(db_channel, tmp_path, generator_cls, uf,
+                              user_id=MARIA)
+
+        assert POST_TEXT in body, "пост должен печататься целиком"
+        assert COMMENT_MARIA in body, "комментарий выбранного участника пропал"
+        assert COMMENT_IVAN not in body, "комментарий невыбранного в файле"
+
+    @pytest.mark.parametrize("generator_cls", ALL_FOUR)
+    def test_include_draws_no_placeholders(self, db_channel, tmp_path,
+                                           generator_cls):
+        """
+        В режиме «только выбранные» заглушек нет вовсе: иначе файл поста
+        состоял бы из двадцати строк «Сообщение скрыто».
+        """
+        uf = UserFilter.make("include", [MARIA], POST_NAMES)
+        body = _by_posts_text(db_channel, tmp_path, generator_cls, uf,
+                              user_id=MARIA)
+
+        assert "скрыто" not in body.lower()
+
+    @pytest.mark.parametrize("generator_cls", ALL_FOUR)
+    def test_post_survives_exclusion_of_its_author(self, db_channel, tmp_path,
+                                                   generator_cls):
+        """
+        Р-1 в самом прямом виде: скрыт автор постов, то есть сам канал.
+        Пост всё равно печатается целиком — он то, вокруг чего собран файл,
+        и заглушка вместо него оставила бы обсуждение без предмета.
+        """
+        uf = UserFilter.make("exclude", [CHANNEL_ID], {CHANNEL_ID: "Канал"})
+        body = _by_posts_text(db_channel, tmp_path, generator_cls, uf)
+
+        assert POST_TEXT in body, "пост исчез при исключении автора"
+        assert COMMENT_MARIA in body and COMMENT_IVAN in body,             "комментарии не должны страдать от исключения канала"

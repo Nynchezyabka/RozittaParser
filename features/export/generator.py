@@ -69,6 +69,7 @@ _SEPARATOR = "─" * 60
 
 # ==============================================================================
 from features.export.filters import (
+    MODE_INCLUDE,
     NO_FILTER,
     PLACEHOLDER_MEDIA_TEXT,
     PLACEHOLDER_SHOW_AUTHOR,
@@ -186,6 +187,52 @@ def _apply_user_filter(rows, user_filter, stt_map=None):
             out.append(_hide_row(row))
         else:
             out.append(row)
+
+    if hidden and stt_map:
+        stt_map = {k: v for k, v in stt_map.items() if k not in hidden}
+
+    return out, stt_map
+
+
+def _apply_comment_filter(rows, user_filter, stt_map=None):
+    """
+    Фильтр участников для режима «по постам»: применяется ТОЛЬКО к комментариям.
+
+    Пост печатается всегда целиком — он то, вокруг чего собран файл, без него
+    файл бессмыслен. Кроме того, пост в канале приходит от имени самого канала,
+    и общий фильтр по участникам вымывал бы все посты разом (D-2).
+
+    К комментариям применяется обычная асимметрия FEAT-6:
+        include → комментарии невыбранных выбрасываются (заглушек нет: файл
+                  поста не должен состоять из двадцати «Сообщение скрыто»)
+        exclude → комментарии выбранных заменяются заглушкой
+
+    Расшифровки скрытых и выброшенных комментариев убираются из stt_map:
+    текст голосового берётся по message_id и мимо заглушки уехал бы в документ.
+
+    Returns:
+        (rows, stt_map) — всегда пара, даже если stt_map не передавался.
+    """
+    if user_filter is None or not user_filter.is_active:
+        return rows, stt_map
+
+    out = []
+    hidden = set()
+    for row in rows:
+        if not row[_COL_IS_COMMENT]:
+            out.append(row)                      # пост — всегда целиком
+            continue
+        if not user_filter.matches(row[_COL_USER_ID]):
+            if user_filter.mode == MODE_INCLUDE:
+                hidden.add(row[_COL_MESSAGE_ID])  # не выбран → в файл не идёт
+            else:
+                out.append(row)
+            continue
+        if user_filter.mode == MODE_INCLUDE:
+            out.append(row)                      # выбран → остаётся как есть
+        else:
+            hidden.add(row[_COL_MESSAGE_ID])
+            out.append(_hide_row(row))
 
     if hidden and stt_map:
         stt_map = {k: v for k, v in stt_map.items() if k not in hidden}
@@ -662,13 +709,10 @@ class DocxGenerator:
         posts = self._db.get_messages(
             chat_id          = chat_id,
             topic_id         = topic_id,
-            user_id          = user_id,
-            user_ids         = self._user_filter.sql_ids(),
             include_comments = False,
             date_from        = date_from,
             date_to          = date_to,
         )
-        posts, _ = _apply_user_filter(posts, self._user_filter)
         if not posts:
             raise EmptyDataError(chat_id, topic_id)
 
@@ -694,6 +738,11 @@ class DocxGenerator:
                     r for r in all_rows
                     if not (r[_COL_MESSAGE_ID] == post_id and r[_COL_IS_COMMENT] == 0)
                 ]
+                # D-1: второй запрос мимо фильтра не идёт. Расшифровки чистятся
+                # явно — self._transcriptions не защищено обнулением file_type,
+                # потому что эти строки не проходили через _hide_row().
+                comments, self._transcriptions = _apply_comment_filter(
+                    comments, self._user_filter, self._transcriptions)
                 if comments:
                     doc.add_paragraph()
                     comment_header = doc.add_heading(
@@ -1292,8 +1341,6 @@ class JsonGenerator:
         log("📋 Загружаю сообщения из БД для JSON-экспорта по постам...")
         rows = self._db.get_messages(
             chat_id,
-            user_id          = user_id,
-            user_ids         = self._user_filter.sql_ids(),
             include_comments = include_comments,
             date_from        = date_from,
             date_to          = date_to,
@@ -1302,7 +1349,7 @@ class JsonGenerator:
             raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
 
         stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
-        rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
+        rows, stt_map = _apply_comment_filter(rows, self._user_filter, stt_map)
         safe_title = sanitize_filename(chat_title)
         mode_part  = "_comments" if include_comments else ""
 
@@ -1528,8 +1575,6 @@ class MarkdownGenerator:
         log("📋 Загружаю сообщения из БД для MD-экспорта по постам...")
         rows = self._db.get_messages(
             chat_id,
-            user_id          = user_id,
-            user_ids         = self._user_filter.sql_ids(),
             include_comments = include_comments,
             date_from        = date_from,
             date_to          = date_to,
@@ -1538,7 +1583,7 @@ class MarkdownGenerator:
             raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
 
         stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
-        rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
+        rows, stt_map = _apply_comment_filter(rows, self._user_filter, stt_map)
         safe_title = sanitize_filename(chat_title)
         mode_part  = "_comments" if include_comments else ""
         # I13: карта id→автор для маркеров «в ответ на»
@@ -2211,8 +2256,6 @@ class HtmlGenerator:
         log("📋 Загружаю сообщения из БД для HTML-экспорта по постам...")
         rows = self._db.get_messages(
             chat_id,
-            user_id          = user_id,
-            user_ids         = self._user_filter.sql_ids(),
             include_comments = include_comments,
             date_from        = date_from,
             date_to          = date_to,
@@ -2221,7 +2264,7 @@ class HtmlGenerator:
             raise EmptyDataError(f"Нет сообщений для чата {chat_id}")
 
         stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
-        rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
+        rows, stt_map = _apply_comment_filter(rows, self._user_filter, stt_map)
         safe_title = sanitize_filename(chat_title)
         h_title    = html_lib.escape(chat_title)
         mode_part  = "_comments" if include_comments else ""
