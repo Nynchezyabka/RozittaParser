@@ -927,6 +927,17 @@ class SettingsPanel(QWidget):
             gl.addWidget(btn, 0, col)
 
         layout.addWidget(grid)
+
+        # D-4: причина недоступности пишется текстом, а не тултипом —
+        # выключенный виджет не получает событий мыши, подсказка не всплывает.
+        self._split_hint = QLabel("Разбивка по постам доступна только для каналов")
+        self._split_hint.setWordWrap(True)
+        self._split_hint.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+        )
+        self._split_hint.setVisible(False)
+        layout.addWidget(self._split_hint)
+
         return card
 
     def _build_export_section(self) -> ModernCard:
@@ -1317,6 +1328,23 @@ class SettingsPanel(QWidget):
         short = (title[:38] + "…") if len(title) > 38 else title
         self._chat_label.setText(short or "не выбран")
         self._load_members_btn.setEnabled(True)
+        self._apply_split_availability(chat)
+
+    def _apply_split_availability(self, chat: dict) -> None:
+        """
+        D-4 / I3: «по постам» имеет смысл только для broadcast-канала.
+
+        В группе у каждого сообщения is_comment = 0, то есть каждое считается
+        постом и получает свой файл — десять тысяч сообщений дают десять тысяч
+        файлов.
+        """
+        is_channel = (chat or {}).get("type") == "channel"
+
+        self._split_post.setEnabled(is_channel)
+        self._split_hint.setVisible(not is_channel)
+
+        if not is_channel and self._split_mode == "post":
+            self._on_split_mode("none")
 
     def populate_members(self, users: list[dict]) -> None:
         self._members_cache = users.copy()
@@ -1373,6 +1401,13 @@ class SettingsPanel(QWidget):
         if end_dt is not None:
             date_to = end_dt.date()
 
+        # D-4: та же проверка на выходе. При старте _split_mode
+        # восстанавливается из сохранённой конфигурации ещё до выбора чата,
+        # то есть мимо set_chat().
+        split_mode = self._split_mode
+        if split_mode == "post" and self._current_chat.get("type") != "channel":
+            split_mode = "none"
+
         return ParseParams(
             chat=self._current_chat,
             download_photo       = self._media_photo.isChecked(),
@@ -1388,7 +1423,7 @@ class SettingsPanel(QWidget):
             user_filter_mode     = self._user_mode,
             user_id              = self.user_id or 0,
             username             = self.username or "",
-            split_mode           = self._split_mode,
+            split_mode           = split_mode,
             include_comments     = self._toggle_comments.isChecked(),
             re_download          = self._toggle_redownload.isChecked(),
             use_takeout          = self._toggle_takeout.isChecked(),
@@ -2400,7 +2435,8 @@ class MainWindow(QMainWindow):
             for f in (self._settings_screen.get_export_formats() or ["docx"])
         ]
         split_names = {"none": "одним файлом", "day": "по дням",
-                       "month": "по месяцам", "post": "по постам"}
+                       "month": "по месяцам",
+                       "post": "по постам (отдельный файл на каждый пост)"}
         split_val = split_names.get(params.split_mode, params.split_mode)
 
         rows = [

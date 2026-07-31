@@ -28,7 +28,7 @@ from typing import Optional
 
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve,
-    QRect, Property,
+    QRect, Property, QEvent,
 )
 from PySide6.QtGui import (
     QColor, QPainter, QPainterPath, QFont, QLinearGradient, QTextCursor,
@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
 from core.ui_shared.styles import (
     # Цвета
     BG_PRIMARY, ACCENT_ORANGE, ACCENT_PINK, ACCENT_SOFT_ORANGE,
-    ACCENT_SOFT_PINK, TEXT_PRIMARY, TEXT_SECONDARY,
+    ACCENT_SOFT_PINK, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED,
     OVERLAY_HEX, OVERLAY2_HEX, BORDER_HEX,
     COLOR_SUCCESS, COLOR_ERROR, COLOR_WARNING,
     # Размеры
@@ -618,7 +618,31 @@ class SplitModeButton(QPushButton):
     def mode(self) -> str:
         return self._mode
 
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        """Пересобрать стиль при включении/выключении кнопки."""
+        if event.type() == QEvent.Type.EnabledChange:
+            self._refresh(self.isChecked())
+        super().changeEvent(event)
+
     def _refresh(self, checked: bool) -> None:
+        if not self.isEnabled():
+            # Выключенный вид. Нужен явно: стиль задаётся здесь жёстко, а цвет
+            # подписей прописан на дочерних QLabel — палитра Qt их не приглушит,
+            # и кнопка выглядела бы обычной, переставая при этом нажиматься.
+            self.setStyleSheet(f"""
+                SplitModeButton, QPushButton {{
+                    background-color: {OVERLAY_HEX};
+                    border: 1px dashed {BORDER_HEX};
+                    border-radius: {RADIUS_MD}px;
+                    color: {TEXT_DISABLED};
+                }}
+            """)
+            for lbl in (self._icon_lbl, self._text_lbl):
+                lbl.setStyleSheet(
+                    f"color: {TEXT_DISABLED}; background: transparent;"
+                )
+            return
+
         if checked:
             self.setStyleSheet(f"""
                 SplitModeButton, QPushButton {{
