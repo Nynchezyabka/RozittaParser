@@ -115,6 +115,24 @@ class UserFilter:
         """True, если фильтр реально что-то меняет."""
         return self.mode != MODE_NONE and bool(self.ids)
 
+    def matches(self, uid: Optional[int]) -> bool:
+        """
+        True → участник отмечен в списке фильтра.
+
+        Предикат один на оба режима, а вот следствие разное: в "include"
+        отмеченные остаются, в "exclude" — прячутся. Нужен отдельно от
+        is_hidden(), потому что в режиме «по постам» include-фильтрация
+        комментариев происходит на уровне рендера, а не в SQL: в SQL она
+        вымыла бы вместе с чужими комментариями и сами посты, которые
+        приходят от имени канала.
+
+        Строки без отправителя (user_id IS NULL — служебные сообщения)
+        не отмечены никогда.
+        """
+        if not self.is_active or uid is None:
+            return False
+        return uid in self._expanded
+
     def is_hidden(self, uid: Optional[int]) -> bool:
         """
         True → вместо сообщения рисуется заглушка.
@@ -122,9 +140,9 @@ class UserFilter:
         Только для режима "exclude". Строки без отправителя (user_id IS NULL —
         служебные сообщения) никогда не скрываются.
         """
-        if self.mode != MODE_EXCLUDE or uid is None:
+        if self.mode != MODE_EXCLUDE:
             return False
-        return uid in self._expanded
+        return self.matches(uid)
 
     def sql_ids(self) -> Optional[List[int]]:
         """

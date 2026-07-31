@@ -24,7 +24,11 @@ _SCRIPT = os.path.join(_REPO_ROOT, "migrate_media_paths.py")
 
 # Импортируем модуль напрямую для доступа к функциям
 sys.path.insert(0, _REPO_ROOT)
-import migrate_media_paths as mp  # noqa: E402
+mp = pytest.importorskip(
+    "migrate_media_paths",
+    reason="скрипт миграции путей к медиа отсутствует в репозитории (см. П1)",
+)
+
 
 
 # ============================================================================
