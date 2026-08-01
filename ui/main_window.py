@@ -65,7 +65,7 @@ from core.ui_shared.styles import (
 from core.ui_shared.widgets import (
     RozittaWidget, LogWidget,
     ModernCard, SectionTitle, ToggleSwitch,
-    MediaButton, ChipButton, SplitModeButton,
+    MediaButton, ChipButton, SplitModeButton, PresetButton,
 )
 from core.ui_shared.calendar import DateRangeWidget
 from features.auth.ui import AuthScreen
@@ -354,8 +354,17 @@ class SettingsPanel(QWidget):
         self._parsing:      bool            = False
         self._members_cache: list = []
         self._build()
+
+        # Ограничения пересобираются при смене набора форматов. Подключаем
+        # после _build(): обработчик читает виджеты обеих секций сразу, а на
+        # момент сборки одна из них ещё не существует.
+        for _fmt_btn in (self._fmt_docx, self._fmt_json,
+                         self._fmt_md, self._fmt_html):
+            _fmt_btn.toggled.connect(lambda _=False: self._apply_export_limits())
+
         if cfg:
             self._restore_from_cfg(cfg)
+        self._apply_export_limits()
 
     def _restore_from_cfg(self, cfg) -> None:
         """Восстанавливает последние настройки из AppConfig после сборки UI."""
@@ -394,29 +403,34 @@ class SettingsPanel(QWidget):
     # media: photo, video, file, voice, round; fmt: docx/json/md/html
     _PRESETS = {
         "archive": dict(
-            label="📦 Полный архив",
+            label="💾 Сохранить архив",
+            hint="DOCX и HTML — читать и искать по архиву самостоятельно",
             media=("photo", "video", "file", "voice", "round"),
             comments=True, stt_voice=True, stt_round=True,
             formats=("docx", "html"), ai_split=False,
         ),
-        "text": dict(
-            label="📄 Только текст",
-            media=(),
-            comments=True, stt_voice=False, stt_round=False,
-            formats=("docx",), ai_split=False,
-        ),
         "ai": dict(
-            label="🤖 Для нейросети",
+            label="💬 Спросить у чат-бота",
+            hint="MD кусками — вставлять в окно чата",
             media=("voice", "round"),
             comments=True, stt_voice=True, stt_round=True,
             formats=("md",), ai_split=True,
         ),
         "kb": dict(
-            label="🧠 База знаний для ИИ",
+            label="🗂 Архив для ИИ-агента",
+            hint="MD и JSON с оглавлением — агент ищет сам",
             media=("voice", "round"),
             comments=True, stt_voice=True, stt_round=True,
-            formats=("md",), ai_split=False,
+            formats=("md", "json"), ai_split=False,
             build_kb=True,
+        ),
+        "members": dict(
+            label="👥 Список участников",
+            hint="Кто писал в чате и сколько сообщений — отдельный DOCX",
+            media=(),
+            comments=False, stt_voice=False, stt_round=False,
+            formats=("docx",), ai_split=False,
+            members_only=True,
         ),
     }  # ── KB preset stage 10 (UI) ──
 
@@ -443,35 +457,39 @@ class SettingsPanel(QWidget):
         card, layout = self._card()
         layout.addWidget(SectionTitle("⚡", "Быстрый выбор"))
 
-        row = QHBoxLayout()
+        # Сетка 2×2: столбцом четыре карточки занимали 489 px, здесь — около
+        # 290. Подписи рассчитаны на две строки половинной ширины.
+        row = QGridLayout()
         row.setSpacing(8)
+        row.setContentsMargins(0, 0, 0, 0)
         self._preset_buttons: dict[str, QPushButton] = {}
 
-        qss = (
-            f"QPushButton {{ background: transparent; color: {TEXT_SECONDARY};"
-            f" border: 1px solid {BORDER_HEX}; border-radius: 15px;"
-            f" padding: 5px 13px; font-size: 12px; }}"
-            f" QPushButton:checked {{ background-color: {ACCENT_ORANGE};"
-            f" color: {BG_PRIMARY}; border-color: {ACCENT_ORANGE};"
-            f" font-weight: 500; }}"
-        )
-
-        for key, spec in self._PRESETS.items():
-            btn = QPushButton(spec["label"])
-            btn.setCheckable(True)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setStyleSheet(qss)
+        for idx, (key, spec) in enumerate(self._PRESETS.items()):
+            btn = PresetButton(spec["label"], spec.get("hint", ""), key)
             btn.clicked.connect(lambda _=False, k=key: self._apply_preset(k))
             self._preset_buttons[key] = btn
-            row.addWidget(btn)
+            row.addWidget(btn, idx // 2, idx % 2)
 
-        self._preset_custom_btn = QPushButton("⚙️ Свой вариант")
-        self._preset_custom_btn.setCheckable(True)
-        self._preset_custom_btn.setEnabled(False)  # индикатор, не команда
-        self._preset_custom_btn.setStyleSheet(qss)
-        row.addWidget(self._preset_custom_btn)
-        row.addStretch(1)
         layout.addLayout(row)
+
+        self._members_only_hint = QLabel(
+            "Будет создан только список участников. Сообщения не выгружаются"
+        )
+        self._members_only_hint.setWordWrap(True)
+        self._members_only_hint.setStyleSheet(
+            f"color: {COLOR_WARNING}; font-size: 11px; background: transparent;"
+        )
+        self._members_only_hint.setVisible(False)
+        layout.addWidget(self._members_only_hint)
+
+        # Тонкий разделитель: ниже — не ещё один пресет, а ручная правка.
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background-color: {BORDER_HEX}; border: none;")
+        layout.addWidget(divider)
+
+        layout.addWidget(self._build_export_body())
 
         self._applying_preset = False
         return card
@@ -498,6 +516,7 @@ class SettingsPanel(QWidget):
         """Выставляет все настройки состава/формата по пресету."""
         spec = self._PRESETS[key]
         self._applying_preset = True
+        self._is_custom = False
         try:
             media_map = {
                 "photo": self._media_photo, "video": self._media_video,
@@ -529,20 +548,47 @@ class SettingsPanel(QWidget):
 
             for pkey, btn in self._preset_buttons.items():
                 btn.setChecked(pkey == key)
-            self._preset_custom_btn.setChecked(False)
+            # Галочка кнопки означает «блок раскрыт», а не «свой вариант»:
+            # трогать её здесь нельзя, иначе выбор пресета схлопывает панель
+            # под руками. Состояние состава живёт в _is_custom, он выставлен
+            # в начале метода, и подпись обновится сама.
+            self._update_manual_header()
+            self._apply_export_limits()
             self._log_signal_safe(f"⚡ Пресет: {spec['label']}")
         finally:
             self._applying_preset = False
 
     def _mark_custom_preset(self, *_args) -> None:
-        """Ручное изменение состава → индикатор «Свой вариант»."""
+        """Ручное изменение состава → подпись «Свой вариант»."""
         if getattr(self, "_applying_preset", False):
             return
         if not hasattr(self, "_preset_buttons"):
             return
         for btn in self._preset_buttons.values():
             btn.setChecked(False)
-        self._preset_custom_btn.setChecked(True)
+        self._is_custom = True
+        self._update_manual_header()
+
+    def _update_manual_header(self) -> None:
+        """
+        Подпись кнопки раскрытия.
+
+        Галочка кнопки означает «блок раскрыт», поэтому состояние «состав
+        разошёлся с пресетом» живёт в тексте, а не в setChecked — иначе два
+        смысла в одном свойстве.
+
+        Текущий набор форматов показывается всегда: свёрнутый блок не должен
+        прятать уже сделанный выбор.
+        """
+        if not hasattr(self, "_preset_custom_btn"):
+            return
+        formats = [f.upper() for f in self.get_export_formats()]
+        title = "Свой вариант" if getattr(self, "_is_custom", False) \
+            else "Настроить вручную"
+        arrow = "▾" if self._preset_custom_btn.isChecked() else "▸"
+        self._preset_custom_btn.setText(
+            "⚙️  {0} — {1}   {2}".format(title, ", ".join(formats) or "ничего", arrow)
+        )
 
     def _log_signal_safe(self, msg: str) -> None:
         sig = getattr(self, "log_message", None)
@@ -585,7 +631,7 @@ class SettingsPanel(QWidget):
         cl.addWidget(self._build_date_section())
         cl.addWidget(self._build_members_section())
         cl.addWidget(self._build_split_section())
-        cl.addWidget(self._build_export_section())
+        # Форматы переехали внутрь «Быстрого выбора», отдельной карточки нет.
         cl.addWidget(self._build_options_section())
         self._wire_preset_watchers()   # UI-CLEAN-4 hotfix: после ВСЕХ секций
         cl.addStretch(1)
@@ -666,7 +712,17 @@ class SettingsPanel(QWidget):
 
     def _build_media_section(self) -> ModernCard:
         card, layout = self._card()
-        layout.addWidget(SectionTitle("📥", "Медиафайлы", accent=True))
+        layout.addWidget(SectionTitle("📥", "Что скачать на диск", accent=True))
+
+        # «Медиафайлы» — категория, она не отвечает на вопрос «что произойдёт».
+        # Плюс нигде не было сказано, что текст выгружается независимо от этих
+        # кнопок: сняв все пять, человек мог решить, что не получит ничего.
+        caption = QLabel("Текст сохраняется всегда — здесь только вложения")
+        caption.setWordWrap(True)
+        caption.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+        )
+        layout.addWidget(caption)
 
         grid = QWidget()
         grid.setStyleSheet("background: transparent;")
@@ -688,7 +744,36 @@ class SettingsPanel(QWidget):
             gl.addWidget(btn, 0, col)
 
         layout.addWidget(grid)
+
+        # Видимость последствия: что именно уедет на диск.
+        self._media_summary = QLabel()
+        self._media_summary.setWordWrap(True)
+        self._media_summary.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+        )
+        layout.addWidget(self._media_summary)
+
+        for _btn in (self._media_photo, self._media_video, self._media_file,
+                     self._media_voice, self._media_round):
+            _btn.toggled.connect(lambda _=False: self._update_media_summary())
+        self._update_media_summary()
+
         return card
+
+    def _update_media_summary(self) -> None:
+        """Строка итога под кнопками: что скачается вместе с текстом."""
+        names = [
+            (self._media_photo, "фото"),
+            (self._media_video, "видео"),
+            (self._media_file, "файлы"),
+            (self._media_voice, "голосовые"),
+            (self._media_round, "кружки"),
+        ]
+        chosen = [n for btn, n in names if btn.isChecked()]
+        self._media_summary.setText(
+            "Скачаются: " + ", ".join(chosen) if chosen
+            else "Вложения не скачиваются — только текст"
+        )
 
     def _build_stt_section(self) -> ModernCard:
         card, layout = self._card()
@@ -704,6 +789,24 @@ class SettingsPanel(QWidget):
         chips_row.addWidget(self._stt_round)
         chips_row.addStretch(1)
         layout.addLayout(chips_row)
+
+        # Место, где человек упирается в ограничение: включил распознавание,
+        # а видео не расшифровалось. Ссылка серым, чтобы не перетягивать
+        # внимание с настройки.
+        stt_hint = QLabel(
+            'Голосовые и кружочки распознаются и попадают прямо в текст '
+            'документа. Видео и длинные аудио расшифровывает '
+            '<a href="https://github.com/Nynchezyabka/RozittaTranscriber" '
+            f'style="color: {ACCENT_ORANGE};">Rozitta Transcriber</a> — '
+            'отдельными файлами рядом с архивом'
+        )
+        stt_hint.setWordWrap(True)
+        stt_hint.setOpenExternalLinks(True)
+        stt_hint.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+        )
+        layout.addWidget(stt_hint)
+
         return card
 
     def _build_date_section(self) -> ModernCard:
@@ -940,9 +1043,49 @@ class SettingsPanel(QWidget):
 
         return card
 
-    def _build_export_section(self) -> ModernCard:
-        card, layout = self._card()
-        layout.addWidget(SectionTitle("💾", "Формат экспорта"))
+    def _build_export_body(self) -> QWidget:
+        """
+        Кнопка раскрытия и блок ручной настройки — без собственной карточки.
+
+        Живёт внутри «Быстрого выбора»: пресет и ручная правка формата — одно
+        решение, и принимать его человек должен в одном месте. Отдельной
+        карточкой блок уезжал на Y=1785 при окне в 900 и выглядел пропавшим.
+        """
+        box = QWidget()
+        box.setStyleSheet("background: transparent;")
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+
+        self._preset_custom_btn = QPushButton()
+        self._preset_custom_btn.setCheckable(True)
+        self._preset_custom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._preset_custom_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {TEXT_SECONDARY};"
+            f" border: 1px solid {BORDER_HEX}; border-radius: 8px;"
+            f" padding: 7px 13px; font-size: 12px; text-align: left; }}"
+            f" QPushButton:hover {{ background-color: {OVERLAY_HEX};"
+            f" color: {TEXT_PRIMARY}; }}"
+            f" QPushButton:checked {{ border-color: {ACCENT_ORANGE};"
+            f" color: {ACCENT_ORANGE}; }}"
+        )
+        outer.addWidget(self._preset_custom_btn)
+
+        # Дальше по методу имя layout указывает на содержимое контейнера,
+        # поэтому девяносто строк ниже не переписываются: они и так кладут
+        # виджеты в layout, просто теперь это раскладка скрытого блока.
+        self._manual_box = QWidget()
+        self._manual_box.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(self._manual_box)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(8)
+        outer.addWidget(self._manual_box)
+        self._manual_box.setVisible(False)
+
+        self._preset_custom_btn.toggled.connect(self._manual_box.setVisible)
+        self._preset_custom_btn.toggled.connect(
+            lambda _=False: self._update_manual_header()
+        )
 
         chips_row = QHBoxLayout()
         chips_row.setSpacing(8)
@@ -1002,6 +1145,19 @@ class SettingsPanel(QWidget):
         ai_row = self._option_row("🤖  Адаптировать для ИИ", self._toggle_ai_split)
         layout.addLayout(ai_row)
 
+        # Р-8: причина недоступности пишется текстом — на выключенном
+        # переключателе тултип не всплывает, событий мыши он не получает.
+        self._ai_hint = QLabel(
+            "Нарезка по объёму нужна корпусу для нейросети — "
+            "доступна при выбранных MD или JSON"
+        )
+        self._ai_hint.setWordWrap(True)
+        self._ai_hint.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+        )
+        self._ai_hint.setVisible(False)
+        layout.addWidget(self._ai_hint)
+
         # Размер чанка — показывается только когда AI-split включён
         chunk_row = QHBoxLayout()
         chunk_row.setSpacing(6)
@@ -1029,12 +1185,6 @@ class SettingsPanel(QWidget):
         # Связываем тоггл и спинбокс
         self._toggle_ai_split.toggled.connect(self._ai_chunk_spin.setEnabled)
 
-        ai_hint = QLabel("Разбивка применяется только к MD, JSON и HTML. DOCX всегда единый файл.")
-        ai_hint.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: 11px; background: transparent;"
-        )
-        layout.addWidget(ai_hint)
-
         # ── KB toggle ───────────────────────────────────────────────────
         self._toggle_build_kb = ToggleSwitch(checked=False)  # ── KB preset stage 10 (UI) ──
         kb_row = self._option_row(
@@ -1047,7 +1197,7 @@ class SettingsPanel(QWidget):
         )
         layout.addLayout(kb_row)
 
-        return card
+        return box
 
     def get_export_formats(self) -> list:
         """Возвращает список активных форматов экспорта. Минимум один — docx."""
@@ -1328,23 +1478,80 @@ class SettingsPanel(QWidget):
         short = (title[:38] + "…") if len(title) > 38 else title
         self._chat_label.setText(short or "не выбран")
         self._load_members_btn.setEnabled(True)
-        self._apply_split_availability(chat)
+        self._apply_export_limits()
 
-    def _apply_split_availability(self, chat: dict) -> None:
-        """
-        D-4 / I3: «по постам» имеет смысл только для broadcast-канала.
+    def is_members_only(self) -> bool:
+        """True → выбран режим «Список участников», сообщения не выгружаются."""
+        btn = self._preset_buttons.get("members")
+        return bool(btn is not None and btn.isChecked())
 
-        В группе у каждого сообщения is_comment = 0, то есть каждое считается
-        постом и получает свой файл — десять тысяч сообщений дают десять тысяч
-        файлов.
+    def _apply_export_limits(self) -> None:
         """
-        is_channel = (chat or {}).get("type") == "channel"
+        Ограничения разбивки — один метод на все причины.
+
+        D-4 / I3: «по постам» имеет смысл только для broadcast-канала. В группе
+        у каждого сообщения is_comment = 0, каждое считается постом и получает
+        свой файл — десять тысяч сообщений дают десять тысяч файлов.
+
+        Р-8: «по дням» и «по месяцам» реализованы только в DocxGenerator;
+        `ai_split` осмыслен только для MD и JSON. Раньше и то и другое молча
+        игнорировалось.
+
+        Разводить это по двум обработчикам нельзя: строка-пояснение одна,
+        и они бы её перетирали.
+        """
+        chat       = self._current_chat
+        is_channel = bool(chat) and chat.get("type") == "channel"
+
+        # Режим списка участников: всё, что не влияет на результат, гаснет.
+        members_only = self.is_members_only()
+        for w in (self._media_photo, self._media_video, self._media_file,
+                  self._media_voice, self._media_round,
+                  self._stt_voice, self._stt_round,
+                  self._preset_custom_btn, self._members_search,
+                  self._members_list, self._load_members_btn,
+                  self._export_members_btn):
+            if w is not None:
+                w.setEnabled(not members_only)
+        for _b in self._pf_buttons.values():
+            _b.setEnabled(not members_only)
+        for _b in self._split_buttons:
+            _b.setEnabled(not members_only)
+        if members_only:
+            self._members_only_hint.setVisible(True)
+            self._split_hint.setVisible(False)
+            self._ai_hint.setVisible(False)
+            return
+        self._members_only_hint.setVisible(False)
+        docx_on    = self._fmt_docx.isChecked()
+        corpus_on  = self._fmt_md.isChecked() or self._fmt_json.isChecked()
 
         self._split_post.setEnabled(is_channel)
-        self._split_hint.setVisible(not is_channel)
+        self._split_day.setEnabled(docx_on)
+        self._split_month.setEnabled(docx_on)
 
-        if not is_channel and self._split_mode == "post":
+        # Сброс режима «по постам» — только когда чат уже выбран. На старте
+        # _split_mode восстановлен из сохранённой конфигурации, а чата ещё нет:
+        # гасить кнопку можно, терять сохранённый выбор нельзя.
+        if chat is not None and not is_channel and self._split_mode == "post":
             self._on_split_mode("none")
+        if not docx_on and self._split_mode in ("day", "month"):
+            self._on_split_mode("none")
+
+        self._toggle_ai_split.setEnabled(corpus_on)
+        if not corpus_on and self._toggle_ai_split.isChecked():
+            self._toggle_ai_split.setChecked(False)
+
+        reasons = []
+        if not is_channel:
+            reasons.append("«Посты» — только для каналов")
+        if not docx_on:
+            reasons.append("«По дням» и «Месяцы» — только для DOCX")
+        self._split_hint.setText("   ·   ".join(reasons))
+        self._split_hint.setVisible(bool(reasons))
+
+        self._ai_hint.setVisible(not corpus_on)
+        self._update_manual_header()
 
     def populate_members(self, users: list[dict]) -> None:
         self._members_cache = users.copy()
@@ -1986,7 +2193,7 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
-        self._start_btn = QPushButton("▶  НАЧАТЬ ПАРСИНГ")
+        self._start_btn = QPushButton("▶  НАЧАТЬ ЭКСПОРТ")
         self._start_btn.setFixedHeight(40)
         self._start_btn.setStyleSheet(f"""
             QPushButton {{
@@ -2039,37 +2246,6 @@ class MainWindow(QMainWindow):
 
         start_layout.addLayout(btn_row)
 
-        # ── Кнопка «Обновить архив» (Update Archive stage 1b, вариант A1) ────
-        # Вторичная плоская кнопка под «НАЧАТЬ ПАРСИНГ». На чатах без архива
-        # открывает диалог-перенаправление на первый парсинг.
-        self._update_archive_btn = QPushButton("\U0001F504  Обновить архив")
-        self._update_archive_btn.setFixedHeight(32)
-        self._update_archive_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._update_archive_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: rgba(255, 140, 0, 0.08);
-                border: 1px solid rgba(255, 140, 0, 0.35);
-                border-radius: {RADIUS_MD}px;
-                color: {ACCENT_ORANGE};
-                font-size: 12px;
-                font-weight: 600;
-                font-family: {FONT_FAMILY};
-            }}
-            QPushButton:hover {{
-                background-color: rgba(255, 140, 0, 0.18);
-                border-color: {ACCENT_ORANGE};
-            }}
-            QPushButton:pressed {{
-                background-color: rgba(255, 140, 0, 0.25);
-            }}
-            QPushButton:disabled {{
-                background-color: rgba(80, 80, 80, 0.10);
-                border-color: rgba(120, 120, 120, 0.25);
-                color: #888888;
-            }}
-        """)
-        start_layout.addSpacing(8)
-        start_layout.addWidget(self._update_archive_btn)
 
         layout.addWidget(start_wrap)
 
@@ -2119,10 +2295,6 @@ class MainWindow(QMainWindow):
         # StartBtn / StopBtn в правой панели
         self._start_btn.clicked.connect(self._on_start_btn_clicked)
         self._stop_btn.clicked.connect(self._on_stop_clicked)
-        # Update Archive stage 1b: видимая кнопка в правой панели (вариант A1)
-        self._update_archive_btn.clicked.connect(
-            self._on_update_archive_btn_clicked, Qt.UniqueConnection
-        )
 
     # ──────────────────────────────────────────────────────────────────────
     # НАВИГАЦИЯ
@@ -2362,6 +2534,14 @@ class MainWindow(QMainWindow):
     # СЛОТЫ: ПАРСИНГ
     # ──────────────────────────────────────────────────────────────────────
 
+    def _reset_start_btn_text(self) -> None:
+        """Подпись кнопки говорит о результате в момент нажатия."""
+        self._start_btn.setText(
+            "▶  ВЫГРУЗИТЬ СПИСОК"
+            if self._settings_screen.is_members_only()
+            else "▶  НАЧАТЬ ЭКСПОРТ"
+        )
+
     def _on_start_btn_clicked(self) -> None:
         """Кнопка НАЧАТЬ ПАРСИНГ в правой панели."""
 
@@ -2553,7 +2733,7 @@ class MainWindow(QMainWindow):
     def _on_parse_error(self, message: str) -> None:
         self._update_progress(0)
         self._start_btn.setEnabled(True)
-        self._start_btn.setText("▶  НАЧАТЬ ПАРСИНГ")
+        self._reset_start_btn_text()
         self._stop_btn.setVisible(False)
         self._settings_screen.set_parsing(False)
         self._rozetta.set_state("error")
@@ -2687,7 +2867,7 @@ class MainWindow(QMainWindow):
     def _on_export_complete(self, paths: list) -> None:
         self._update_progress(100)
         self._start_btn.setEnabled(True)
-        self._start_btn.setText("▶  НАЧАТЬ ПАРСИНГ")
+        self._reset_start_btn_text()
         self._stop_btn.setVisible(False)
         self._settings_screen.set_parsing(False)
         self._rozetta.set_state("success")
@@ -2704,7 +2884,7 @@ class MainWindow(QMainWindow):
     def _on_export_error(self, message: str) -> None:
         self._update_progress(0)
         self._start_btn.setEnabled(True)
-        self._start_btn.setText("▶  НАЧАТЬ ПАРСИНГ")
+        self._reset_start_btn_text()
         self._stop_btn.setVisible(False)
         self._settings_screen.set_parsing(False)
         self._rozetta.set_state("error")
@@ -2716,29 +2896,6 @@ class MainWindow(QMainWindow):
     # ──────────────────────────────────────────────────────────────────────
     # UPDATE ARCHIVE — кнопка в правой панели (stage 1b, вариант A1)
     # ──────────────────────────────────────────────────────────────────────
-
-    def _on_update_archive_btn_clicked(self) -> None:
-        """Точка входа A1: видимая кнопка «Обновить архив» в правой панели.
-
-        Логика:
-          1. Чат не выбран → toast + переключение на вкладку «Чаты».
-          2. Чат выбран, архива нет → диалог-перенаправление на парсинг.
-          3. Чат выбран, архив есть → _run_update_archive(chat).
-        """
-        chat = self._settings_screen._current_chat
-        if not chat:
-            self._show_toast("Сначала выберите чат", "info", 2500)
-            if self._current_step >= 1:
-                self._switch_tab(1)
-            return
-
-        title = chat.get("title") or "Без названия"
-        if self._has_archive_passport(chat):
-            # Архив существует → запускаем обновление (stub Шага 1)
-            self._run_update_archive(chat)
-        else:
-            # Архива нет → мягко перенаправляем на первый парсинг
-            self._show_no_archive_dialog(chat)
 
     def _has_archive_passport(self, chat: dict) -> bool:
         """Проверяет наличие archive_passport.json в папке чата.
@@ -2954,7 +3111,7 @@ class MainWindow(QMainWindow):
         """Кнопка Стоп — прерывает текущие воркеры."""
         self._stop_all_workers()
         self._start_btn.setEnabled(True)
-        self._start_btn.setText("▶  НАЧАТЬ ПАРСИНГ")
+        self._reset_start_btn_text()
         self._stop_btn.setVisible(False)
         self._settings_screen.set_parsing(False)
         self._update_progress(0)

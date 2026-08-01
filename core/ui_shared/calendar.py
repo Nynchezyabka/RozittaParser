@@ -10,13 +10,13 @@ ui_shared/calendar.py.
 
 from __future__ import annotations
 import logging
-from datetime import datetime, timedelta, date as date_type
+from datetime import datetime, date as date_type
 from typing import Optional, Tuple
 
 from PySide6.QtCore import Qt, QDate, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QDateEdit, QStackedWidget, QSlider,
+    QPushButton, QDateEdit,
 )
 
 from core.ui_shared import styles
@@ -55,7 +55,10 @@ class DateRangeWidget(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.current_mode: str = "slider"  # "slider" | "dates"
+        # «За всё время» умел выдавать только ползунок на максимуме. Ползунка
+        # больше нет, поэтому состояние живёт здесь: кнопка «Всё время» его
+        # включает, любая другая кнопка и правка полей — гасят.
+        self._all_time: bool = True
 
         self._build_ui()
 
@@ -68,88 +71,9 @@ class DateRangeWidget(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(styles.PAD_SMALL)
 
-        # Шапка: заголовок + переключатель
-        root.addLayout(self._build_header())
-
-        # Стек: слайдер / календарь
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self._build_slider_page())  # index 0
-        self.stack.addWidget(self._build_dates_page())  # index 1
-        root.addWidget(self.stack)
-
-    def _build_header(self) -> QHBoxLayout:
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        self.mode_label = QLabel("Режим: Глубина (дни)")
-        self.mode_label.setStyleSheet(
-            f"color: {styles.ACCENT_ORANGE}; "
-            f"font-weight: bold; font-size: {styles.FONT_SMALL}px;"
-        )
-
-        self.toggle_btn = QPushButton("📆 Выбрать даты")
-        self.toggle_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background: rgba(166,130,255, 70);"
-            f"  border: 1px solid rgba(166,130,255, 120);"
-            f"  border-radius: {styles.RADIUS_TINY}px;"
-            f"  padding: 4px 10px;"
-            f"  color: white;"
-            f"  font-size: {styles.FONT_SMALL}px;"
-            f"}}"
-            f"QPushButton:hover {{"
-            f"  background: rgba(166,130,255, 120);"
-            f"}}"
-        )
-        self.toggle_btn.setCursor(Qt.PointingHandCursor)
-        self.toggle_btn.clicked.connect(self._toggle_mode)
-
-        layout.addWidget(self.mode_label)
-        layout.addStretch()
-        layout.addWidget(self.toggle_btn)
-        return layout
-
-    def _build_slider_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, styles.PAD_TINY, 0, 0)
-        layout.setSpacing(styles.PAD_TINY)
-
-        # Значение слайдера
-        self.depth_value = QLabel("30 дней")
-        self.depth_value.setAlignment(Qt.AlignCenter)
-        self.depth_value.setStyleSheet(
-            f"color: {styles.ACCENT_AMBER}; "
-            f"font-size: {styles.FONT_BODY + 2}px; "
-            f"font-weight: bold;"
-        )
-        layout.addWidget(self.depth_value)
-
-        # Слайдер
-        self.days_slider = QSlider(Qt.Horizontal)
-        self.days_slider.setMinimum(1)
-        self.days_slider.setMaximum(self.ALL_TIME_DAYS)
-        self.days_slider.setValue(30)
-        self.days_slider.valueChanged.connect(self._on_slider_changed)
-        layout.addWidget(self.days_slider)
-
-        # Метки мин/макс
-        labels_row = QHBoxLayout()
-        lbl_min = QLabel("1 день")
-        lbl_min.setStyleSheet(
-            f"color: {styles.TEXT_DISABLED}; font-size: {styles.FONT_TINY}px;"
-        )
-        lbl_max = QLabel("Всё время")
-        lbl_max.setStyleSheet(
-            f"color: {styles.TEXT_DISABLED}; font-size: {styles.FONT_TINY}px;"
-        )
-        lbl_max.setAlignment(Qt.AlignRight)
-        labels_row.addWidget(lbl_min)
-        labels_row.addStretch()
-        labels_row.addWidget(lbl_max)
-        layout.addLayout(labels_row)
-
-        return page
+        # RD-9: одна страница вместо стопки из двух. Ползунок глубины дублировал
+        # быстрые кнопки, а понятие «режим» приходилось объяснять подписью.
+        root.addWidget(self._build_dates_page())
 
     def _build_dates_page(self) -> QWidget:
         page = QWidget()
@@ -160,7 +84,7 @@ class DateRangeWidget(QWidget):
         # Быстрые кнопки
         quick_row = QHBoxLayout()
         quick_row.setSpacing(4)
-        for days, label in QUICK_RANGES:
+        for days, label in [(None, "Всё время")] + list(QUICK_RANGES):
             btn = QPushButton(label)
             btn.setFixedHeight(26)
             btn.setStyleSheet(
@@ -178,17 +102,36 @@ class DateRangeWidget(QWidget):
             )
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda _, d=days: self._set_quick_range(d))
+            if days is None:
+                self._all_time_btn = btn
             quick_row.addWidget(btn)
         layout.addLayout(quick_row)
 
-        # Поле «От»
-        layout.addLayout(self._build_date_row("От:", "start"))
+        self._dates_toggle = QPushButton("Указать точные даты  ▸")
+        self._dates_toggle.setCheckable(True)
+        self._dates_toggle.setCursor(Qt.PointingHandCursor)
+        self._dates_toggle.setStyleSheet(
+            f"QPushButton {{"
+            f"  background: transparent; border: none; text-align: left;"
+            f"  color: {styles.TEXT_MUTED}; font-size: {styles.FONT_TINY}px;"
+            f"  padding: 2px 0;"
+            f"}}"
+            f"QPushButton:hover {{ color: white; }}"
+        )
+        self._dates_toggle.toggled.connect(self._on_dates_toggled)
+        layout.addWidget(self._dates_toggle)
 
-        # Поле «До»
-        layout.addLayout(self._build_date_row("До:", "end"))
+        self._dates_box = QWidget()
+        box = QVBoxLayout(self._dates_box)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(styles.PAD_TINY)
+        box.addLayout(self._build_date_row("От:", "start"))
+        box.addLayout(self._build_date_row("До:", "end"))
+        self._dates_box.setVisible(False)
+        layout.addWidget(self._dates_box)
 
         # Инфо о диапазоне
-        self.range_info = QLabel("Диапазон: 30 дней")
+        self.range_info = QLabel("За всё время")
         self.range_info.setAlignment(Qt.AlignCenter)
         self.range_info.setStyleSheet(
             f"color: {styles.TEXT_DISABLED}; font-size: {styles.FONT_TINY}px;"
@@ -196,6 +139,17 @@ class DateRangeWidget(QWidget):
         layout.addWidget(self.range_info)
 
         return page
+
+    def _on_dates_toggled(self, checked: bool) -> None:
+        self._dates_box.setVisible(checked)
+        self._dates_toggle.setText(
+            "Указать точные даты  ▾" if checked else "Указать точные даты  ▸"
+        )
+        # Пересчёт вверх по цепочке: иначе карточка держит прежнюю высоту.
+        w = self
+        while w is not None:
+            w.adjustSize()
+            w = w.parentWidget()
 
     def _build_date_row(self, label_text: str, field: str) -> QHBoxLayout:
         """Строит строку 'От:' или 'До:' с QDateEdit."""
@@ -245,36 +199,11 @@ class DateRangeWidget(QWidget):
     # Обработчики событий
     # ─────────────────────────────────────────────
 
-    def _toggle_mode(self) -> None:
-        """Переключение между режимами слайдер ↔ выбор дат."""
-
-        if self.current_mode == "slider":
-            self.current_mode = "dates"
-            self.stack.setCurrentIndex(1)
-            self.mode_label.setText("Режим: Выбор дат")
-            self.toggle_btn.setText("📊 Глубина (дни)")
-        else:
-            self.current_mode = "slider"
-            self.stack.setCurrentIndex(0)
-            self.mode_label.setText("Режим: Глубина (дни)")
-            self.toggle_btn.setText("📆 Выбрать даты")
-        # Испускаем сигнал с текущими значениями
-        start, end = self.get_date_range()
-        self.date_changed.emit(start, end)
-
-    def _on_slider_changed(self, value: int) -> None:
-        """Обновить текст значения слайдера и испустить сигнал."""
-
-        if value >= self.ALL_TIME_DAYS:
-            self.depth_value.setText("За всё время")
-        else:
-            self.depth_value.setText(f"{value} дней")
-        start, end = self.get_date_range()
-        self.date_changed.emit(start, end)
-
     def _on_date_changed(self) -> None:
         """Обновить подпись диапазона и испустить сигнал."""
 
+        # Правка дат руками означает конкретный период, а не «всё время».
+        self._all_time = False
         start_q = self.start_date_edit.date()
         end_q = self.end_date_edit.date()
         days = start_q.daysTo(end_q)
@@ -293,9 +222,16 @@ class DateRangeWidget(QWidget):
         start, end = self.get_date_range()
         self.date_changed.emit(start, end)
 
-    def _set_quick_range(self, days: int) -> None:
-        """Установить быстрый диапазон дат."""
+    def _set_quick_range(self, days) -> None:
+        """Установить быстрый диапазон дат. days=None — «за всё время»."""
 
+        if days is None:
+            self._all_time = True
+            self.range_info.setText("За всё время")
+            self.date_changed.emit(None, None)
+            return
+
+        self._all_time = False
         end = QDate.currentDate()
         start = end.addDays(-days)
         # Блокируем сигналы чтобы не дублировать date_changed
@@ -319,15 +255,9 @@ class DateRangeWidget(QWidget):
         Timezone-aware: naive datetime (без tzinfo) — caller сам добавит tz при необходимости.
         """
 
-        if self.current_mode == "slider":
-            days = self.days_slider.value()
-            if days >= self.ALL_TIME_DAYS:
-                return None, None
-            end_dt = datetime.now()
-            start_dt = end_dt - timedelta(days=days)
-            return start_dt, end_dt
+        if self._all_time:
+            return None, None
 
-        # Режим выбора дат
         start_q = self.start_date_edit.date()
         end_q = self.end_date_edit.date()
 
@@ -339,10 +269,3 @@ class DateRangeWidget(QWidget):
 
         return start_dt, end_dt
 
-    def set_days(self, days: int) -> None:
-        """Программно установить значение слайдера (не переключая режим)."""
-        self.days_slider.setValue(min(days, self.ALL_TIME_DAYS))
-
-    def get_days(self) -> int:
-        """Вернуть значение слайдера в днях."""
-        return self.days_slider.value()

@@ -153,7 +153,7 @@ python main.py
 | Инструмент | Статус | Назначение |
 |------------|--------|------------|
 | ✅ [**Rozitta Parser**](https://github.com/Nynchezyabka/RozittaParser) | готов | Парсинг Telegram-чатов, чанкинг, подготовка RAG-корпуса |
-| ✅ [**Rozitta Transcriber**](https://github.com/Nynchezyabka/RozittaTrancriber) | готов | Аудио/видео → Markdown с таймкодами и диаризацией |
+| ✅ [**Rozitta Transcriber**](https://github.com/Nynchezyabka/RozittaTranscriber) | готов | Аудио/видео → Markdown с таймкодами и диаризацией |
 | 🔜 **Rozitta Библиотекарь** | в планах | Локальный поиск и вопросы по архиву |
 
 **Поток данных:**
