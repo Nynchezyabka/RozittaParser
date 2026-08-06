@@ -342,6 +342,9 @@ class SettingsPanel(QWidget):
     parse_requested         = Signal(object)
     load_members_requested  = Signal(object)
     log_message             = Signal(str)
+    # N-1: смена пресета меняет смысл кнопки запуска. Без сигнала подпись
+    # обновлялась только из _on_*_finished, то есть после первого прогона.
+    preset_changed          = Signal()
 
     def __init__(self, cfg: "AppConfig | None" = None, parent=None):
         super().__init__(parent)
@@ -353,6 +356,11 @@ class SettingsPanel(QWidget):
         self._split_buttons: list[SplitModeButton] = []
         self._parsing:      bool            = False
         self._members_cache: list = []
+        # N-1: список грузится при открытии модалки; период запомнен, чтобы
+        # не гонять скан истории заново на каждое открытие.
+        self._members_loading: bool = False
+        self._members_loaded_period = None
+        self._members_dialog = None
         self._build()
 
         # Ограничения пересобираются при смене набора форматов. Подключаем
@@ -557,6 +565,7 @@ class SettingsPanel(QWidget):
             self._log_signal_safe(f"⚡ Пресет: {spec['label']}")
         finally:
             self._applying_preset = False
+        self.preset_changed.emit()
 
     def _mark_custom_preset(self, *_args) -> None:
         """Ручное изменение состава → подпись «Свой вариант»."""
@@ -568,6 +577,7 @@ class SettingsPanel(QWidget):
             btn.setChecked(False)
         self._is_custom = True
         self._update_manual_header()
+        self.preset_changed.emit()
 
     def _update_manual_header(self) -> None:
         """
@@ -629,7 +639,7 @@ class SettingsPanel(QWidget):
         cl.addWidget(self._build_media_section())
         cl.addWidget(self._build_stt_section())
         cl.addWidget(self._build_date_section())
-        cl.addWidget(self._build_members_section())
+        cl.addWidget(self._build_members_opener())   # N-1: карточка → модалка
         cl.addWidget(self._build_split_section())
         # Форматы переехали внутрь «Быстрого выбора», отдельной карточки нет.
         cl.addWidget(self._build_options_section())
@@ -826,6 +836,86 @@ class SettingsPanel(QWidget):
         _, end_dt = self._date_widget.get_date_range()
         return end_dt.date() if end_dt is not None else None
 
+    def _build_members_opener(self) -> QWidget:
+        """
+        N-1: в панели остаётся строка-итог, сам фильтр живёт в модалке.
+
+        Карточку собирает всё тот же _build_members_section(), и принадлежит
+        она панели. Поэтому обработчики FEAT-6 продолжают работать со своими
+        self._members_* без переподключения — окно её только показывает.
+        """
+        self._members_card = self._build_members_section()
+
+        self._members_btn = QPushButton()
+        self._members_btn.setFixedHeight(38)
+        self._members_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._members_btn.setEnabled(self._current_chat is not None)
+        self._members_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {OVERLAY2_HEX};"
+            f" border: 1px solid {BORDER_HEX};"
+            f" border-radius: {RADIUS_MD}px;"
+            f" color: {TEXT_PRIMARY}; font-size: 13px;"
+            " text-align: left; padding: 0 14px; }"
+            f"QPushButton:hover:enabled {{ background-color: {OVERLAY_HEX}; }}"
+            " QPushButton:disabled { color: rgba(255,255,255,0.25); }"
+        )
+        self._members_btn.clicked.connect(self._open_members_dialog)
+        self._update_members_button()
+        return self._members_btn
+
+    def _open_members_dialog(self) -> None:
+        """Открывает окно фильтра и запрашивает список, если он устарел."""
+        if self._members_dialog is None:
+            self._members_dialog = ParticipantsDialog(
+                self._members_card, parent=self
+            )
+        self._request_members_if_needed()
+        self._members_dialog.exec()
+        self._update_members_button()
+
+    def _request_members_if_needed(self) -> None:
+        """
+        Загрузка при открытии окна — со статусом вместо кнопки.
+
+        Повтор только при смене периода: MembersWorker сканирует историю
+        через Telethon, это десятки секунд на живом чате.
+        """
+        if self._current_chat is None:
+            self._members_count_lbl.setText("Сначала выберите чат")
+            return
+        if self._members_loading:
+            return
+        period = (self.date_from, self.date_to)
+        if self._members_cache and period == self._members_loaded_period:
+            return
+        self._members_loading = True
+        self._members_loaded_period = period
+        self._members_count_lbl.setText(
+            "⏳  Собираю участников за выбранный период..."
+        )
+        self.load_members_requested.emit(self._current_chat)
+
+    def _update_members_button(self) -> None:
+        """Подпись строки-итога: что фильтр сделает с выгрузкой."""
+        mode = getattr(self, "_pfilter_mode", "none")
+        n = len(getattr(self, "_pfilter_selected", {}))
+        if mode == "none" or not n:
+            state = "все"
+        elif mode == "include":
+            state = f"только выбранные ({n})"
+        else:
+            state = f"кроме выбранных ({n})"
+        self._members_btn.setText(f"👥  Участники: {state}          ›")
+
+    def notify_members_failed(self, message: str) -> None:
+        """
+        MembersWorker упал — снять «идёт загрузка», иначе повторное открытие
+        окна молча ничего не запросит.
+        """
+        self._members_loading = False
+        self._members_loaded_period = None
+        self._members_count_lbl.setText("Не удалось загрузить участников")
+
     def _build_members_section(self) -> ModernCard:
         card, layout = self._card()
         layout.addWidget(SectionTitle("👥", "Участники"))
@@ -895,54 +985,6 @@ class SettingsPanel(QWidget):
         self._mode_btn_messages.setEnabled(False)
         self._mode_btn_all.setEnabled(False)
 
-        # Кнопка загрузки
-        self._load_members_btn = QPushButton("👥  Загрузить участников")
-        self._load_members_btn.setEnabled(False)
-        self._load_members_btn.setFixedHeight(34)
-        self._load_members_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._load_members_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {OVERLAY2_HEX};
-                border: 1px solid {BORDER_HEX};
-                border-radius: {RADIUS_MD}px;
-                color: {TEXT_SECONDARY};
-                font-size: 12px;
-            }}
-            QPushButton:hover:enabled {{
-                background-color: {OVERLAY_HEX};
-                color: {TEXT_PRIMARY};
-            }}
-            QPushButton:disabled {{
-                color: rgba(255,255,255,0.25);
-            }}
-        """)
-        self._load_members_btn.clicked.connect(self._on_load_members_clicked)
-        layout.addWidget(self._load_members_btn)
-
-        # Кнопка сохранения списка пользователей
-        self._export_members_btn = QPushButton("👥  Экспортировать список (DOCX)")
-        self._export_members_btn.setEnabled(False)
-        self._export_members_btn.setFixedHeight(34)
-        self._export_members_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._export_members_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {OVERLAY2_HEX};
-                border: 1px solid {BORDER_HEX};
-                border-radius: {RADIUS_MD}px;
-                color: {TEXT_SECONDARY};
-                font-size: 12px;
-            }}
-            QPushButton:hover:enabled {{
-                background-color: {OVERLAY_HEX};
-                color: {TEXT_PRIMARY};
-            }}
-            QPushButton:disabled {{
-                color: rgba(255,255,255,0.25);
-            }}
-        """)
-        self._export_members_btn.clicked.connect(self._on_export_members_clicked)
-        layout.addWidget(self._export_members_btn)
-
         # ── FEAT-6: фильтр участников — режим, поиск, список с отметками ──
         self._pfilter_mode:     str  = "none"
         self._pfilter_selected: dict = {}
@@ -990,7 +1032,7 @@ class SettingsPanel(QWidget):
         # но в интерфейсе это нигде не было сказано.
         self._members_period_lbl = QLabel(
             "ℹ️ Список собран за выбранный период. Измените даты — "
-            "загрузите участников заново."
+            "он соберётся заново при следующем открытии этого окна."
         )
         self._members_period_lbl.setWordWrap(True)
         self._members_period_lbl.setStyleSheet(
@@ -1285,19 +1327,6 @@ class SettingsPanel(QWidget):
         for btn in self._split_buttons:
             btn.setChecked(btn.mode == mode)
 
-    def _on_load_members_clicked(self) -> None:
-        if self._current_chat:
-            self.load_members_requested.emit(self._current_chat)
-            self._export_members_btn.setEnabled(True)
-
-    def _on_export_members_clicked(self) -> None:
-        from features.export.participants import export_participants_docx
-        users = self._members_cache
-        title = self._current_chat.get('title', 'Export') if self._current_chat else 'Export'
-        filepath= export_participants_docx(users, title, f'./output/{title}')
-
-        self.log_message.emit(f"Экспортировано {len(users)} участников => {filepath}")
-
     # ──────────────────────────────────────────────────────────────────────
     # FEAT-6: фильтр участников
     # ──────────────────────────────────────────────────────────────────────
@@ -1477,7 +1506,6 @@ class SettingsPanel(QWidget):
         title = chat.get("title", "")
         short = (title[:38] + "…") if len(title) > 38 else title
         self._chat_label.setText(short or "не выбран")
-        self._load_members_btn.setEnabled(True)
         self._apply_export_limits()
 
     def is_members_only(self) -> bool:
@@ -1509,10 +1537,14 @@ class SettingsPanel(QWidget):
                   self._media_voice, self._media_round,
                   self._stt_voice, self._stt_round,
                   self._preset_custom_btn, self._members_search,
-                  self._members_list, self._load_members_btn,
-                  self._export_members_btn):
+                  self._members_list):
             if w is not None:
                 w.setEnabled(not members_only)
+        # Строка «Участники» открывает модалку — без выбранного чата
+        # открывать нечего.
+        self._members_btn.setEnabled(
+            not members_only and self._current_chat is not None
+        )
         for _b in self._pf_buttons.values():
             _b.setEnabled(not members_only)
         for _b in self._split_buttons:
@@ -1577,9 +1609,11 @@ class SettingsPanel(QWidget):
         self._members_search.setEnabled(active)
         self._members_search.clear()
 
+        self._members_loading = False
         self._refresh_member_items()
         self._update_members_count_label()
         self._update_mode_buttons_enabled()
+        self._update_members_button()
         self.log_message.emit(f"Загружено участников: {len(users)}")
 
     def get_params(self) -> Optional[ParseParams]:
@@ -1725,6 +1759,44 @@ class ConfirmStartDialog(QDialog):
 
         btn_row.addWidget(edit_btn)
         btn_row.addWidget(start_btn)
+        root.addLayout(btn_row)
+
+
+class ParticipantsDialog(QDialog):
+    """
+    N-1: окно фильтра участников.
+
+    Ничего не строит само: показывает карточку, собранную SettingsPanel.
+    Владелец виджетов — панель, поэтому вся логика FEAT-6 (отметки, режимы,
+    поиск, зачёркивание) работает без единой правки, а панель становится
+    короче на высоту карточки.
+    """
+
+    def __init__(self, content, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Участники")
+        self.setModal(True)
+        self.setMinimumWidth(460)
+        self.setStyleSheet(f"QDialog {{ background-color: {BG_PRIMARY}; }}")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(10)
+        root.addWidget(content)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        done_btn = QPushButton("Готово")
+        done_btn.setFixedHeight(32)
+        done_btn.setDefault(True)
+        done_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        done_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {ACCENT_ORANGE}; border: none;"
+            f" border-radius: {RADIUS_MD}px; color: {BG_PRIMARY};"
+            f" font-size: 13px; font-weight: 500; padding: 0 18px; }}"
+        )
+        done_btn.clicked.connect(self.accept)
+        btn_row.addWidget(done_btn)
         root.addLayout(btn_row)
 
 
@@ -2286,6 +2358,9 @@ class MainWindow(QMainWindow):
         self._settings_screen.parse_requested.connect(self._on_parse_requested)
         self._settings_screen.load_members_requested.connect(self._on_load_members)
         self._settings_screen.log_message.connect(self._log.append_info)
+        self._settings_screen.preset_changed.connect(
+            self._reset_start_btn_text, Qt.UniqueConnection
+        )
 
         # RozittaWidget
         self._rozetta.clicked.connect(
@@ -2525,6 +2600,9 @@ class MainWindow(QMainWindow):
         worker.members_loaded.connect(self._cache_members, Qt.UniqueConnection)
         worker.log_message.connect(self._log.append_info, Qt.UniqueConnection)
         worker.error.connect(self._on_worker_error, Qt.UniqueConnection)
+        worker.error.connect(
+            self._settings_screen.notify_members_failed, Qt.UniqueConnection
+        )
         self._start_worker(worker)
         self._rozetta.set_tip("Загружаю участников...")
 
@@ -2554,10 +2632,110 @@ class MainWindow(QMainWindow):
             return
 
         # UI-CLEAN-3 P2: окно «Проверьте перед стартом»
-        dialog = ConfirmStartDialog(self._build_start_summary(params), parent=self)
+        # N-1: в режиме списка сводка другая — медиа, комментарии и разбивка
+        # к результату отношения не имеют (правило #27).
+        members_only = self._settings_screen.is_members_only()
+        rows = (self._build_members_summary(params) if members_only
+                else self._build_start_summary(params))
+        dialog = ConfirmStartDialog(rows, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        if members_only:
+            self._run_members_export(params)
+            return
         self._on_parse_requested(params)
+
+    @staticmethod
+    def _period_value(params: ParseParams) -> str:
+        """Строка периода для окна подтверждения — одна на обе сводки."""
+        if params.date_from or params.date_to:
+            d_from = params.date_from.strftime("%d.%m.%Y") if params.date_from else "…"
+            d_to = params.date_to.strftime("%d.%m.%Y") if params.date_to else "…"
+            return f"{d_from} — {d_to}"
+        return "за всё время"
+
+    def _build_members_summary(self, params: ParseParams) -> list:
+        """
+        N-1: сводка для режима «Список участников».
+
+        Три строки вместо восьми: в этом режиме не скачивается ничего,
+        кроме истории для подсчёта, и не создаётся ничего, кроме одного DOCX.
+        """
+        chat = params.chat or {}
+        title = chat.get("title", "—")
+        chat_val = f"{title} (канал)" if chat.get("type") == "channel" else title
+        return [
+            ("Чат", chat_val, False),
+            ("Период", self._period_value(params), False),
+            ("Результат", "Список участников, один файл DOCX. "
+                          "Сообщения не выгружаются", True),
+        ]
+
+    def _run_members_export(self, params: ParseParams) -> None:
+        """
+        N-1: выгрузка списка участников — мимо ParseWorker, STT и ExportWorker.
+
+        Список собирает MembersWorker (скан истории через Telethon, десятки
+        секунд), сам DOCX собирается быстро и остаётся в GUI-потоке.
+        """
+        from features.chats.ui import MembersWorker
+
+        session_file = self._cfg.session_path + ".session"
+        if not os.path.exists(session_file):
+            self._log.append_error("❌ Нет активной сессии Telegram")
+            self._show_toast("Нет активной сессии Telegram", "error")
+            return
+
+        self._members_export_chat = params.chat or {}
+
+        self._update_progress(0)
+        self._start_btn.setEnabled(False)
+        self._start_btn.setText("⏳  СОБИРАЮ СПИСОК...")
+        self._settings_screen.set_parsing(True)
+        self._rozetta.set_state("process")
+        self._rozetta.set_tip("Собираю список участников...")
+        self._set_status("busy", "Список участников...")
+
+        worker = MembersWorker(
+            chat=self._members_export_chat,
+            cfg=self._cfg,
+            date_from=params.date_from,
+            date_to=params.date_to,
+        )
+        worker.members_loaded.connect(
+            self._on_members_export_loaded, Qt.UniqueConnection
+        )
+        worker.log_message.connect(self._log.append_info, Qt.UniqueConnection)
+        worker.error.connect(self._on_export_error, Qt.UniqueConnection)
+        self._start_worker(worker)
+
+    def _on_members_export_loaded(self, users: list) -> None:
+        """N-1: список собран → DOCX. Пустой список файлом не становится."""
+        from core.utils import sanitize_filename
+        from features.export.participants import export_participants_docx
+
+        chat = getattr(self, "_members_export_chat", None) or {}
+        title = chat.get("title") or "Export"
+
+        if not users:
+            self._on_export_error(
+                "участники не найдены — за выбранный период в чате нет "
+                "сообщений либо Telegram не отдал историю"
+            )
+            return
+
+        out_dir = os.path.join(
+            str(self._cfg.output_dir), sanitize_filename(title)
+        )
+        try:
+            path = export_participants_docx(users, title, out_dir)
+        except Exception as exc:
+            logger.exception("_on_members_export_loaded: docx failed")
+            self._on_export_error(str(exc))
+            return
+
+        self._log.append_success(f"✅ Участников в списке: {len(users)}")
+        self._on_export_complete([path])
 
     def _build_start_summary(self, params: ParseParams) -> list:
         """UI-CLEAN-3: строки сводки для окна подтверждения.
@@ -2570,12 +2748,7 @@ class MainWindow(QMainWindow):
         is_channel = chat.get("type") == "channel"
         chat_val = f"{title} (канал)" if is_channel else title
 
-        if params.date_from or params.date_to:
-            d_from = params.date_from.strftime("%d.%m.%Y") if params.date_from else "…"
-            d_to = params.date_to.strftime("%d.%m.%Y") if params.date_to else "…"
-            period_val = f"{d_from} — {d_to}"
-        else:
-            period_val = "за всё время"
+        period_val = self._period_value(params)
 
         media_names = [
             name for flag, name in (

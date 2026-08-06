@@ -59,6 +59,10 @@ class DateRangeWidget(QWidget):
         # больше нет, поэтому состояние живёт здесь: кнопка «Всё время» его
         # включает, любая другая кнопка и правка полей — гасят.
         self._all_time: bool = True
+        # Ручная правка полей вызывает _on_date_changed() точно так же, как
+        # клик по быстрой кнопке (см. _set_quick_range). Флаг отличает одно
+        # от другого, чтобы не гасить подсветку только что нажатой кнопки.
+        self._applying_quick_range: bool = False
 
         self._build_ui()
 
@@ -81,12 +85,20 @@ class DateRangeWidget(QWidget):
         layout.setContentsMargins(0, styles.PAD_TINY, 0, 0)
         layout.setSpacing(styles.PAD_SMALL)
 
-        # Быстрые кнопки
+        # Быстрые кнопки — подсвечена ровно одна, та что выбрана сейчас.
+        # Без QButtonGroup: его exclusive-режим не позволяет программно снять
+        # отметку с единственной выбранной кнопки (рассчитан на радиокнопки,
+        # где одна всегда должна быть включена), а нам нужно уметь погасить
+        # все при ручной правке полей. Подсветка — под explicit-контролем
+        # через _highlight_quick_button().
         quick_row = QHBoxLayout()
         quick_row.setSpacing(4)
+        self._quick_buttons: list[QPushButton] = []
+        self._quick_button_days: dict[QPushButton, object] = {}
         for days, label in [(None, "Всё время")] + list(QUICK_RANGES):
             btn = QPushButton(label)
             btn.setFixedHeight(26)
+            btn.setCheckable(True)
             btn.setStyleSheet(
                 f"QPushButton {{"
                 f"  background: rgba(255,255,255,15);"
@@ -99,12 +111,20 @@ class DateRangeWidget(QWidget):
                 f"  background: rgba(166,130,255,50);"
                 f"  color: white;"
                 f"}}"
+                f"QPushButton:checked {{"
+                f"  background: {styles.ACCENT_SOFT_ORANGE};"
+                f"  border: 1px solid {styles.ACCENT_ORANGE};"
+                f"  color: {styles.ACCENT_ORANGE};"
+                f"}}"
             )
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda _, d=days: self._set_quick_range(d))
             if days is None:
                 self._all_time_btn = btn
+            self._quick_buttons.append(btn)
+            self._quick_button_days[btn] = days
             quick_row.addWidget(btn)
+        self._highlight_quick_button(None)  # по умолчанию — «за всё время»
         layout.addLayout(quick_row)
 
         self._dates_toggle = QPushButton("Указать точные даты  ▸")
@@ -130,12 +150,17 @@ class DateRangeWidget(QWidget):
         self._dates_box.setVisible(False)
         layout.addWidget(self._dates_box)
 
-        # Инфо о диапазоне
-        self.range_info = QLabel("За всё время")
+        # Период теперь виден по подсветке кнопки — отдельная строка
+        # «Диапазон: N дней» только съедала место. Предупреждение о
+        # некорректном диапазоне («От» позже «До») оставлено — это не
+        # информационная надпись, а сигнал о нерабочих датах; по умолчанию
+        # скрыто и места не занимает.
+        self.range_info = QLabel("")
         self.range_info.setAlignment(Qt.AlignCenter)
         self.range_info.setStyleSheet(
-            f"color: {styles.TEXT_DISABLED}; font-size: {styles.FONT_TINY}px;"
+            f"color: {styles.ACCENT_CORAL}; font-size: {styles.FONT_TINY}px;"
         )
+        self.range_info.setVisible(False)
         layout.addWidget(self.range_info)
 
         return page
@@ -145,10 +170,17 @@ class DateRangeWidget(QWidget):
         self._dates_toggle.setText(
             "Указать точные даты  ▾" if checked else "Указать точные даты  ▸"
         )
-        # Пересчёт вверх по цепочке: иначе карточка держит прежнюю высоту.
+        # Пересчёт вверх по цепочке, но БЕЗ adjustSize(): на QMainWindow это
+        # вызывает resize() до sizeHint() и стягивает окно к minimumSize()
+        # (баг: окно менялось само по себе при открытии/закрытии блока дат).
+        # updateGeometry() пересчитывает sizeHint и просит layout родителя
+        # переразложиться, не трогая фактический размер окна. Останавливаемся
+        # на уровне окна — выше поднимать геометрию незачем.
         w = self
         while w is not None:
-            w.adjustSize()
+            w.updateGeometry()
+            if w.isWindow():
+                break
             w = w.parentWidget()
 
     def _build_date_row(self, label_text: str, field: str) -> QHBoxLayout:
@@ -199,25 +231,37 @@ class DateRangeWidget(QWidget):
     # Обработчики событий
     # ─────────────────────────────────────────────
 
+    _NO_QUICK_MATCH = object()  # ни одна быстрая кнопка не подходит диапазону
+
+    def _highlight_quick_button(self, days) -> None:
+        """
+        Подсветить кнопку, отвечающую периоду days; остальные — погасить.
+
+        Проставляется абсолютно, а не переключением: сколько раз ни жми
+        уже подсвеченную кнопку, результат не изменится. days=_NO_QUICK_MATCH
+        гасит все — состояние для ручной правки полей.
+        """
+        for btn, d in self._quick_button_days.items():
+            btn.setChecked(d == days)
+
     def _on_date_changed(self) -> None:
-        """Обновить подпись диапазона и испустить сигнал."""
+        """Проверить диапазон, снять неактуальную подсветку, испустить сигнал."""
 
         # Правка дат руками означает конкретный период, а не «всё время».
         self._all_time = False
+        if not self._applying_quick_range:
+            # Ручная правка полей — это не один из быстрых периодов, ни одна
+            # кнопка сейчас выбранному диапазону не соответствует.
+            self._highlight_quick_button(self._NO_QUICK_MATCH)
+
         start_q = self.start_date_edit.date()
         end_q = self.end_date_edit.date()
         days = start_q.daysTo(end_q)
 
-        if days < 0:
+        is_invalid = days < 0
+        self.range_info.setVisible(is_invalid)
+        if is_invalid:
             self.range_info.setText("⚠️ Начальная дата позже конечной!")
-            self.range_info.setStyleSheet(
-                f"color: {styles.ACCENT_CORAL}; font-size: {styles.FONT_TINY}px;"
-            )
-        else:
-            self.range_info.setText(f"Диапазон: {days} дней")
-            self.range_info.setStyleSheet(
-                f"color: {styles.TEXT_DISABLED}; font-size: {styles.FONT_TINY}px;"
-            )
 
         start, end = self.get_date_range()
         self.date_changed.emit(start, end)
@@ -225,23 +269,31 @@ class DateRangeWidget(QWidget):
     def _set_quick_range(self, days) -> None:
         """Установить быстрый диапазон дат. days=None — «за всё время»."""
 
+        self._highlight_quick_button(days)
+
         if days is None:
             self._all_time = True
-            self.range_info.setText("За всё время")
+            self.range_info.setVisible(False)
             self.date_changed.emit(None, None)
             return
 
         self._all_time = False
         end = QDate.currentDate()
         start = end.addDays(-days)
-        # Блокируем сигналы чтобы не дублировать date_changed
-        self.start_date_edit.blockSignals(True)
-        self.end_date_edit.blockSignals(True)
-        self.start_date_edit.setDate(start)
-        self.end_date_edit.setDate(end)
-        self.start_date_edit.blockSignals(False)
-        self.end_date_edit.blockSignals(False)
-        self._on_date_changed()
+        # _on_date_changed() гасит подсветку при РУЧНОЙ правке полей — но не
+        # должен гасить ту, что мы только что явно выставили строкой выше.
+        self._applying_quick_range = True
+        try:
+            # Блокируем сигналы чтобы не дублировать date_changed
+            self.start_date_edit.blockSignals(True)
+            self.end_date_edit.blockSignals(True)
+            self.start_date_edit.setDate(start)
+            self.end_date_edit.setDate(end)
+            self.start_date_edit.blockSignals(False)
+            self.end_date_edit.blockSignals(False)
+            self._on_date_changed()
+        finally:
+            self._applying_quick_range = False
 
     # ─────────────────────────────────────────────
     # Публичный API
