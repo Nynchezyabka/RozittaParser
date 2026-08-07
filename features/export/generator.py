@@ -1312,7 +1312,8 @@ class JsonGenerator:
             json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return [str(out_path)]
-    def _make_record(self, row, stt_text: Optional[str]) -> dict:
+    @staticmethod
+    def _make_record(row, stt_text: Optional[str]) -> dict:
         return {
             "message_id": row[_COL_MESSAGE_ID],
             "date":       row[_COL_DATE] or None,
@@ -1709,7 +1710,8 @@ class MarkdownGenerator:
         out_path.write_text("\n".join(lines), encoding="utf-8")
         return [str(out_path)]
         
-    def _format_message(self, row, stt_text: Optional[str],
+    @staticmethod
+    def _format_message(row, stt_text: Optional[str],
                         reply_author: Optional[str] = None) -> str:
         """Форматирует одно сообщение в Markdown-блок."""
 

@@ -18,7 +18,6 @@
 | **media=0 при обычном парсинге** — медиа скачивается только через отдельную кнопку | `parser` | `features/parser/api.py` | I8 |
 | **Дубли ExportWorker** — предупреждения о дублировании воркеров | `ui` | `ui/main_window.py` | I10 |
 | **Channel-author "Unknown"** — в конкретных группах (требует per-group анализа) | `parser` | `features/parser/api.py` | UNKNOWN-1 |
-| **Потерянные `@staticmethod`** — три метода рендера не используют `self`, но он в сигнатуре; падают только тесты, приложение работает | `export` | `features/export/generator.py` | BUG-20 |
 | **Ветка `fix/channel-sender-and-participants` не влита** — миграции схемы, `sender_type`, слияние channel-sender в `get_user_stats()` | `core` | `core/database.py`, `features/chats/api.py` | — |
 | **DOCX: нет превью видео** | `export` | `features/export/generator.py` | BUG-19 |
 | **«database is locked»** периодически при параллельной записи | `database` | `core/database.py` | DB-LOCK-2 |

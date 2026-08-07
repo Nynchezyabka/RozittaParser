@@ -776,8 +776,15 @@ class TestKnowledgeBaseBuilderBuild:
         assert "**Постов:** 3" in content
         assert "**Участников:** 42" in content
 
-    def test_build_instruction_three_files_identical(self, kb_db, tmp_path):
-        """Три файла инструкции (RU/CLAUDE/AGENTS) имеют идентичный контент."""
+    def test_build_instruction_shared_base_with_agent_addenda(self, kb_db, tmp_path):
+        """
+        Три файла инструкции: общая база одинакова, добавки — свои.
+
+        Раньше тест требовал побайтовой идентичности всех трёх. С появлением
+        агентских добавок (stage 10c) CLAUDE.md и AGENTS.md намеренно
+        расходятся с базовым файлом: каждый агент читает свой файл как
+        контекст, и указания в нём разные. Идентичной остаётся общая часть.
+        """
         builder = KnowledgeBaseBuilder(db=kb_db, output_dir=str(tmp_path))
         artifacts = builder.build(
             chat_id=_CHAT_ID, chat_title="RozittaTest",
@@ -787,7 +794,19 @@ class TestKnowledgeBaseBuilderBuild:
         ru = Path(by_name[INSTRUCTION_RU]).read_text(encoding="utf-8")
         claude = Path(by_name[INSTRUCTION_CLAUDE]).read_text(encoding="utf-8")
         agents = Path(by_name[INSTRUCTION_AGENTS]).read_text(encoding="utf-8")
-        assert ru == claude == agents
+
+        # ИНСТРУКЦИЯ_ДЛЯ_ИИ.md — база без добавок, она же начало двух других.
+        assert claude.startswith(ru)
+        assert agents.startswith(ru)
+
+        # Добавки есть, они разные и адресованы своему агенту.
+        claude_addendum = claude[len(ru):]
+        agents_addendum = agents[len(ru):]
+        assert claude_addendum != agents_addendum
+        assert "Claude" in claude_addendum
+        assert "CLAUDE.md" in claude_addendum
+        assert "AGENTS.md" in agents_addendum
+
         # Содержит ключевые секции из ТЗ
         assert "Архивариус" in ru
         assert "Консультант по материалам" in ru

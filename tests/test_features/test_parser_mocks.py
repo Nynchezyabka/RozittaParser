@@ -385,27 +385,38 @@ class TestExtractTopicId:
 
 
 class TestGetSenderName:
+    """См. подробный разбор контракта в test_parser_static.py."""
+
+    CHAT_TITLE = "Тестовый чат"
+
+    def _service(self):
+        svc = ParserService(MagicMock(), MagicMock())
+        svc._chat_title = self.CHAT_TITLE
+        return svc
+
     def test_user_with_username(self):
         msg = MagicMock()
         msg.sender = User(id=1, first_name="Alice", username="alice")
-        assert ParserService._get_sender_name(msg) == "alice"
+        assert self._service()._get_sender_name(msg) == "alice"
 
     def test_user_without_username(self):
         msg = MagicMock()
         msg.sender = User(id=1, first_name="Alice", last_name="Smith")
-        assert ParserService._get_sender_name(msg) == "Alice Smith"
+        assert self._service()._get_sender_name(msg) == "Alice Smith"
 
-    def test_no_sender(self):
+    def test_no_sender_falls_back_to_chat_title(self):
+        """UNKNOWN-1: отправитель скрыт → автором считается сам чат."""
         msg = MagicMock()
         msg.sender = None
-        assert ParserService._get_sender_name(msg) == "Unknown"
+        msg.from_id = None
+        assert self._service()._get_sender_name(msg) == self.CHAT_TITLE
 
     def test_channel_sender(self):
         msg = MagicMock()
         channel = MagicMock()
         channel.title = "News Channel"
         msg.sender = channel
-        assert ParserService._get_sender_name(msg) == "News Channel"
+        assert self._service()._get_sender_name(msg) == "News Channel"
 
 
 class TestClassifyChatType:
