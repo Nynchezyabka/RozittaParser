@@ -160,6 +160,22 @@ class TestExtractTopicId:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestGetSenderName:
+    """
+    _get_sender_name — instance-метод: трижды обращается к self._chat_title.
+    Зовём через экземпляр, а не через класс.
+
+    Контракт «неизвестный отправитель → название чата» задан UNKNOWN-1
+    (Variant A-2): Telegram скрывает отправителя у постов и комментариев
+    от имени канала, и автор там — сам канал, как это показывает клиент.
+    """
+
+    CHAT_TITLE = "Тестовый чат"
+
+    def _service(self, chat_title=CHAT_TITLE):
+        svc = ParserService(MagicMock(), MagicMock())
+        svc._chat_title = chat_title
+        return svc
+
     def _msg_with_sender(self, sender):
         msg = MagicMock()
         msg.sender = sender
@@ -167,37 +183,71 @@ class TestGetSenderName:
 
     def test_user_with_username(self):
         sender = User(id=1, username="john")
-        assert ParserService._get_sender_name(self._msg_with_sender(sender)) == "john"
+        assert self._service()._get_sender_name(
+            self._msg_with_sender(sender)) == "john"
 
     def test_user_with_first_last_name(self):
         sender = User(id=1, first_name="John", last_name="Doe")
-        assert ParserService._get_sender_name(self._msg_with_sender(sender)) == "John Doe"
+        assert self._service()._get_sender_name(
+            self._msg_with_sender(sender)) == "John Doe"
 
     def test_user_first_only(self):
         sender = User(id=1, first_name="Alice")
-        assert ParserService._get_sender_name(self._msg_with_sender(sender)) == "Alice"
+        assert self._service()._get_sender_name(
+            self._msg_with_sender(sender)) == "Alice"
 
     def test_user_no_names(self):
+        """У User без имён fallback остался «Unknown» — чат тут ни при чём."""
         sender = User(id=1)
-        assert ParserService._get_sender_name(self._msg_with_sender(sender)) == "Unknown"
-
-    def test_no_sender(self):
-        msg = MagicMock()
-        msg.sender = None
-        assert ParserService._get_sender_name(msg) == "Unknown"
+        assert self._service()._get_sender_name(
+            self._msg_with_sender(sender)) == "Unknown"
 
     def test_channel_sender(self):
         sender = Channel(id=1, title="My Channel", photo=MagicMock(), date=None)
-        assert ParserService._get_sender_name(self._msg_with_sender(sender)) == "My Channel"
+        assert self._service()._get_sender_name(
+            self._msg_with_sender(sender)) == "My Channel"
 
     def test_chat_sender(self):
-        sender = Chat(id=1, title="My Group", photo=MagicMock(), participants_count=0, date=None, version=0)
-        assert ParserService._get_sender_name(self._msg_with_sender(sender)) == "My Group"
+        sender = Chat(id=1, title="My Group", photo=MagicMock(),
+                      participants_count=0, date=None, version=0)
+        assert self._service()._get_sender_name(
+            self._msg_with_sender(sender)) == "My Group"
 
-    def test_sender_no_title(self):
+    # ── UNKNOWN-1: отправитель скрыт → автор это сам чат ──────────────
+
+    def test_no_sender_falls_back_to_chat_title(self):
+        msg = MagicMock()
+        msg.sender = None
+        msg.from_id = None
+        assert self._service()._get_sender_name(msg) == self.CHAT_TITLE
+
+    def test_sender_without_title_falls_back_to_chat_title(self):
         sender = MagicMock()
         sender.title = None
-        assert ParserService._get_sender_name(self._msg_with_sender(sender)) == "Unknown"
+        assert self._service()._get_sender_name(
+            self._msg_with_sender(sender)) == self.CHAT_TITLE
+
+    def test_from_id_channel_falls_back_to_chat_title(self):
+        msg = MagicMock()
+        msg.sender = None
+        msg.from_id = MagicMock(spec=["channel_id"])
+        msg.from_id.channel_id = 777
+        assert self._service()._get_sender_name(msg) == self.CHAT_TITLE
+
+    def test_from_id_user_gives_synthetic_name(self):
+        """Удалённый аккаунт: имени нет, но id есть — им и представляемся."""
+        msg = MagicMock()
+        msg.sender = None
+        msg.from_id = MagicMock(spec=["user_id"])
+        msg.from_id.user_id = 42
+        assert self._service()._get_sender_name(msg) == "User_42"
+
+    def test_unknown_survives_when_chat_title_empty(self):
+        """Ветка `or "Unknown"` жива: без названия чата подставить нечего."""
+        msg = MagicMock()
+        msg.sender = None
+        msg.from_id = None
+        assert self._service(chat_title="")._get_sender_name(msg) == "Unknown"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

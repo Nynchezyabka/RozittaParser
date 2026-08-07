@@ -352,10 +352,18 @@ class TestParseProxyLink:
 # ---------------------------------------------------------------------------
 
 class TestDetectTdataPath:
+    """
+    detect_tdata_path() ветвится по platform.system(), поэтому Windows-ветку
+    проверяем под явной подменой платформы. Без неё тесты зеленели только на
+    Windows и падали в Linux-контейнере и в CI — расхождение цифр между
+    машиной разработчика и прогоном в контейнере шло именно отсюда.
+    """
+
     def test_returns_none_when_no_tdata(self, tmp_path, monkeypatch):
         """Если tdata папки не существует — возвращает None."""
         monkeypatch.setenv("APPDATA", str(tmp_path))
-        result = AuthService.detect_tdata_path()
+        with patch("platform.system", return_value="Windows"):
+            result = AuthService.detect_tdata_path()
         assert result is None
 
     def test_finds_tdata_on_windows(self, tmp_path, monkeypatch):
@@ -363,7 +371,8 @@ class TestDetectTdataPath:
         tdata = tmp_path / "Telegram Desktop" / "tdata"
         tdata.mkdir(parents=True)
         monkeypatch.setenv("APPDATA", str(tmp_path))
-        result = AuthService.detect_tdata_path()
+        with patch("platform.system", return_value="Windows"):
+            result = AuthService.detect_tdata_path()
         assert result is not None
         assert "tdata" in result
 
@@ -372,7 +381,8 @@ class TestDetectTdataPath:
         tdata = tmp_path / "Telegram Desktop UWP" / "tdata"
         tdata.mkdir(parents=True)
         monkeypatch.setenv("APPDATA", str(tmp_path))
-        result = AuthService.detect_tdata_path()
+        with patch("platform.system", return_value="Windows"):
+            result = AuthService.detect_tdata_path()
         assert result is not None
 
 

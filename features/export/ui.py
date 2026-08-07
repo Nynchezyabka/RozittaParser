@@ -309,7 +309,10 @@ class ExportWorker(QThread):
                         user_id              = p.user_id,
                         username             = p.username,
                         include_comments     = p.include_comments,
-                        ai_split             = p.ai_split,
+                        # Р-8: HTML не режется на чанки — дробление убивает
+                        # его единственное преимущество, поиск по всему
+                        # архиву в одном файле.
+                        ai_split             = False,
                         period_label         = p.period_label,
                         date_from        = p.date_from,
                         date_to          = p.date_to,

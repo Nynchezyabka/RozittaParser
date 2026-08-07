@@ -28,7 +28,7 @@ from typing import Optional
 
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve,
-    QRect, Property,
+    QRect, Property, QEvent,
 )
 from PySide6.QtGui import (
     QColor, QPainter, QPainterPath, QFont, QLinearGradient, QTextCursor,
@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
 from core.ui_shared.styles import (
     # Цвета
     BG_PRIMARY, ACCENT_ORANGE, ACCENT_PINK, ACCENT_SOFT_ORANGE,
-    ACCENT_SOFT_PINK, TEXT_PRIMARY, TEXT_SECONDARY,
+    ACCENT_SOFT_PINK, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED,
     OVERLAY_HEX, OVERLAY2_HEX, BORDER_HEX,
     COLOR_SUCCESS, COLOR_ERROR, COLOR_WARNING,
     # Размеры
@@ -327,8 +327,12 @@ class ToggleSwitch(QWidget):
         w, h = self._TRACK_W, self._TRACK_H
         r = h / 2
 
-        # Трек
+        # Трек. Выключенное состояние задаётся явно: paintEvent рисует
+        # фиксированными цветами, палитра Qt его не приглушит.
+        enabled = self.isEnabled()
         track_color = QColor(ACCENT_ORANGE) if self._checked else QColor(OVERLAY_HEX)
+        if not enabled:
+            track_color = QColor(OVERLAY2_HEX)
         p.setBrush(track_color)
         p.setPen(QColor(BORDER_HEX))
         path = QPainterPath()
@@ -338,13 +342,23 @@ class ToggleSwitch(QWidget):
         # Кружок
         knob_travel = w - self._KNOB_D - 4
         knob_x = 2 + knob_travel * self._knob_pos
-        p.setBrush(QColor("#ffffff"))
+        p.setBrush(QColor("#ffffff" if enabled else TEXT_DISABLED))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(
             int(knob_x), 2,
             self._KNOB_D, self._KNOB_D,
         )
         p.end()
+
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        """Перерисовать и сменить курсор при включении/выключении."""
+        if event.type() == QEvent.Type.EnabledChange:
+            self.setCursor(
+                Qt.CursorShape.PointingHandCursor if self.isEnabled()
+                else Qt.CursorShape.ArrowCursor
+            )
+            self.update()
+        super().changeEvent(event)
 
     # ── Клик ──────────────────────────────────────────────────────────────
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
@@ -618,7 +632,31 @@ class SplitModeButton(QPushButton):
     def mode(self) -> str:
         return self._mode
 
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        """Пересобрать стиль при включении/выключении кнопки."""
+        if event.type() == QEvent.Type.EnabledChange:
+            self._refresh(self.isChecked())
+        super().changeEvent(event)
+
     def _refresh(self, checked: bool) -> None:
+        if not self.isEnabled():
+            # Выключенный вид. Нужен явно: стиль задаётся здесь жёстко, а цвет
+            # подписей прописан на дочерних QLabel — палитра Qt их не приглушит,
+            # и кнопка выглядела бы обычной, переставая при этом нажиматься.
+            self.setStyleSheet(f"""
+                SplitModeButton, QPushButton {{
+                    background-color: {OVERLAY_HEX};
+                    border: 1px dashed {BORDER_HEX};
+                    border-radius: {RADIUS_MD}px;
+                    color: {TEXT_DISABLED};
+                }}
+            """)
+            for lbl in (self._icon_lbl, self._text_lbl):
+                lbl.setStyleSheet(
+                    f"color: {TEXT_DISABLED}; background: transparent;"
+                )
+            return
+
         if checked:
             self.setStyleSheet(f"""
                 SplitModeButton, QPushButton {{
@@ -644,6 +682,105 @@ class SplitModeButton(QPushButton):
             """)
             for lbl in (self._icon_lbl, self._text_lbl):
                 lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PRESET BUTTON  — пресет экспорта: заголовок + подпись результата
+# ══════════════════════════════════════════════════════════════════════════════
+
+class PresetButton(QPushButton):
+    """
+    Карточка пресета: что это и что окажется в папке.
+
+    Две строки разным цветом — поэтому внутренние QLabel, как в
+    SplitModeButton: обычный QPushButton так не умеет.
+
+    Пример:
+        btn = PresetButton("📖 Читать и искать", "DOCX и HTML", "human")
+    """
+
+    def __init__(
+            self,
+            title: str,
+            hint: str,
+            key: str,
+            parent: Optional[QWidget] = None,
+    ):
+        super().__init__(parent)
+        self._key = key
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 9, 12, 9)
+        layout.setSpacing(3)
+
+        self._title_lbl = QLabel(title)
+        self._title_lbl.setFont(_font(FONT_SIZE_SMALL, QFont.Weight.Medium))
+        self._title_lbl.setStyleSheet("background: transparent;")
+
+        self._hint_lbl = QLabel(hint)
+        self._hint_lbl.setWordWrap(True)
+        self._hint_lbl.setFont(_font(FONT_SIZE_XS))
+        self._hint_lbl.setStyleSheet("background: transparent;")
+
+        layout.addWidget(self._title_lbl)
+        layout.addWidget(self._hint_lbl)
+
+        self.toggled.connect(self._refresh)
+        self._refresh(False)
+
+    @property
+    def key(self) -> str:
+        return self._key
+
+    # ── Размеры ───────────────────────────────────────────────────────────
+    # QPushButton считает sizeHint по своему тексту, а не по вложенной
+    # раскладке. Текста здесь нет, поэтому без делегирования кнопка
+    # схлопывается в полоску (35x16 против нужных 331x76).
+
+    def sizeHint(self):  # type: ignore[override]
+        return self.layout().sizeHint()
+
+    def minimumSizeHint(self):  # type: ignore[override]
+        return self.layout().minimumSize()
+
+    def hasHeightForWidth(self) -> bool:  # type: ignore[override]
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # type: ignore[override]
+        return self.layout().heightForWidth(width)
+
+    def _refresh(self, checked: bool) -> None:
+        if checked:
+            self.setStyleSheet(f"""
+                PresetButton, QPushButton {{
+                    background-color: {ACCENT_SOFT_ORANGE};
+                    border: 1px solid {ACCENT_ORANGE};
+                    border-radius: {RADIUS_MD}px;
+                    text-align: left;
+                }}
+            """)
+            self._title_lbl.setStyleSheet(
+                f"color: {ACCENT_ORANGE}; background: transparent;")
+            self._hint_lbl.setStyleSheet(
+                f"color: {ACCENT_ORANGE}; background: transparent;")
+        else:
+            self.setStyleSheet(f"""
+                PresetButton, QPushButton {{
+                    background-color: {OVERLAY2_HEX};
+                    border: 1px solid {BORDER_HEX};
+                    border-radius: {RADIUS_MD}px;
+                    text-align: left;
+                }}
+                PresetButton:hover, QPushButton:hover {{
+                    background-color: {OVERLAY_HEX};
+                }}
+            """)
+            self._title_lbl.setStyleSheet(
+                f"color: {TEXT_PRIMARY}; background: transparent;")
+            self._hint_lbl.setStyleSheet(
+                f"color: {TEXT_SECONDARY}; background: transparent;")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

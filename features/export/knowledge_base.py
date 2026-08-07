@@ -4,7 +4,7 @@ features/export/knowledge_base.py — Пресет «🧠 База знаний 
 Генерирует обвязку базы знаний над существующей Markdown-выгрузкой:
   - 00_Оглавление.md         — главная точка входа в архив
   - ИНСТРУКЦИЯ_ДЛЯ_ИИ.md      — инструкция для нейросети
-  - CLAUDE.md / AGENTS.md     — копии инструкции (для разных AI-агентов)
+  - CLAUDE.md / AGENTS.md     — та же инструкция + добавка под агента
   - archive_passport.json     — машиночитаемый паспорт архива
 
 Архитектурные принципы (из ТЗ docs/ТЗ_база_знаний_для_ИИ.md):
@@ -156,6 +156,13 @@ def _build_agent_addendum(
     return "".join(parts)
 
 PASSPORT_FILENAME = "archive_passport.json"
+
+# N-KB: имена артефактов самой базы знаний — исключаются из дискового
+# скана в _merge_with_existing_files(), это не выгруженный контент.
+_KB_ARTIFACT_FILENAMES = frozenset({
+    INDEX_FILENAME, INSTRUCTION_RU, INSTRUCTION_CLAUDE, INSTRUCTION_AGENTS,
+    PASSPORT_FILENAME,
+})
 
 # Маппинг file_type → "[тип медиа]" для оглавления и эвристики «О чём пост».
 # Источник значений file_type: features/parser/api.py::_detect_media_type().
@@ -598,14 +605,21 @@ class KnowledgeBaseBuilder:
         log("База знаний: старт сборки артефактов")
         chat_meta = self._get_chat_metadata(chat_id)
 
+        # N-KB: exported_files — только файлы этого прогона. chat_meta и
+        # список постов и так берутся из БД целиком (весь архив) — без
+        # этого дополнения ссылки на файлы отставали бы от остального
+        # оглавления и терялись на любой довыгрузке, где не пересобирается
+        # вообще всё разом.
+        known_files = self._merge_with_existing_files(exported_files)
+
         # 1. Оглавление
         index_path = self._build_index(
-            chat_id, chat_title, chat_meta, exported_files, log
+            chat_id, chat_title, chat_meta, known_files, log
         )
 
         # 2. Инструкция (3 файла)
         instruction_paths = self._build_instruction(
-            chat_id, chat_title, chat_meta, exported_files, log  # ── KB preset stage 10b (dynamic instruction) ──
+            chat_id, chat_title, chat_meta, known_files, log  # ── KB preset stage 10b (dynamic instruction) ──
         )
 
         # Список сгенерированных артефактов (без паспорта — он в конце)
@@ -613,12 +627,40 @@ class KnowledgeBaseBuilder:
 
         # 3. Паспорт (включает список всех артефактов, включая сам себя)
         passport_path = self._build_passport(
-            chat_id, chat_title, chat_meta, exported_files, artifacts, log
+            chat_id, chat_title, chat_meta, known_files, artifacts, log
         )
         artifacts.append(passport_path)
 
         log(f"База знаний: готово, {len(artifacts)} артефактов")
         return artifacts
+
+    def _merge_with_existing_files(self, exported_files: List[str]) -> List[str]:
+        """
+        Дополняет exported_files тем, что уже лежит в output_dir на диске.
+
+        exported_files — только файлы текущего прогона. Артефакты самой
+        базы знаний (оглавление/инструкция/паспорт) в список не попадают —
+        это не выгруженный контент, а обвязка над ним, и мы вот-вот
+        перезапишем их заново.
+        """
+        seen = set(exported_files)
+        merged = list(exported_files)
+        try:
+            existing = sorted(self._output_dir.glob("*.md"))
+        except OSError as exc:
+            logger.warning(
+                "_merge_with_existing_files: не удалось прочитать %s: %s",
+                self._output_dir, exc,
+            )
+            return merged
+        for path in existing:
+            if path.name in _KB_ARTIFACT_FILENAMES:
+                continue
+            s = str(path)
+            if s not in seen:
+                seen.add(s)
+                merged.append(s)
+        return merged
 
     # ------------------------------------------------------------------
     # Внутренние методы — этапы 1, 5, 8
@@ -1000,10 +1042,13 @@ class KnowledgeBaseBuilder:
         """
         log("  Построение инструкции для ИИ…")
         text = self._render_instruction_text(chat_title, chat_meta, exported_files)  # ── KB preset stage 10b (dynamic instruction) ──
-        # ── KB fix step2 (signature + addenda) ──
+        # _build_agent_addendum() уже собирает добавку динамически (stage 10c).
+        # _CLAUDE_ADDENDUM/_AGENTS_ADDENDUM этим же переходом убрали, а здесь
+        # осталась ссылка на них — NameError при каждом build_kb=True, тихо
+        # проглатываемый except в ExportWorker.run().
         _AGENT_ADDENDA: Dict[str, str] = {
-            INSTRUCTION_CLAUDE: _CLAUDE_ADDENDUM,
-            INSTRUCTION_AGENTS: _AGENTS_ADDENDUM,
+            INSTRUCTION_CLAUDE: _build_agent_addendum("claude", chat_meta, exported_files),
+            INSTRUCTION_AGENTS: _build_agent_addendum("codex", chat_meta, exported_files),
         }
         paths: List[str] = []
         for filename in (INSTRUCTION_RU, INSTRUCTION_CLAUDE, INSTRUCTION_AGENTS):

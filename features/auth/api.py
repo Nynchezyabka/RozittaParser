@@ -368,6 +368,15 @@ class AuthService:
         try:
             from opentele2.td import TDesktop          # type: ignore
             from opentele2.api import UseCurrentSession  # type: ignore
+            # OpenTeleException унаследован от BaseException, а не Exception —
+            # без явной ловли все 27 её подклассов (не та папка, неверный
+            # пароль, повреждённая tdata) пролетают мимо except ниже и мимо
+            # TdataImportWorker.run(), оставляя интерфейс висеть без ошибки.
+            try:
+                from opentele2.exception import OpenTeleException  # type: ignore
+            except ImportError:                      # pragma: no cover
+                class OpenTeleException(BaseException):  # type: ignore
+                    """Заглушка: ловить нечего, если модуля нет."""
             log("   → opentele2 загружен")
         except ImportError:
             msg = (
@@ -433,7 +442,10 @@ class AuthService:
             raise AuthError(f"Превышено время ожидания: {exc}")
         except AuthError:
             raise
-        except Exception as exc:
+        except (Exception, OpenTeleException) as exc:
+            # OpenTeleException — отдельно: она мимо Exception (BaseException).
+            # BaseException целиком не ловим: проглотило бы KeyboardInterrupt,
+            # SystemExit и asyncio.CancelledError, сломав отмену задач.
             logger.error("auth: tdata import failed: %s", exc)
             log(f"❌ Ошибка: {exc}")
             raise AuthError(f"Ошибка импорта tdata: {exc}") from exc
