@@ -187,7 +187,7 @@ class CollectResult:
     messages_count: int = 0
     comments_count: int = 0
     media_count: int = 0
-    period_label: str = "fullchat"
+    period_label: str = "alltime"
     errors: List[str] = field(default_factory=list)
     # Абсолютный путь к БД — передаётся из ParseWorker, чтобы MainWindow
     # не реконструировал путь из chat_title (расхождение → OperationalError).
@@ -343,7 +343,7 @@ class ParserService:
             now = datetime.now(timezone.utc)
             period_label = f"{cutoff_date.strftime('%Y-%m-%d')}_to_{now.strftime('%Y-%m-%d')}"
         else:
-            period_label = "fullchat"
+            period_label = "alltime"
 
         depth_label = "за всё время" if cutoff_date is None else f"с {cutoff_date.strftime('%Y-%m-%d')}"
         self._log(f"📅 Глубина: {depth_label}")
@@ -1421,7 +1421,7 @@ class ParserService:
             cutoff_date = None → «за всё время»
         """
         if days_limit <= 0 or days_limit >= DAYS_LIMIT_ALL_TIME:
-            return None, "fullchat"
+            return None, "alltime"
 
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(days=days_limit)

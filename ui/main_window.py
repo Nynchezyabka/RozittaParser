@@ -3021,7 +3021,7 @@ class MainWindow(QMainWindow):
             include_comments=params.include_comments if params else False,
             output_dir=chat_dir,
             db_path=db_path,
-            period_label=getattr(collect_result, "period_label", "fullchat"),
+            period_label=getattr(collect_result, "period_label", "alltime"),
             export_formats=self._settings_screen.get_export_formats(),
             ai_split=self._settings_screen.get_ai_split(),
             ai_split_chunk_words=self._settings_screen.get_ai_split_chunk_words() if hasattr(self._settings_screen, 'get_ai_split_chunk_words') else 300_000,

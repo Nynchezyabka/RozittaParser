@@ -94,14 +94,14 @@ class TestCollectDataBasic:
         result = await svc.collect_data(params)
         assert isinstance(result, CollectResult)
         assert result.chat_id == -100
-        assert result.period_label == "fullchat"
+        assert result.period_label == "alltime"
 
     @pytest.mark.asyncio
     async def test_days_limit_sets_period_label(self, tmp_path):
         svc, db, client = _service(tmp_path)
         params = CollectParams(chat_id=-100, output_dir=str(tmp_path), days_limit=30)
         result = await svc.collect_data(params)
-        assert result.period_label != "fullchat"
+        assert result.period_label != "alltime"
         assert "_to_" in result.period_label
 
 
@@ -447,12 +447,12 @@ class TestResolveCutoff:
         from config import DAYS_LIMIT_ALL_TIME
         cutoff, label = ParserService._resolve_cutoff(DAYS_LIMIT_ALL_TIME)
         assert cutoff is None
-        assert label == "fullchat"
+        assert label == "alltime"
 
     def test_zero_is_all_time(self):
         cutoff, label = ParserService._resolve_cutoff(0)
         assert cutoff is None
-        assert label == "fullchat"
+        assert label == "alltime"
 
     def test_specific_days(self):
         cutoff, label = ParserService._resolve_cutoff(30)

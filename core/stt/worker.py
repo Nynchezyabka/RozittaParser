@@ -45,8 +45,19 @@ class STTWorker(QThread):
     error = Signal(str)
     finished = Signal()
 
-    # Типы файлов, которые транскрибируем
-    STT_FILE_TYPES = ["voice", "video_note"]
+    # Типы файлов, которые транскрибируем.
+    #
+    # Значения обязаны совпадать с тем, что пишет в file_type парсер
+    # (ParserService._get_media_type). Кружочки он помечает как
+    # "videomessage"; "video_note" — историческое написание, встречается
+    # в ключах UI-чипов и в именах подпапок, поэтому оставлено ради
+    # старых баз. Обычные видео сюда не входят намеренно: для длинных
+    # роликов есть RozittaTranscriber.
+    #
+    # Рассинхрон этих строк с парсером даёт тихий отказ: выборка пуста,
+    # в журнале «нет голосовых сообщений», исключения нет. Стык закреплён
+    # тестом tests/test_core/test_stt_file_types.py.
+    STT_FILE_TYPES = ["voice", "video_note", "videomessage"]
 
     def __init__(
         self,

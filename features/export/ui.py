@@ -40,6 +40,7 @@ features/export/ui.py — ExportWorker: QThread-обёртка над DocxGenera
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -55,6 +56,54 @@ _LogCallback = Callable[[str], None]
 
 
 from features.export.filters import NO_FILTER, UserFilter
+
+# Метка «за всё время». Производит её ParserService._resolve_cutoff()
+# в features/parser/api.py; здесь она — условие для подстановки дат.
+PERIOD_ALLTIME = "alltime"
+
+_RE_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _iso_day(value: Optional[str]) -> Optional[str]:
+    """«2023-10-06 05:37:00» → «2023-10-06». Не дата → None."""
+    if not value or len(value) < 10:
+        return None
+    day = value[:10]
+    return day if _RE_ISO_DAY.match(day) else None
+
+
+def _resolve_period_label(db: DBManager, p: "ExportParams") -> str:
+    """
+    N-2: метка периода для имени файла.
+
+    «alltime» заменяется на «alltime_<min>_to_<max>» по фактическому охвату
+    выгружаемого среза. Без этого две выгрузки за всё время дают одно имя,
+    и вторая молча затирает первую — для чата с автоудалением потеря
+    невосстановима.
+
+    Выгрузка с заданными датами метку не меняет: там имена и так различны,
+    а запрошенный период предсказуемее фактического.
+
+    Пустой срез или нечитаемая дата → метка остаётся как была.
+    """
+    if p.period_label != PERIOD_ALLTIME:
+        return p.period_label
+
+    date_min, date_max = db.get_coverage(
+        p.chat_id,
+        topic_id         = p.topic_id,
+        user_id          = p.user_id,
+        user_ids         = p.user_filter.sql_ids(),
+        include_comments = p.include_comments,
+        date_from        = p.date_from,
+        date_to          = p.date_to,
+    )
+    day_min = _iso_day(date_min)
+    day_max = _iso_day(date_max)
+    if not day_min or not day_max:
+        return p.period_label
+
+    return f"{PERIOD_ALLTIME}_{day_min}_to_{day_max}"
 
 
 # ==============================================================================
@@ -83,7 +132,7 @@ class ExportParams:
 
     chat_id:          int
     chat_title:       str
-    period_label:     str           = "fullchat"
+    period_label:     str           = "alltime"
     split_mode:       str           = "none"
     topic_id:         Optional[int] = None
     topic_name:       Optional[str] = None
@@ -191,6 +240,12 @@ class ExportWorker(QThread):
         try:
             with DBManager(p.db_path) as db:
 
+                # N-2: период в имени — фактический охват среза, а не метка
+                # запроса. Считается один раз, до генераторов.
+                period_label = _resolve_period_label(db, p)
+                if period_label != p.period_label:
+                    self._log(f"🗓️ Период в имени файла: {period_label}")
+
                 # ── DOCX ──────────────────────────────────────────────────
                 if "docx" in formats:
                     gen = DocxGenerator(db=db, output_dir=p.output_dir, user_filter=p.user_filter)
@@ -203,7 +258,7 @@ class ExportWorker(QThread):
                         user_id          = p.user_id,
                         username         = p.username,
                         include_comments = p.include_comments,
-                        period_label     = p.period_label,
+                        period_label     = period_label,
                         date_from        = p.date_from,
                         date_to          = p.date_to,
                         user_filter_mode = p.user_filter_mode,
@@ -221,7 +276,7 @@ class ExportWorker(QThread):
                             chat_title       = p.chat_title,
                             user_id          = p.user_id,
                             include_comments = p.include_comments,
-                            period_label     = p.period_label,
+                            period_label     = period_label,
                             date_from        = p.date_from,
                             date_to          = p.date_to,
                             log              = self._log,
@@ -238,7 +293,7 @@ class ExportWorker(QThread):
                         username         = p.username,
                         include_comments = p.include_comments,
                         ai_split         = p.ai_split,
-                        period_label     = p.period_label,
+                        period_label     = period_label,
                         ai_split_chunk_words = p.ai_split_chunk_words,
                         date_from        = p.date_from,
                         date_to          = p.date_to,
@@ -257,7 +312,7 @@ class ExportWorker(QThread):
                             chat_title       = p.chat_title,
                             user_id          = p.user_id,
                             include_comments = p.include_comments,
-                            period_label     = p.period_label,
+                            period_label     = period_label,
                             date_from        = p.date_from,
                             date_to          = p.date_to,
                             log              = self._log,
@@ -274,7 +329,7 @@ class ExportWorker(QThread):
                         username         = p.username,
                         include_comments = p.include_comments,
                         ai_split         = p.ai_split,
-                        period_label     = p.period_label,
+                        period_label     = period_label,
                         ai_split_chunk_words = p.ai_split_chunk_words,
                         date_from        = p.date_from,
                         date_to          = p.date_to,
@@ -293,7 +348,7 @@ class ExportWorker(QThread):
                             chat_title       = p.chat_title,
                             user_id          = p.user_id,
                             include_comments = p.include_comments,
-                            period_label     = p.period_label,
+                            period_label     = period_label,
                             date_from        = p.date_from,
                             date_to          = p.date_to,
                             log              = self._log,
@@ -313,7 +368,7 @@ class ExportWorker(QThread):
                         # его единственное преимущество, поиск по всему
                         # архиву в одном файле.
                         ai_split             = False,
-                        period_label         = p.period_label,
+                        period_label         = period_label,
                         date_from        = p.date_from,
                         date_to          = p.date_to,
                         user_filter_mode = p.user_filter_mode,
@@ -344,7 +399,7 @@ class ExportWorker(QThread):
                         artifacts = builder.build(
                             chat_id        = p.chat_id,
                             chat_title     = p.chat_title,
-                            period_label   = p.period_label,
+                            period_label   = period_label,
                             exported_files = all_files,
                             log            = self._log,
                         )
