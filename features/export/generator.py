@@ -388,7 +388,7 @@ class DocxGenerator:
 
         # Текущий контекст (устанавливается в generate() для _build_path)
         self._chat_title:   str           = "chat"
-        self._period_label: str           = "fullchat"
+        self._period_label: str           = "alltime"
         self._topic_id:     Optional[int] = None   # ← задача 1
         self._topic_name:   Optional[str] = None
         self._username:     Optional[str] = None
@@ -410,7 +410,7 @@ class DocxGenerator:
         user_id:          Optional[int] = None,
         username:         Optional[str] = None,
         include_comments: bool          = False,
-        period_label:     str           = "fullchat",
+        period_label:     str           = "alltime",
         date_from:        Optional[str] = None,
         date_to:          Optional[str] = None,
         user_filter_mode: str           = "none",
@@ -1137,7 +1137,7 @@ class JsonGenerator:
         username:             Optional[str] = None,
         include_comments:     bool           = False,
         ai_split:             bool           = False,
-        period_label:         str            = "fullchat", # ← задача 3
+        period_label:         str            = "alltime", # ← задача 3
         ai_split_chunk_words: int            = 300_000,    # ← задача 4
         date_from:            Optional[str]  = None,
         date_to:              Optional[str]  = None,
@@ -1332,7 +1332,7 @@ class JsonGenerator:
         chat_title:       str,
         user_id:          "Optional[int]" = None,
         include_comments: bool            = True,
-        period_label:     str             = "fullchat",
+        period_label:     str             = "alltime",
         date_from:        "Optional[str]" = None,
         date_to:          "Optional[str]" = None,
         log:              "_LogCallback"  = None,
@@ -1561,7 +1561,7 @@ class MarkdownGenerator:
         chat_title:       str,
         user_id:          "Optional[int]" = None,
         include_comments: bool            = True,
-        period_label:     str             = "fullchat",
+        period_label:     str             = "alltime",
         date_from:        "Optional[str]" = None,
         date_to:          "Optional[str]" = None,
         log:              "_LogCallback"  = None,
@@ -1911,7 +1911,7 @@ class HtmlGenerator:
         username:             Optional[str]  = None,
         include_comments:     bool           = False,
         ai_split:             bool           = False,
-        period_label:         str            = "fullchat",
+        period_label:         str            = "alltime",
         ai_split_chunk_words: int            = 300_000,
         date_from:            Optional[str]  = None,
         date_to:              Optional[str]  = None,
@@ -2248,7 +2248,7 @@ class HtmlGenerator:
         chat_title:       str,
         user_id:          "Optional[int]" = None,
         include_comments: bool            = True,
-        period_label:     str             = "fullchat",
+        period_label:     str             = "alltime",
         date_from:        "Optional[str]" = None,
         date_to:          "Optional[str]" = None,
         log:              "_LogCallback"  = None,

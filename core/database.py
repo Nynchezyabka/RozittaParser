@@ -610,6 +610,44 @@ class DBManager:
         Returns:
             Список sqlite3.Row, отсортированных по дате ASC.
         """
+        where_clause, params = self._build_message_where(
+            chat_id,
+            topic_id         = topic_id,
+            user_id          = user_id,
+            user_ids         = user_ids,
+            include_comments = include_comments,
+            date_from        = date_from,
+            date_to          = date_to,
+        )
+        sql = f"SELECT * FROM messages WHERE {where_clause} ORDER BY date ASC"
+
+        with self._cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+    def _build_message_where(
+        self,
+        chat_id:          int,
+        *,
+        topic_id:         Optional[int] = None,
+        user_id:          Optional[int] = None,
+        user_ids:         Optional[List[int]] = None,
+        include_comments: bool          = False,
+        date_from:        Optional[str] = None,
+        date_to:          Optional[str] = None,
+    ) -> Tuple[str, List[object]]:
+        """
+        Собирает WHERE для выборки сообщений — единственный источник правды
+        для get_messages() и get_coverage().
+
+        Вынесено ради N-2: охват дат в имени файла обязан считаться по тому
+        же срезу, что уйдёт в документ. Две копии условий разошлись бы молча
+        — имя врало бы, а файл при этом создавался.
+
+        Returns:
+            (where_clause, params) — строка без слова WHERE и список
+            подстановок в порядке появления плейсхолдеров.
+        """
         conditions = ["chat_id = ?"]
         params: List[object] = [chat_id]
 
@@ -644,12 +682,52 @@ class DBManager:
             conditions.append("date <= ?")
             params.append(date_to + " 23:59:59")  # включаем весь последний день
 
-        where_clause = " AND ".join(conditions)
-        sql = f"SELECT * FROM messages WHERE {where_clause} ORDER BY date ASC"
+        return " AND ".join(conditions), params
+
+    def get_coverage(
+        self,
+        chat_id:          int,
+        *,
+        topic_id:         Optional[int] = None,
+        user_id:          Optional[int] = None,
+        user_ids:         Optional[List[int]] = None,
+        include_comments: bool          = False,
+        date_from:        Optional[str] = None,
+        date_to:          Optional[str] = None,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        N-2: фактический охват дат среза — для метки периода в имени файла.
+
+        Аргументы те же, что у get_messages(); условия отбора общие
+        (_build_message_where), поэтому охват всегда описывает ровно то,
+        что попадёт в документ.
+
+        Режим фильтра «кроме выбранных» строки не режет — они доходят до
+        рендера заглушкой, — поэтому их даты законно входят в охват:
+        sql_ids() в этом режиме возвращает None.
+
+        Returns:
+            (min_date, max_date) — ISO-строки из БД, либо (None, None),
+            если срез пуст.
+        """
+        where_clause, params = self._build_message_where(
+            chat_id,
+            topic_id         = topic_id,
+            user_id          = user_id,
+            user_ids         = user_ids,
+            include_comments = include_comments,
+            date_from        = date_from,
+            date_to          = date_to,
+        )
+        sql = f"SELECT MIN(date), MAX(date) FROM messages WHERE {where_clause}"
 
         with self._cursor() as cur:
             cur.execute(sql, params)
-            return cur.fetchall()
+            row = cur.fetchone()
+
+        if row is None:
+            return None, None
+        return row[0], row[1]
 
     def get_thread_pairs(
         self,
@@ -977,8 +1055,10 @@ class DBManager:
 
         Args:
             chat_id:    ID чата (нормализованный).
-            file_types: Список типов файлов ('voice', 'video_note', 'video').
-                        По умолчанию: ['voice', 'video_note'].
+            file_types: Список типов файлов. По умолчанию —
+                        ['voice', 'video_note', 'videomessage'].
+                        "videomessage" — то, что пишет парсер для кружочков;
+                        "video_note" — историческое написание из старых баз.
 
         Returns:
             Список sqlite3.Row (id, message_id, media_path, file_type).
@@ -1179,6 +1259,31 @@ class DBManager:
             "period_min":           row["period_min"],
             "period_max":           row["period_max"],
         }
+
+    def get_post_texts(self, chat_id: int) -> List[str]:
+        """
+        Тексты сообщений чата без комментариев — для частотного среза
+        в оглавлении базы знаний (N-17).
+
+        Комментарии исключены (is_comment = 0): на канале с обсуждениями
+        их в разы больше постов, и разговорная лексика вытеснила бы
+        тематическую. В диалогах комментариев нет, поэтому условие
+        возвращает всё содержимое.
+
+        Пустые тексты (посты из одного медиа) не возвращаются.
+
+        Returns:
+            Список непустых строк в хронологическом порядке.
+        """
+        sql = """
+            SELECT text FROM messages
+            WHERE chat_id = ? AND is_comment = 0
+              AND text IS NOT NULL AND text != ''
+            ORDER BY date ASC
+        """
+        with self._cursor() as cur:
+            cur.execute(sql, (chat_id,))
+            return [row[0] for row in cur.fetchall() if row[0]]
 
     def get_post_metadata(self, chat_id: int) -> List[sqlite3.Row]:
         """

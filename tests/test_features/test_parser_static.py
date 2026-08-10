@@ -289,20 +289,20 @@ class TestClassifyChatType:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestResolveCutoff:
-    def test_zero_is_fullchat(self):
+    def test_zero_is_alltime(self):
         cutoff, label = ParserService._resolve_cutoff(0)
         assert cutoff is None
-        assert label == "fullchat"
+        assert label == "alltime"
 
-    def test_365_is_fullchat(self):
+    def test_365_is_alltime(self):
         cutoff, label = ParserService._resolve_cutoff(365)
         assert cutoff is None
-        assert label == "fullchat"
+        assert label == "alltime"
 
-    def test_500_is_fullchat(self):
+    def test_500_is_alltime(self):
         cutoff, label = ParserService._resolve_cutoff(500)
         assert cutoff is None
-        assert label == "fullchat"
+        assert label == "alltime"
 
     def test_specific_days(self):
         cutoff, label = ParserService._resolve_cutoff(30)
@@ -353,7 +353,7 @@ class TestCollectResult:
         assert r.messages_count == 0
         assert r.comments_count == 0
         assert r.media_count == 0
-        assert r.period_label == "fullchat"
+        assert r.period_label == "alltime"
         assert r.errors == []
         assert r.db_path == ""
 

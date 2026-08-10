@@ -480,12 +480,13 @@ class MediaButton(QPushButton):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CHIP BUTTON  — pill с иконкой ✓ (recognition chips)
+# CHIP BUTTON  — pill с иконкой (recognition chips)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ChipButton(QWidget):
     """
-    Pill-кнопка с иконкой типа медиа и галочкой ✓ при активации.
+    Pill-кнопка с иконкой типа медиа; активное состояние — оранжевая
+    заливка, рамка, иконка и подпись (как у MediaButton).
     Соответствует .recognition-chip из прототипа.
 
     Signals:
@@ -497,6 +498,11 @@ class ChipButton(QWidget):
     """
 
     toggled = Signal(bool)
+
+    # Высота пилюли и её радиус. Радиус обязан быть ровно половиной
+    # высоты: Qt скругляет угол, только пока радиус её не превышает.
+    _PILL_H = 32
+    _PILL_R = _PILL_H // 2
 
     def __init__(
             self,
@@ -510,9 +516,18 @@ class ChipButton(QWidget):
         self._active = active
         self._media_type = media_type
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Высота фиксируется, иначе ряд растягивает чип по высоте самого
+        # высокого соседа — и радиус, заданный числом, перестаёт совпадать
+        # с половиной высоты (Qt рисует прямой угол, если радиус больше).
+        self.setFixedHeight(self._PILL_H)
+        # Голый QWidget внутри layout игнорирует background-color и border
+        # из таблицы стилей — рисуется только цвет текста дочерних QLabel.
+        # Соседние виджеты выбора построены на QPushButton и красятся сами;
+        # этот единственный на QWidget, поэтому атрибут нужен явно.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 5, 10, 5)
+        layout.setContentsMargins(12, 0, 12, 0)
         layout.setSpacing(6)
 
         self._icon_lbl = QLabel(icon)
@@ -523,13 +538,8 @@ class ChipButton(QWidget):
         self._text_lbl.setFont(_font(FONT_SIZE_SMALL))
         self._text_lbl.setStyleSheet("background: transparent;")
 
-        self._check_lbl = QLabel("✓")
-        self._check_lbl.setFont(_font(FONT_SIZE_SMALL, QFont.Weight.Bold))
-        self._check_lbl.setStyleSheet(f"color: {COLOR_SUCCESS}; background: transparent;")
-
         layout.addWidget(self._icon_lbl)
         layout.addWidget(self._text_lbl)
-        layout.addWidget(self._check_lbl)
 
         self._refresh()
 
@@ -549,27 +559,29 @@ class ChipButton(QWidget):
         self.setActive(not self._active)
 
     def _refresh(self) -> None:
-        self._check_lbl.setVisible(self._active)
+        # Состояние передаётся только цветом — так же, как у MediaButton
+        # в соседней секции экрана. Галочка была вторым способом сказать
+        # то же самое и заставляла гадать, значат ли они разное.
         if self._active:
             self.setStyleSheet(f"""
                 ChipButton {{
                     background-color: {ACCENT_SOFT_ORANGE};
                     border: 1px solid {ACCENT_ORANGE};
-                    border-radius: 30px;
+                    border-radius: {self._PILL_R}px;
                 }}
             """)
             self._icon_lbl.setStyleSheet(
                 f"color: {ACCENT_ORANGE}; background: transparent;"
             )
             self._text_lbl.setStyleSheet(
-                f"color: {TEXT_PRIMARY}; background: transparent;"
+                f"color: {ACCENT_ORANGE}; background: transparent;"
             )
         else:
             self.setStyleSheet(f"""
                 ChipButton {{
                     background-color: {OVERLAY2_HEX};
                     border: 1px solid {BORDER_HEX};
-                    border-radius: 30px;
+                    border-radius: {self._PILL_R}px;
                 }}
             """)
             self._icon_lbl.setStyleSheet(

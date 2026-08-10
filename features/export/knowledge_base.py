@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -235,6 +236,131 @@ def markdown_to_plain(text: str) -> str:
     # 5. Остаточные квадратные скобки
     out = re.sub(r"[\[\]]", "", out)
     return out.strip()
+
+
+# ── N-17: частотный срез архива ───────────────────────────────────────────────
+#
+# Служебные слова: местоимения, предлоги, союзы, частицы, связки, усилители,
+# наречия времени и места. Мусор в любом архиве независимо от темы.
+#
+# Содержательные существительные и глаголы («время», «дело», «человек»,
+# «делать», «знать») сюда СОЗНАТЕЛЬНО не включены: для одного архива это
+# шум, для другого — суть. Если на живом архиве мусорное слово попадёт в
+# топ, допишите его сюда — это правка в одну строку.
+_STOPWORDS: frozenset = frozenset({
+    # местоимения
+    "который", "которая", "которое", "которые", "этот", "этого", "этому",
+    "этим", "этими", "этом", "того", "тому", "теми", "такой", "такая",
+    "такое", "такие", "такого", "такому", "таким", "такими", "таком",
+    "себя", "собой", "каждый", "каждая", "каждое", "любой", "любая",
+    "любое", "любые", "всего", "всему", "всеми", "ничего",
+    # связки и вспомогательные
+    "быть", "была", "было", "были", "есть", "будет", "будут", "мочь",
+    "могла", "могло", "могли", "может", "могут", "должен", "должна",
+    "должно", "стать", "стала", "стало", "стали",
+    # предлоги и союзы
+    "чтобы", "или", "тоже", "также", "если", "хотя", "потому", "поэтому",
+    "через", "между", "перед", "для", "при", "про",
+    # наречия времени и места
+    "здесь", "тогда", "сейчас", "потом", "сначала", "опять", "снова",
+    "всегда", "никогда", "часто", "иногда", "обычно", "сегодня", "вчера",
+    "завтра", "когда", "куда", "откуда", "почему", "зачем",
+    # частицы и усилители
+    "только", "просто", "больше", "вообще", "очень", "совсем", "даже",
+    "конечно", "значит", "нужно", "нельзя", "достаточно", "наверное",
+})
+
+_TERM_MIN_LEN = 6
+_TERM_MAX_LEN = 18
+_TERM_MAX_CONSONANTS = 4
+_TERM_DEFAULT_LIMIT = 15
+_TERM_MIN_FREQ = 5
+
+_VOWELS = frozenset("аеёиоуыэюяaeiouy")
+_NEUTRAL = frozenset("ьъ")
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def _looks_like_word(term: str) -> bool:
+    """
+    Эвристика против склеек: слово обязано иметь и гласную, и согласную,
+    и не содержать 5+ согласных подряд.
+
+    Отсекает «бабушкадействительно» и «восприятияпостоянные» — артефакты
+    текстов, где потерян пробел. Тот же приём, что в Библиотекаре.
+    """
+    chars = [c for c in term.lower() if c.isalpha()]
+    if not chars:
+        return False
+    if not any(c in _VOWELS for c in chars):
+        return False
+    if not any(c not in _VOWELS and c not in _NEUTRAL for c in chars):
+        return False
+
+    run = 0
+    for c in chars:
+        if c in _VOWELS or c in _NEUTRAL:
+            run = 0
+        else:
+            run += 1
+            if run > _TERM_MAX_CONSONANTS:
+                return False
+    return True
+
+
+def extract_top_terms(
+    texts:    List[str],
+    limit:    int = _TERM_DEFAULT_LIMIT,
+    min_freq: int = _TERM_MIN_FREQ,
+) -> List[Tuple[str, int]]:
+    """
+    N-17: самые характерные слова архива — раздел «О чём этот архив».
+
+    Детерминированно, без модели и без сети. Словоформы не склеиваются
+    («терраса» и «террасы» считаются раздельно) — ровно так же ведёт себя
+    токенизатор Библиотекаря, на который этот срез равняется.
+
+    Фильтры: длина 6–18 символов, только буквы, не стоп-слово, похоже на
+    слово (см. _looks_like_word), встречается не реже min_freq раз.
+
+    Порядок: по убыванию частоты, при равной частоте по алфавиту — чтобы
+    вывод не зависел от порядка чтения из БД.
+
+    Если под min_freq не попал никто (маленький архив), порог снимается:
+    лучше показать что-то, чем пустой раздел.
+
+    Args:
+        texts:    Тексты сообщений.
+        limit:    Сколько слов вернуть.
+        min_freq: Минимальная частота слова во всём архиве.
+
+    Returns:
+        Список пар (слово, частота); пустой, если считать не из чего.
+    """
+    limit = max(1, int(limit or _TERM_DEFAULT_LIMIT))
+    counter: Counter = Counter()
+
+    for text in texts:
+        if not text:
+            continue
+        for raw in _WORD_RE.findall(text.lower()):
+            if not (_TERM_MIN_LEN <= len(raw) <= _TERM_MAX_LEN):
+                continue
+            if raw in _STOPWORDS:
+                continue
+            if not _looks_like_word(raw):
+                continue
+            counter[raw] += 1
+
+    if not counter:
+        return []
+
+    def _top(threshold: int) -> List[Tuple[str, int]]:
+        picked = [(w, n) for w, n in counter.items() if n >= threshold]
+        picked.sort(key=lambda pair: (-pair[1], pair[0]))
+        return picked[:limit]
+
+    return _top(min_freq) or _top(1)
 
 
 def extract_post_topic(text: Optional[str], file_type: Optional[str]) -> str:
@@ -783,6 +909,10 @@ class KnowledgeBaseBuilder:
         """Этап 1: метаданные чата из БД (делегирует в DBManager.get_chat_info)."""
         return self._db.get_chat_info(chat_id)
 
+    def _get_top_terms(self, chat_id: int) -> List[Tuple[str, int]]:
+        """N-17: частотный срез архива по текстам без комментариев."""
+        return extract_top_terms(self._db.get_post_texts(chat_id))
+
     def _get_posts_for_index(self, chat_id: int) -> List[dict]:
         """Этап 1: список постов канала для оглавления (is_comment=0)."""
         rows = self._db.get_post_metadata(chat_id)
@@ -887,6 +1017,9 @@ class KnowledgeBaseBuilder:
         parts.append(f"- **Дата генерации:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         parts.append("")
 
+        # N-17: до всякой хронологии — о чём тут вообще речь.
+        parts.extend(self._render_top_terms_section(chat_id, log))
+
         if chat_meta.get("type") == "channel" and chat_meta.get("posts_count", 0) > 0:
             parts.extend(self._render_posts_table(chat_id, chat_title, exported_files, log))
         else:
@@ -896,6 +1029,33 @@ class KnowledgeBaseBuilder:
         index_path.write_text("\n".join(parts) + "\n", encoding="utf-8")
         log(f"  Оглавление: {index_path.name}")
         return str(index_path)
+
+    def _render_top_terms_section(
+        self,
+        chat_id: int,
+        log:     _LogCallback,
+    ) -> List[str]:
+        """
+        N-17: раздел «О чём этот архив» — частотный срез.
+
+        Пустой архив или сплошное медиа без текста → раздел не выводится
+        вовсе: пустой заголовок хуже его отсутствия.
+        """
+        terms = self._get_top_terms(chat_id)
+        if not terms:
+            log("  Частотный срез: текстов нет, раздел пропущен")
+            return []
+
+        log(f"  Частотный срез: {len(terms)} слов")
+        return [
+            "## О чём этот архив",
+            "",
+            "Самые частые слова архива — с чего начать поиск. "
+            "В скобках число упоминаний.",
+            "",
+            ", ".join(f"**{word}** ({count})" for word, count in terms),
+            "",
+        ]
 
     def _render_posts_table(
         self,
@@ -1333,6 +1493,12 @@ class KnowledgeBaseBuilder:
                 "comments_count":     chat_meta.get("comments_count", 0),
                 "participants_count": chat_meta.get("participants_count", 0),
             },
+            # N-17: машиночитаемый частотный срез — внешний инструмент
+            # понимает тему архива, не открывая ни одного файла выгрузки.
+            "top_terms": [
+                {"term": word, "count": count}
+                for word, count in self._get_top_terms(chat_id)
+            ],
             "shelves": [
                 {
                     "name": "chat_archive",

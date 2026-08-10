@@ -39,12 +39,22 @@ class TestChipButton:
         chip.mousePressEvent(None)
         assert chip.isActive()
 
-    def test_check_mark_visible_when_active(self, qapp):
+    def test_active_label_is_orange(self, qapp):
+        """Активное состояние передаётся цветом — как у MediaButton."""
+        from core.ui_shared.styles import ACCENT_ORANGE
+
         chip = ChipButton("🎥", "Видео", active=True)
         chip.show()
-        assert chip._check_lbl.isVisible()
+        assert ACCENT_ORANGE in chip._text_lbl.styleSheet()
 
-    def test_check_mark_hidden_when_inactive(self, qapp):
+    def test_inactive_label_is_not_orange(self, qapp):
+        from core.ui_shared.styles import ACCENT_ORANGE
+
         chip = ChipButton("🎥", "Видео", active=False)
         chip.show()
-        assert not chip._check_lbl.isVisible()
+        assert ACCENT_ORANGE not in chip._text_lbl.styleSheet()
+
+    def test_no_check_mark_widget(self, qapp):
+        """Галочка убрана: два способа сказать «выбрано» на одном экране."""
+        chip = ChipButton("🎥", "Видео", active=True)
+        assert not hasattr(chip, "_check_lbl")
