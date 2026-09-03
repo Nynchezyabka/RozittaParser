@@ -363,7 +363,71 @@ def extract_top_terms(
     return _top(min_freq) or _top(1)
 
 
-def extract_post_topic(text: Optional[str], file_type: Optional[str]) -> str:
+# --- Тема поста из расшифровки голоса --------------------------------------
+#
+# Расшифровка приходит одним абзацем: whisper_manager склеивает сегменты
+# пробелом, переводов строк там нет вообще. Поэтому построчные правила
+# extract_post_topic к ней неприменимы — режем на предложения.
+#
+# Проверено на девяти живых расшифровках канала: семь дают понятную тему.
+# Два случая, где автор называет тему только к середине записи, никакое
+# правило «взять начало» не возьмёт — это принятое ограничение, а не
+# недоделка. Даже вода из первых фраз информативнее голого «[кружочек]».
+
+# Речь почти всегда открывается приветствием. Отдельным предложением оно
+# короткое и отсеется по длине; список нужен для длинных вступлений
+# вроде «Привет, мои хорошие, я сегодня пришла рассказать…».
+_SPEECH_OPENERS = (
+    "привет", "здравств", "добрый ", "доброе ", "всем привет",
+    "мои хорошие", "моя хорошая", "дорог", "уважаем", "друзья",
+    "ребят", "ну что", "итак", "на связи", "спасибо всем",
+)
+
+# Короткое предложение темы не несёт: «Так.», «Готовы там?», «Вы как?».
+# Порог 25, а не 30: на живых записях 30 отсекал «Бургер с тамленой
+# говядиной.» — ровно ту фразу, ради которой запись и снималась.
+_TRANSCRIPT_MIN_SENT_LEN = 25
+
+# Пометка машинной расшифровки. Нужна не для красоты: распознавание врёт
+# («три вооблюда», «ушелуша»), и читатель обязан видеть, что это не
+# авторский текст.
+_STT_MARK = "🎙"
+
+_RE_SENTENCE_SPLIT = re.compile(r"(?<=[.!?…])\s+")
+
+
+def _topic_from_transcript(transcript: Optional[str]) -> Optional[str]:
+    """
+    Первая содержательная фраза машинной расшифровки голоса.
+
+    Отбрасывает короткие предложения и вступительные приветствия, берёт
+    первое уцелевшее и обрезает по общему правилу колонки.
+
+    Returns:
+        Фразу без пометки, либо None — расшифровки нет или в ней не
+        нашлось ни одного пригодного предложения.
+    """
+    if not transcript:
+        return None
+
+    flat = " ".join(transcript.split())
+    for sentence in _RE_SENTENCE_SPLIT.split(flat):
+        sentence = sentence.strip()
+        if len(sentence) < _TRANSCRIPT_MIN_SENT_LEN:
+            continue
+        opening = sentence.lower().lstrip("—–-«\"' ")
+        if opening.startswith(_SPEECH_OPENERS):
+            continue
+        return _truncate(sentence)
+
+    return None
+
+
+def extract_post_topic(
+    text:       Optional[str],
+    file_type:  Optional[str],
+    transcript: Optional[str] = None,
+) -> str:
     """
     Извлекает «О чём пост» — первую содержательную строку поста.
 
@@ -382,11 +446,20 @@ def extract_post_topic(text: Optional[str], file_type: Optional[str]) -> str:
         text:      Полный текст поста (может быть None или пустым).
         file_type: Тип медиа, если пост без текста.
                    Один из: photo, video, videomessage, voice, file, None.
+        transcript: Машинная расшифровка голоса, если она есть. Идёт в дело
+                   только когда своего текста у поста нет: авторское слово
+                   всегда главнее того, что услышала модель.
 
     Returns:
         Строка-описание темы поста для колонки «О чём». Никогда не пустая.
     """
     media_label = MEDIA_TYPE_LABEL.get(file_type or "", _MEDIA_FALLBACK)
+
+    # Подменяем метку медиа фразой из расшифровки — так все три выхода
+    # «текста нет» ниже отдают её без правки самих правил.
+    spoken = _topic_from_transcript(transcript)
+    if spoken:
+        media_label = f"{_STT_MARK} {spoken}"
 
     # Нет текста — возвращаем метку медиа (или фоллбэк)
     if not text or not text.strip():
@@ -663,6 +736,57 @@ def _format_date(iso_str: Optional[str]) -> str:
     if len(iso_str) >= 10:
         return iso_str[:10]
     return iso_str
+
+
+def _month_key(iso_str: Optional[str]) -> str:
+    """
+    Месяц сообщения для группировки таблицы постов: 'YYYY-MM'.
+
+    Возвращает '?' для пустой или слишком короткой строки — такие посты
+    собираются в отдельный блок, а не приписываются к соседнему месяцу.
+    """
+    if not iso_str or len(iso_str) < 7:
+        return "?"
+    return iso_str[:7]
+
+
+def _tg_post_link(chat_id: Optional[int], message_id: Optional[int]) -> Optional[str]:
+    """
+    Приватная ссылка t.me/c/... на пост канала.
+
+    Формат обязан совпадать с generator._tg_message_link (I15): оглавление
+    и сами документы должны вести в одно и то же место. Здесь отдельная
+    функция, а не импорт: тот вариант принимает строку БД целиком, а
+    оглавление работает со словарями.
+
+    Возвращает None, если данных недостаточно.
+    """
+    if not chat_id or not message_id:
+        return None
+    s = str(chat_id)
+    internal = s[4:] if s.startswith("-100") else s.lstrip("-")
+    return f"https://t.me/c/{internal}/{message_id}"
+
+
+def _posts_table_legend(rows: List[str]) -> str:
+    """
+    Строка условных обозначений под заголовком таблицы постов.
+
+    Печатается только для значков, которые в таблице действительно есть.
+    Пустая строка — значит объяснять нечего.
+    """
+    joined = "\n".join(rows)
+    parts: List[str] = []
+    if _STT_MARK in joined:
+        parts.append(
+            f"{_STT_MARK} — фраза из машинной расшифровки голоса, "
+            "а не авторский текст"
+        )
+    if "📝" in joined:
+        parts.append("📝 — у поста есть расшифровка целиком")
+    if not parts:
+        return ""
+    return "> " + ". ".join(parts) + "."
 
 
 # ============================================================================
@@ -1064,31 +1188,64 @@ class KnowledgeBaseBuilder:
         exported_files: List[str],
         log:            _LogCallback,
     ) -> List[str]:
-        """Таблица постов для каналов: | № | Дата | Автор | О чём | Файлы |."""
+        """
+        N-17 (B): таблица постов канала, разрезанная по месяцам.
+
+        Колонка «Автор» убрана: по Variant A-2 канал сам себе отправитель,
+        и на 596 постов там одно значение — колонка занимала место, не
+        неся информации.
+
+        Шапка повторяется в каждом месячном блоке: markdown не соберёт в
+        одну таблицу куски, разделённые заголовком.
+
+        Нумерация сквозная через все месяцы — номер поста используют как
+        адрес в разговоре, он не должен зависеть от того, где проходит
+        граница месяца.
+
+        Колонка «стрелка» — прямая ссылка на пост в Telegram. Для канала
+        работает всегда, независимо от режима выгрузки, в отличие от
+        колонки «Файлы», где ссылка на MD есть только при дроблении
+        «по постам».
+        """
         posts = self._get_posts_for_index(chat_id)
         transcripts_map = self._get_transcripts_map(chat_id)
         log(f"  Постов для индексации: {len(posts)}")
 
-        lines: List[str] = [
-            "## Посты канала",
-            "",
-            "| № | Дата | Автор | О чём | Файлы |",
-            "|:---:|:---:|:---|:---|:---|",
-        ]
+        header = "| № | Дата | О чём | Файлы | ↗ |"
+        ruler = "|:---:|:---:|:---|:---|:---:|"
+
+        body: List[str] = []
+        current_month: Optional[str] = None
 
         for idx, post in enumerate(posts, start=1):
-            topic = extract_post_topic(post.get("text"), post.get("file_type"))
+            month = _month_key(post.get("date"))
+            if month != current_month:
+                current_month = month
+                # Пустая строка перед заголовком обязательна: без неё часть
+                # markdown-читалок склеивает заголовок с предыдущей таблицей.
+                body.extend(["", f"### {month}", "", header, ruler])
+
+            topic = extract_post_topic(
+                post.get("text"),
+                post.get("file_type"),
+                transcript=transcripts_map.get(post.get("message_id")),
+            )
             date = _format_date(post.get("date"))
-            author = post.get("username") or f"id:{post.get('user_id', '?')}"
             files = self._collect_post_files(
                 chat_id, post, exported_files, transcripts_map
             )
+            link = _tg_post_link(chat_id, post.get("message_id"))
+            link_cell = f"[↗]({link})" if link else "—"
             topic_safe = topic.replace("|", "\\|")
-            author_safe = str(author).replace("|", "\\|")
-            lines.append(
-                f"| {idx} | {date} | {author_safe} | {topic_safe} | {files} |"
+            body.append(
+                f"| {idx} | {date} | {topic_safe} | {files} | {link_cell} |"
             )
 
+        lines: List[str] = ["## Посты канала"]
+        legend = _posts_table_legend(body)
+        if legend:
+            lines.extend(["", legend])
+        lines.extend(body)
         lines.append("")
         return lines
 

@@ -755,7 +755,7 @@ class TestKnowledgeBaseBuilderBuild:
         index_path = next(a for a in artifacts if a.endswith(INDEX_FILENAME))
         content = Path(index_path).read_text(encoding="utf-8")
         assert "## Посты канала" in content
-        assert "| № | Дата | Автор | О чём | Файлы |" in content
+        assert "| № | Дата | О чём | Файлы | ↗ |" in content
         # Все 3 поста в таблице
         assert "Выпуск №1: приветствие" in content
         assert "Выпуск №2: обсуждение" in content
