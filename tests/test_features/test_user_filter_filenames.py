@@ -120,13 +120,24 @@ class TestFilenameConvention:
                      UserFilter.make(MODE_INCLUDE, [111, 222], NAMES))
         assert "only_2_users_" in name
 
-    def test_include_single_keeps_old_name(self, db_three, tmp_path):
-        """Обратная совместимость: один выбранный — имя как раньше."""
+    def test_include_single_uses_name(self, db_three, tmp_path):
+        """Р-3: один выбранный — «only_Имя», а не голое имя без слова."""
         name = _name(db_three, tmp_path,
                      UserFilter.make(MODE_INCLUDE, [111], NAMES),
                      username=NAMES[111])
-        assert "Мария Петрова" in name
-        assert "only_" not in name
+        assert "only_Мария Петрова" in name
+
+    def test_username_no_longer_doubles_the_filter(self, db_three, tmp_path):
+        """
+        Р-3: username в имя не идёт. Он заполнялся ровно тогда, когда фильтр
+        в режиме include с одним выбранным, — то есть называл того же
+        человека вторым способом, и имя получало его дважды.
+        """
+        uf = UserFilter.make(MODE_INCLUDE, [111], NAMES)
+        with_username = _name(db_three, tmp_path, uf, username=NAMES[111])
+        without       = _name(db_three, tmp_path, uf)
+        assert with_username == without
+        assert with_username.count("Мария Петрова") == 1
 
     def test_no_filter_name_unchanged(self, db_three, tmp_path):
         assert _name(db_three, tmp_path) == "Чат_fullchat.md"

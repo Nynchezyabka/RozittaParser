@@ -145,23 +145,6 @@ def _hide_row(row):
     return tuple(vals)
 
 
-def _filter_name_part(user_filter) -> str:
-    """
-    Фрагмент имени файла от фильтра участников (FEAT-6).
-
-    Пустая строка — когда фильтра нет или когда имя уже даёт существующий
-    user_part (ровно один выбранный в режиме "include").
-
-    Без этого фрагмента выгрузка с фильтром и полный архив того же чата
-    за тот же период получают одно имя, и вторая молча затирает первую
-    (правило I11 — разные настройки не должны давать одно имя файла).
-    """
-    if user_filter is None:
-        return ""
-    part = user_filter.name_part()
-    return f"_{part}" if part else ""
-
-
 def _apply_user_filter(rows, user_filter, stt_map=None):
     """
     Применяет фильтр участников к загруженным строкам.
@@ -295,10 +278,95 @@ def _group_by_merge(messages: List[tuple]) -> List[List[tuple]]:
     return groups
 
 
-def _topic_suffix(topic_id: Optional[int]) -> str:
-    """Возвращает строку '_topicN' или '' если topic_id is None."""
+# ── Сборка имени файла — единственная точка на все четыре формата ────────────
+#
+# Схема (docs/EXPORT_NAMING.md, раздел 6):
+#
+#     {чат}[_{топик}][_{kind}][_{фильтр}][_threads][_comments][_{период}]
+#
+# До этого сборка была расписана в десяти местах — четыре генератора на три
+# входа (generate, generate_by_posts, _generate_threads), каждый собирал имя
+# сам. Десять копий разошлись: путь «по постам» терял фрагмент фильтра
+# (дыра D-3), и выгрузка «пост 42 без Марии» затирала «пост 42 целиком».
+#
+# Порядок слотов — от общего к частному, чтобы файлы одного чата вставали
+# рядом при сортировке по имени.
 
-    return f"_topic{topic_id}" if topic_id is not None else ""
+# Виды, которые уже несут дату в себе. Метка периода к ним не дописывается
+# (Р-6): «Чат_day_2024-01-15_2024-01-01_to_2024-03-31.docx» — вторая дата
+# одинакова у всех файлов выгрузки и не различает ничего.
+_KIND_CARRIES_DATE = ("day_", "month_")
+
+
+def _build_base_name(
+    chat_title:       str,
+    *,
+    topic_name:       Optional[str] = None,
+    topic_id:         Optional[int] = None,
+    kind:             str           = "",
+    user_filter                     = None,
+    who:              Optional[str] = None,
+    user_filter_mode: str           = "none",
+    include_comments: bool          = False,
+    period_label:     str           = "",
+) -> str:
+    """
+    Имя файла без расширения — общее для DOCX, JSON, MD и HTML.
+
+    Args:
+        chat_title:       Название чата.
+        topic_name:       Имя топика форума; при отсутствии берётся topic_id.
+        topic_id:         Числовой ID топика — запасной вариант для имени.
+        kind:             Вид файла: "post_42", "day_2024-01-15",
+                          "month_2024-01". Пустая строка — единый файл;
+                          слова "archive" в имени больше нет (Р-5), оно было
+                          одинаково у всех таких выгрузок и не различало
+                          ничего.
+        user_filter:      UserFilter — «кто» в имени собирает только он (Р-3).
+                          Параметр username в генераторах на имя больше не
+                          влияет: он заполнялся ровно тогда же, когда фильтр
+                          в режиме include с одним выбранным, то есть был
+                          тем же фильтром, выраженным вторым способом.
+        who:              Запасное «кто» — только для режима веток, где
+                          участник приходит отдельным user_id, а не фильтром
+                          (открытый вопрос O-2). Идёт в имя, лишь когда
+                          фильтр своего фрагмента не дал: иначе имя назвало
+                          бы одного человека дважды. Без этого слота ветки
+                          всех участников чата получили бы одно имя.
+        user_filter_mode: "threads" добавляет слот threads.
+        include_comments: Добавляет слот comments.
+        period_label:     Метка периода; не пишется, если kind уже несёт дату.
+
+    Returns:
+        Имя без расширения и без точки. Никогда не пустое: чат есть всегда.
+    """
+    parts = [sanitize_filename(chat_title)]
+
+    if topic_name:
+        parts.append(sanitize_filename(topic_name))
+    elif topic_id is not None:
+        parts.append(f"topic{topic_id}")
+
+    if kind:
+        parts.append(kind)
+
+    filter_part = user_filter.name_part() if user_filter is not None else ""
+    if filter_part:
+        parts.append(filter_part)
+    elif who:
+        parts.append(sanitize_filename(who))
+
+    # I11: маркеры режима — выгрузки с разными настройками не должны
+    # получать одно имя и молча затирать друг друга.
+    if user_filter_mode == "threads":
+        parts.append("threads")
+    if include_comments:
+        parts.append("comments")
+
+    if period_label and not kind.startswith(_KIND_CARRIES_DATE):
+        parts.append(period_label)
+
+    return "_".join(parts)
 
 
 def _dedup_thread_messages(pairs: list) -> list:
@@ -392,6 +460,8 @@ class DocxGenerator:
         self._topic_id:     Optional[int] = None   # ← задача 1
         self._topic_name:   Optional[str] = None
         self._username:     Optional[str] = None
+        self._user_filter_mode: str       = "none"
+        self._include_comments: bool      = False
         # Транскрипции: {message_id: text} — загружаются в generate()
         self._transcriptions: Dict[int, str] = {}
 
@@ -441,9 +511,10 @@ class DocxGenerator:
         self._topic_name   = topic_name
         self._username     = username
         # I11: маркеры режима в имени файла — чтобы экспорт с разными
-        # настройками не перезаписывал предыдущий
-        self._name_suffix  = ("_threads" if user_filter_mode == "threads" else "")
-        self._name_suffix += "_comments" if include_comments else ""
+        # настройками не перезаписывал предыдущий. Складывает их
+        # _build_base_name(), здесь только сохраняем контекст для _build_path.
+        self._user_filter_mode = user_filter_mode
+        self._include_comments = include_comments
         os.makedirs(self._output_dir, exist_ok=True)
 
         # Загружаем все транскрипции чата одним запросом
@@ -541,12 +612,17 @@ class DocxGenerator:
         from core.utils import sanitize_filename
 
         doc = Document()
-        user_label   = sanitize_filename(username or f"id_{user_id}")
-        name_parts   = [sanitize_filename(chat_title)]
-        if topic_name:
-            name_parts.append(sanitize_filename(topic_name))
-        name_parts  += [user_label, "threads", period_label]
-        out_path     = Path(self._output_dir) / ("_".join(name_parts) + ".docx")
+        user_label = sanitize_filename(username or f"id_{user_id}")
+        base = _build_base_name(
+            chat_title,
+            topic_name       = topic_name,
+            topic_id         = topic_id,
+            user_filter      = self._user_filter,
+            who              = user_label,
+            user_filter_mode = "threads",
+            period_label     = period_label,
+        )
+        out_path = Path(self._output_dir) / f"{base}.docx"
 
         doc.add_heading(
             f"{chat_title} — ветки с {username or user_label}",
@@ -628,7 +704,7 @@ class DocxGenerator:
         for group in _group_by_merge(messages):       # ← задача 5
             self._add_group_to_doc(doc, group)
 
-        file_path = self._build_path("archive")
+        file_path = self._build_path()
         self._save_doc(doc, file_path)
         self._log(f"  ✅ {os.path.basename(file_path)} ({len(messages)} сообщений)")
         return [file_path]
@@ -1045,42 +1121,32 @@ class DocxGenerator:
     # Вспомогательные методы
     # ------------------------------------------------------------------
 
-    def _build_path(self, kind: str) -> str:
+    def _build_path(self, kind: str = "") -> str:
         """
         Строит полный путь к DOCX-файлу.
 
-        Формат имени файла (приоритет):
-        1. Если есть topic_name:   <чат>_<topic_name>_<kind>_<period>.docx
-        2. Если есть username:     <чат>_<username>_<kind>_<period>.docx
-        3. Если есть topic_id:     <чат>_topic<N>_<kind>_<period>.docx
-        4. Иначе:                  <чат>_<kind>_<period>.docx
+        Имя собирает общая `_build_base_name()` — та же, что у трёх
+        остальных форматов. Здесь остаётся только расширение и папка.
 
         Args:
-            kind: Тип файла ("archive", "day_2025-01-15", "post_42" и т.д.).
+            kind: Вид файла: "day_2025-01-15", "month_2025-01", "post_42".
+                  Пустая строка — единый файл (Р-5: слова "archive" в имени
+                  больше нет).
 
         Returns:
             Абсолютный путь к файлу.
-
-             старый вариант (не удалять пока):
-        
-
-        safe_title = sanitize_filename(self._chat_title)
-        topic_sfx  = _topic_suffix(self._topic_id)
-        if self._topic_name:
-            filename = f"{safe_title}_{self._topic_name}_{kind}_{self._period_label}.docx"
-        else:
-            filename   = f"{safe_title}{topic_sfx}_{kind}_{self._period_label}.docx"
-        return os.path.join(self._output_dir, filename) 
-     """
-
-        safe_title   = sanitize_filename(self._chat_title)
-        topic_part   = f"_{sanitize_filename(self._topic_name)}" if self._topic_name \
-                    else (_topic_suffix(self._topic_id) if self._topic_id else "")
-        user_part    = f"_{sanitize_filename(self._username)}" if self._username else ""
-        user_part += _filter_name_part(self._user_filter)
-        mode_part    = getattr(self, "_name_suffix", "")  # I11
-        filename     = f"{safe_title}{topic_part}{user_part}{mode_part}_{kind}_{self._period_label}.docx"
-        return os.path.join(self._output_dir, filename)
+        """
+        base = _build_base_name(
+            self._chat_title,
+            topic_name       = self._topic_name,
+            topic_id         = self._topic_id,
+            kind             = kind,
+            user_filter      = self._user_filter,
+            user_filter_mode = self._user_filter_mode,
+            include_comments = self._include_comments,
+            period_label     = self._period_label,
+        )
+        return os.path.join(self._output_dir, f"{base}.docx")
 
     def _save_doc(self, doc: Document, file_path: str) -> None:
         """
@@ -1195,15 +1261,15 @@ class JsonGenerator:
 
         stt_map:   dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
         rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
-        safe_title = sanitize_filename(chat_title)
-        topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
-            else (_topic_suffix(topic_id) if topic_id else "")
-        user_part  = f"_{sanitize_filename(username)}" if username else ""
-        user_part += _filter_name_part(self._user_filter)
-        # I11: маркеры режима — файлы с разными настройками не перезаписываются
-        mode_part  = ("_threads" if user_filter_mode == "threads" else "")
-        mode_part += "_comments" if include_comments else ""
-        base_name  = f"{safe_title}{topic_part}{user_part}{mode_part}_{period_label}"
+        base_name = _build_base_name(
+            chat_title,
+            topic_name       = topic_name,
+            topic_id         = topic_id,
+            user_filter      = self._user_filter,
+            user_filter_mode = user_filter_mode,
+            include_comments = include_comments,
+            period_label     = period_label,
+        )
 
         # ── Без разбивки: один файл ────────────────────────────────────
         if not ai_split:
@@ -1302,11 +1368,16 @@ class JsonGenerator:
             records.append(rec)
 
         user_label = sanitize_filename(username or f"id_{user_id}")
-        name_parts = [sanitize_filename(chat_title)]
-        if topic_name:
-            name_parts.append(sanitize_filename(topic_name))
-        name_parts += [user_label, "threads", period_label]
-        out_path = Path(self._output_dir) / ("_".join(name_parts) + ".json")
+        base_name = _build_base_name(
+            chat_title,
+            topic_name       = topic_name,
+            topic_id         = topic_id,
+            user_filter      = self._user_filter,
+            who              = user_label,
+            user_filter_mode = "threads",
+            period_label     = period_label,
+        )
+        out_path = Path(self._output_dir) / f"{base_name}.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
             json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1351,8 +1422,6 @@ class JsonGenerator:
 
         stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
         rows, stt_map = _apply_comment_filter(rows, self._user_filter, stt_map)
-        safe_title = sanitize_filename(chat_title)
-        mode_part  = "_comments" if include_comments else ""
 
         posts = [r for r in rows if not r[_COL_IS_COMMENT]]
         if not posts:
@@ -1375,10 +1444,14 @@ class JsonGenerator:
                     for c in comments_by_post.get(pid, [])
                 ],
             }]
-            out_path = os.path.join(
-                self._output_dir,
-                f"{safe_title}_post_{pid}{mode_part}_{period_label}.json",
+            base_name = _build_base_name(
+                chat_title,
+                kind             = f"post_{pid}",
+                user_filter      = self._user_filter,
+                include_comments = include_comments,
+                period_label     = period_label,
             )
+            out_path = os.path.join(self._output_dir, f"{base_name}.json")
             self._write_json(out_path, payload, log)
             out_paths.append(out_path)
 
@@ -1488,15 +1561,15 @@ class MarkdownGenerator:
 
         stt_map:    dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
         rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
-        safe_title = sanitize_filename(chat_title)
-        topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
-            else (_topic_suffix(topic_id) if topic_id else "")
-        user_part  = f"_{sanitize_filename(username)}" if username else ""
-        user_part += _filter_name_part(self._user_filter)
-        # I11: маркеры режима — файлы с разными настройками не перезаписываются
-        mode_part  = ("_threads" if user_filter_mode == "threads" else "")
-        mode_part += "_comments" if include_comments else ""
-        base_name  = f"{safe_title}{topic_part}{user_part}{mode_part}_{period_label}"
+        base_name = _build_base_name(
+            chat_title,
+            topic_name       = topic_name,
+            topic_id         = topic_id,
+            user_filter      = self._user_filter,
+            user_filter_mode = user_filter_mode,
+            include_comments = include_comments,
+            period_label     = period_label,
+        )
 
         header = f"# {chat_title}\n\n"
 
@@ -1585,8 +1658,6 @@ class MarkdownGenerator:
 
         stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
         rows, stt_map = _apply_comment_filter(rows, self._user_filter, stt_map)
-        safe_title = sanitize_filename(chat_title)
-        mode_part  = "_comments" if include_comments else ""
         # I13: карта id→автор для маркеров «в ответ на»
         id2name = {r[_COL_MESSAGE_ID]: (r[_COL_USERNAME] or f"id:{r[_COL_USER_ID]}")
                    for r in rows}
@@ -1624,10 +1695,14 @@ class MarkdownGenerator:
                         reply_author=id2name.get(c[_COL_REPLY_TO]),
                     ))
 
-            out_path = os.path.join(
-                self._output_dir,
-                f"{safe_title}_post_{pid}{mode_part}_{period_label}.md",
+            base_name = _build_base_name(
+                chat_title,
+                kind             = f"post_{pid}",
+                user_filter      = self._user_filter,
+                include_comments = include_comments,
+                period_label     = period_label,
             )
+            out_path = os.path.join(self._output_dir, f"{base_name}.md")
             self._write_md(out_path, lines, log)
             out_paths.append(out_path)
 
@@ -1669,11 +1744,16 @@ class MarkdownGenerator:
             log(f"Thread MD: {len(deduped)} уникальных сообщений")
 
         user_label = sanitize_filename(username or f"id_{user_id}")
-        name_parts = [sanitize_filename(chat_title)]
-        if topic_name:
-            name_parts.append(sanitize_filename(topic_name))
-        name_parts += [user_label, "threads", period_label]
-        out_path = Path(self._output_dir) / ("_".join(name_parts) + ".md")
+        base_name = _build_base_name(
+            chat_title,
+            topic_name       = topic_name,
+            topic_id         = topic_id,
+            user_filter      = self._user_filter,
+            who              = user_label,
+            user_filter_mode = "threads",
+            period_label     = period_label,
+        )
+        out_path = Path(self._output_dir) / f"{base_name}.md"
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         user_display = username or user_label
@@ -1969,15 +2049,15 @@ class HtmlGenerator:
 
         stt_map:    dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
         rows, stt_map = _apply_user_filter(rows, self._user_filter, stt_map)
-        safe_title  = sanitize_filename(chat_title)
-        topic_part = f"_{sanitize_filename(topic_name)}" if topic_name \
-            else (_topic_suffix(topic_id) if topic_id else "")
-        user_part  = f"_{sanitize_filename(username)}" if username else ""
-        user_part += _filter_name_part(self._user_filter)
-        # I11: маркеры режима — файлы с разными настройками не перезаписываются
-        mode_part  = ("_threads" if user_filter_mode == "threads" else "")
-        mode_part += "_comments" if include_comments else ""
-        base_name  = f"{safe_title}{topic_part}{user_part}{mode_part}_{period_label}"
+        base_name = _build_base_name(
+            chat_title,
+            topic_name       = topic_name,
+            topic_id         = topic_id,
+            user_filter      = self._user_filter,
+            user_filter_mode = user_filter_mode,
+            include_comments = include_comments,
+            period_label     = period_label,
+        )
         h_title     = html_lib.escape(chat_title)
 
         total    = len(rows)
@@ -2124,11 +2204,16 @@ class HtmlGenerator:
 
         body = "\n".join(body_parts)
         user_label = sanitize_filename(username or f"id_{user_id}")
-        name_parts = [sanitize_filename(chat_title)]
-        if topic_name:
-            name_parts.append(sanitize_filename(topic_name))
-        name_parts += [user_label, "threads", period_label]
-        out_path = Path(self._output_dir) / ("_".join(name_parts) + ".html")
+        base_name = _build_base_name(
+            chat_title,
+            topic_name       = topic_name,
+            topic_id         = topic_id,
+            user_filter      = self._user_filter,
+            who              = user_label,
+            user_filter_mode = "threads",
+            period_label     = period_label,
+        )
+        out_path = Path(self._output_dir) / f"{base_name}.html"
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         h_title = html_lib.escape(
@@ -2267,9 +2352,7 @@ class HtmlGenerator:
 
         stt_map: dict[int, str] = self._db.get_transcriptions_for_chat(chat_id)
         rows, stt_map = _apply_comment_filter(rows, self._user_filter, stt_map)
-        safe_title = sanitize_filename(chat_title)
         h_title    = html_lib.escape(chat_title)
-        mode_part  = "_comments" if include_comments else ""
         row_dict   = {row[_COL_MESSAGE_ID]: row for row in rows}
 
         posts = [r for r in rows if not r[_COL_IS_COMMENT]]
@@ -2290,10 +2373,14 @@ class HtmlGenerator:
             for c in comments_by_post.get(pid, []):
                 blocks.append(self._format_message(
                     c, stt_map.get(c[_COL_MESSAGE_ID]), row_dict))
-            out_path = os.path.join(
-                self._output_dir,
-                f"{safe_title}_post_{pid}{mode_part}_{period_label}.html",
+            base_name = _build_base_name(
+                chat_title,
+                kind             = f"post_{pid}",
+                user_filter      = self._user_filter,
+                include_comments = include_comments,
+                period_label     = period_label,
             )
+            out_path = os.path.join(self._output_dir, f"{base_name}.html")
             self._write_html(out_path, f"{h_title} — пост #{pid}",
                              blocks, len(blocks), log)
             out_paths.append(out_path)
