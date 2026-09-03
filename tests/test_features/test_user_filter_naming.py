@@ -29,10 +29,21 @@ class TestNamePart:
     def test_no_filter_gives_empty(self):
         assert NO_FILTER.name_part() == ""
 
-    def test_include_single_defers_to_existing_user_part(self):
-        """Один выбранный — имя подставит существующий user_part, не дублируем."""
+    def test_include_single_names_the_person(self):
+        """
+        Р-3: один выбранный называется прямо, а не через отдельный username.
+
+        Раньше здесь была пустая строка, и «кто» в имя подставлял параметр
+        username генераторов. В пути «по постам» никакого username не было —
+        выгрузка поста с фильтром затирала выгрузку того же поста целиком.
+        """
         uf = UserFilter.make(MODE_INCLUDE, [111], NAMES)
-        assert uf.name_part() == ""
+        assert uf.name_part() == "only_Мария Петрова"
+
+    def test_include_single_without_names_falls_back_to_hash(self):
+        """Имён не передали — набор всё равно обязан отличаться от других."""
+        uf = UserFilter.make(MODE_INCLUDE, [111])
+        assert uf.name_part().startswith("only_1_users_")
 
     def test_include_multi_uses_count(self):
         uf = UserFilter.make(MODE_INCLUDE, [111, 222, 333], NAMES)

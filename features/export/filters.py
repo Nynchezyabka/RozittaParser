@@ -185,10 +185,17 @@ class UserFilter:
         Соглашение проекта: служебные слова английские (ср. threads, comments,
         alltime), имена участников — данные, остаются как есть.
 
-            include, 1 выбран   → ""  (имя уже подставит существующий user_part)
+            include, 1 выбран   → "only_Мария"
             include, 2 и больше → "only_3_users_7f2a"
             exclude, 1 выбран   → "except_Мария"
             exclude, 2 и больше → "except_2_users_7f2a"
+
+        Р-3: раньше случай «include, 1 выбран» отдавал пустую строку —
+        имя подставлял отдельный параметр username генераторов. Два способа
+        сказать одно и то же: username заполнялся ровно тогда, когда фильтр
+        в режиме include и отмечен ровно один. В пути «по постам» никакого
+        username не было, и правило превращалось в дыру — выгрузка одного
+        поста с фильтром затирала выгрузку того же поста целиком (D-3).
         """
         if not self.is_active:
             return ""
@@ -196,8 +203,8 @@ class UserFilter:
         n = len(self.ids)
 
         if self.mode == MODE_INCLUDE:
-            if n == 1:
-                return ""
+            if n == 1 and self.names:
+                return f"only_{sanitize_filename(self.names[0])}"
             return f"only_{n}_users_{self.hash4()}"
 
         if n == 1 and self.names:
