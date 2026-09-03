@@ -327,7 +327,7 @@ NO_FILTER                        # синглтон «фильтра нет»
 ### FEAT-6: конвенция имён файлов
 
 Служебные слова английские — как существующие `threads`, `comments`,
-`fullchat`, `_to_`. Имена участников — данные, остаются как есть.
+`alltime`, `_to_`. Имена участников — данные, остаются как есть.
 
 | Фильтр | Фрагмент |
 |--------|----------|
@@ -1072,7 +1072,9 @@ chat_dict = {
 class ExportParams:
     chat_id:          int
     chat_title:       str
-    period_label:     str           = "fullchat"
+    period_label:     str           = "alltime"    # N-2: в имени файла
+                                                   # разворачивается в
+                                                   # alltime_<min>_to_<max>
     split_mode:       str           = "none"       # "none" | "day" | "month" | "post"
     topic_id:         Optional[int] = None
     user_id:          Optional[int] = None
