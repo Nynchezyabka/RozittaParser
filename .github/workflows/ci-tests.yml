@@ -53,8 +53,14 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: pytest tests/ --tb=short -q
 
+      # Выгрузка покрытия — отчёт, а не результат тестов, и решать судьбу
+      # сборки она не должна. Без continue-on-error шаг ронял весь job при
+      # зелёных 1145 тестах: например когда CODACY_PROJECT_TOKEN не задан
+      # или протух. Красный CI по такой причине читается как «тесты упали»
+      # и в следующий раз его просто перестанут смотреть.
       - name: Upload coverage to Codacy
         if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
         uses: codacy/codacy-coverage-reporter-action@v1.3.0
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
