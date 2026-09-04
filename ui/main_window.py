@@ -1806,7 +1806,26 @@ class ParticipantsDialog(QDialog):
 
 class LogoutWorker(QThread):
     """
-    Выход из аккаунта Telegram: client.log_out() + удаление session-файла.
+    Выход: отключиться и забыть session-файл на этом компьютере.
+
+    ⚠️ Чего этот воркер по умолчанию НЕ делает — `client.log_out()`.
+
+    `log_out()` завершает **авторизацию на серверах Telegram**, а не сеанс
+    приложения. При импорте из tdata приложение работает на том же ключе
+    авторизации, что и Telegram Desktop: авторизация одна на двоих. Убивая
+    свою, оно убивает десктоп — у человека с единственным устройством код
+    входа приходить становится некуда. Ровно это и словил тестировщик
+    3 сентября 2026, нажав кнопку с подписью «Выйти».
+
+    Поэтому обычный выход локальный: отключиться, удалить `.session`.
+    Авторизация аккаунта не трогается — при желании её видно и снимается
+    в самом Telegram, в списке устройств.
+
+    `terminate_session=True` возвращает прежнее поведение. Ни один элемент
+    интерфейса его пока не включает: отдельный пункт с честным
+    предупреждением — отдельная задача (правило #27 — интерфейс не
+    обещает того, чего нет; здесь обратное — код не делает того, о чём
+    интерфейс не предупредил).
 
     Signals:
         logout_done()      — успешный выход (session удалена)
@@ -1818,9 +1837,11 @@ class LogoutWorker(QThread):
     log_message  = Signal(str)
     error        = Signal(str)
 
-    def __init__(self, cfg: AppConfig, parent=None):
+    def __init__(self, cfg: AppConfig, parent=None,
+                 terminate_session: bool = False):
         super().__init__(parent)
         self._cfg = cfg
+        self._terminate_session = terminate_session
 
     def run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -1840,10 +1861,17 @@ class LogoutWorker(QThread):
         client = AuthService.build_client(cfg)
         try:
             await client.connect()
-            await client.log_out()
-            self.log_message.emit("✅ Сессия завершена на сервере")
+            if self._terminate_session:
+                await client.log_out()
+                self.log_message.emit("✅ Авторизация завершена на сервере")
+            else:
+                # Только разрываем соединение. log_out() здесь убил бы
+                # авторизацию Telegram целиком — вместе с Telegram Desktop,
+                # если сессия пришла из tdata (см. docstring класса).
+                self.log_message.emit(
+                    "🔌 Отключаюсь (авторизацию Telegram не трогаю)")
         except Exception as exc:
-            self.log_message.emit(f"⚠️ log_out error (продолжаем): {exc}")
+            self.log_message.emit(f"⚠️ ошибка отключения (продолжаем): {exc}")
         finally:
             try:
                 # client.disconnect() may be a coroutine or a regular function depending on
@@ -2087,6 +2115,13 @@ class MainWindow(QMainWindow):
         self._logout_btn = QPushButton("⏻  Выйти")
         self._logout_btn.setVisible(False)
         self._logout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Подпись «Выйти» читается как «выйти из приложения» — так теперь и
+        # работает. Подсказка проговаривает границу явно: раньше эта кнопка
+        # завершала авторизацию Telegram целиком, вместе с Desktop.
+        self._logout_btn.setToolTip(
+            "Забыть сессию на этом компьютере.\n"
+            "Авторизация Telegram останется — её видно в списке устройств."
+        )
         self._logout_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: rgba(220, 50, 50, 0.15);
@@ -2545,7 +2580,10 @@ class MainWindow(QMainWindow):
         self._sidebar_chat_name.setText("не выбран")
         self._auth_screen.reset()  # разблокировать форму и кнопку "Войти"
         self._set_step(0)
-        self._log.append_success("✅ Выход выполнен. Авторизуйтесь снова.")
+        self._log.append_success(
+            "✅ Сессия забыта на этом компьютере. Авторизация Telegram цела — "
+            "снять её можно в самом Telegram, в списке устройств."
+        )
         self._show_toast("Выход выполнен", "success")
 
     def _on_logout_error(self, message: str) -> None:
