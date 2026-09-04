@@ -202,21 +202,36 @@ class AuthWorker(QThread):
             return
 
         # sign_in — async @staticmethod, возвращает User | None
-        user = await AuthService.sign_in(
-            self._client,
-            phone_provider    = self._provide_phone,
-            code_provider     = self._provide_code,
-            password_provider = self._provide_password,
-            log               = lambda m: self.log_message.emit(m),
-        )
-
-        # Отключаем client ЗДЕСЬ, в event loop воркера — это единственный безопасный способ
-        # снять SQLite-блокировку сессии ДО того, как MainWindow запустит ChatsWorker.
-        # Передавать живой client в MainWindow не нужно: ChatsWorker создаёт свой.
+        #
+        # Отключение обязано быть в finally, а не строкой после вызова.
+        # sign_in бросает при мёртвом прокси, неверном коде, FloodWait —
+        # и раньше в этих случаях исключение улетало в run(), минуя
+        # disconnect(). Клиент оставался с открытым SQLite-соединением
+        # session-файла, и следующая попытка входа или выход падали с
+        # «database is locked». Ровно это ловил тестировщик, переключая
+        # прокси и VPN: каждая неудачная попытка оставляла захват файла.
+        #
+        # Отключаемся ЗДЕСЬ, в event loop воркера — единственный безопасный
+        # способ снять блокировку до того, как MainWindow запустит
+        # ChatsWorker (правило #9). Живой client наверх не передаётся:
+        # ChatsWorker создаёт свой.
         try:
-            await self._client.disconnect()
-        except Exception:
-            pass
+            user = await AuthService.sign_in(
+                self._client,
+                phone_provider    = self._provide_phone,
+                code_provider     = self._provide_code,
+                password_provider = self._provide_password,
+                log               = lambda m: self.log_message.emit(m),
+            )
+        finally:
+            try:
+                # Таймаут: disconnect() дожидается фоновых задач, а при
+                # мёртвом прокси они не завершаются — воркер повис бы,
+                # так и не отпустив файл.
+                await asyncio.wait_for(self._client.disconnect(), timeout=5.0)
+            except Exception:
+                logger.warning("AuthWorker: disconnect не удался",
+                               exc_info=True)
 
         if user is None:
             self.auth_complete.emit(None, None)

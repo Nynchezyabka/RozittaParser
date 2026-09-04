@@ -36,10 +36,11 @@ import asyncio
 import logging
 import os
 import tempfile
+import time
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
-from PySide6.QtGui import QCloseEvent, QColor, QFont
+from PySide6.QtGui import QCloseEvent, QColor, QDesktopServices, QFont
 from PySide6.QtMultimedia import QSoundEffect
 
 from PySide6.QtWidgets import (
@@ -1806,7 +1807,26 @@ class ParticipantsDialog(QDialog):
 
 class LogoutWorker(QThread):
     """
-    Выход из аккаунта Telegram: client.log_out() + удаление session-файла.
+    Выход: отключиться и забыть session-файл на этом компьютере.
+
+    ⚠️ Чего этот воркер по умолчанию НЕ делает — `client.log_out()`.
+
+    `log_out()` завершает **авторизацию на серверах Telegram**, а не сеанс
+    приложения. При импорте из tdata приложение работает на том же ключе
+    авторизации, что и Telegram Desktop: авторизация одна на двоих. Убивая
+    свою, оно убивает десктоп — у человека с единственным устройством код
+    входа приходить становится некуда. Ровно это и словил тестировщик
+    3 сентября 2026, нажав кнопку с подписью «Выйти».
+
+    Поэтому обычный выход локальный: отключиться, удалить `.session`.
+    Авторизация аккаунта не трогается — при желании её видно и снимается
+    в самом Telegram, в списке устройств.
+
+    `terminate_session=True` возвращает прежнее поведение. Ни один элемент
+    интерфейса его пока не включает: отдельный пункт с честным
+    предупреждением — отдельная задача (правило #27 — интерфейс не
+    обещает того, чего нет; здесь обратное — код не делает того, о чём
+    интерфейс не предупредил).
 
     Signals:
         logout_done()      — успешный выход (session удалена)
@@ -1818,9 +1838,11 @@ class LogoutWorker(QThread):
     log_message  = Signal(str)
     error        = Signal(str)
 
-    def __init__(self, cfg: AppConfig, parent=None):
+    def __init__(self, cfg: AppConfig, parent=None,
+                 terminate_session: bool = False):
         super().__init__(parent)
         self._cfg = cfg
+        self._terminate_session = terminate_session
 
     def run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -1840,10 +1862,17 @@ class LogoutWorker(QThread):
         client = AuthService.build_client(cfg)
         try:
             await client.connect()
-            await client.log_out()
-            self.log_message.emit("✅ Сессия завершена на сервере")
+            if self._terminate_session:
+                await client.log_out()
+                self.log_message.emit("✅ Авторизация завершена на сервере")
+            else:
+                # Только разрываем соединение. log_out() здесь убил бы
+                # авторизацию Telegram целиком — вместе с Telegram Desktop,
+                # если сессия пришла из tdata (см. docstring класса).
+                self.log_message.emit(
+                    "🔌 Отключаюсь (авторизацию Telegram не трогаю)")
         except Exception as exc:
-            self.log_message.emit(f"⚠️ log_out error (продолжаем): {exc}")
+            self.log_message.emit(f"⚠️ ошибка отключения (продолжаем): {exc}")
         finally:
             try:
                 # client.disconnect() may be a coroutine or a regular function depending on
@@ -1876,15 +1905,49 @@ class LogoutWorker(QThread):
         session_file = str(cfg.session_path)
         if not session_file.endswith(".session"):
             session_file += ".session"
-        try:
-            if os.path.exists(session_file):
-                os.remove(session_file)
-                self.log_message.emit("🗑 Session-файл удалён")
-        except OSError as exc:
-            self.error.emit(f"Не удалось удалить session-файл: {exc}")
+        if not self._remove_session_file(session_file):
             return
 
         self.logout_done.emit()
+
+    # Сколько раз пробовать удалить session-файл и с какой паузой.
+    # Полсекунды суммарно: дескриптор, который держат дольше, держат
+    # всерьёз, и ждать его молча — хуже, чем сказать об этом.
+    _RM_ATTEMPTS = 5
+    _RM_PAUSE_S  = 0.1
+
+    def _remove_session_file(self, session_file: str) -> bool:
+        """
+        Удаляет session-файл, переживая задержавшийся дескриптор.
+
+        Windows не даёт удалить файл, пока его кто-то держит открытым, и
+        отдаёт PermissionError. SQLite-соединение закрывается строкой выше,
+        но освобождение дескриптора не мгновенно — с первой попытки удаление
+        иногда не проходит, и выход раньше падал целиком.
+
+        Returns:
+            True — файла больше нет (или его и не было).
+            False — не удалось; ошибка уже отправлена в error.
+        """
+        last_exc: Optional[OSError] = None
+        for attempt in range(self._RM_ATTEMPTS):
+            try:
+                if not os.path.exists(session_file):
+                    return True
+                os.remove(session_file)
+                self.log_message.emit("🗑 Session-файл удалён")
+                return True
+            except OSError as exc:
+                last_exc = exc
+                if attempt + 1 < self._RM_ATTEMPTS:
+                    time.sleep(self._RM_PAUSE_S)
+
+        self.error.emit(
+            f"Не удалось удалить session-файл: {last_exc}. "
+            "Скорее всего он ещё занят — закройте приложение и удалите "
+            f"вручную: {session_file}"
+        )
+        return False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1909,6 +1972,9 @@ class MainWindow(QMainWindow):
         self._active_workers: list[QThread] = []
         self._current_step: int = 0
         self._last_collect_result = None  # сохраняется в _run_stt для _on_stt_finished_slot
+        # Папка последней успешной выгрузки — для кнопки «Открыть папку».
+        # Берётся из пути созданного файла, а не собирается из названия чата.
+        self._output_folder: Optional[str] = None
 
         self._setup_window()
         self._build_ui()
@@ -2084,6 +2150,13 @@ class MainWindow(QMainWindow):
         self._logout_btn = QPushButton("⏻  Выйти")
         self._logout_btn.setVisible(False)
         self._logout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Подпись «Выйти» читается как «выйти из приложения» — так теперь и
+        # работает. Подсказка проговаривает границу явно: раньше эта кнопка
+        # завершала авторизацию Telegram целиком, вместе с Desktop.
+        self._logout_btn.setToolTip(
+            "Забыть сессию на этом компьютере.\n"
+            "Авторизация Telegram останется — её видно в списке устройств."
+        )
         self._logout_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: rgba(220, 50, 50, 0.15);
@@ -2292,6 +2365,35 @@ class MainWindow(QMainWindow):
         """)
         btn_row.addWidget(self._start_btn, 1)
 
+        # Появляется только после успешной выгрузки: до неё открывать нечего,
+        # а папка чата может ещё не существовать. Прячется при следующем
+        # запуске — иначе повела бы к результату прошлого прогона.
+        self._open_folder_btn = QPushButton("📂  Открыть папку")
+        self._open_folder_btn.setFixedHeight(40)
+        self._open_folder_btn.setVisible(False)
+        self._open_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._open_folder_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {OVERLAY2_HEX};
+                border: 1px solid {ACCENT_ORANGE};
+                border-radius: {RADIUS_MD}px;
+                color: {ACCENT_ORANGE};
+                font-size: 13px;
+                font-weight: 600;
+                font-family: {FONT_FAMILY};
+                /* Поля скупые не для красоты: в ряду остаётся 234px, а с
+                   полями по 14 кнопке нужно 238 — подпись обрезалась бы. */
+                padding: 0 6px;
+            }}
+            QPushButton:hover {{
+                background-color: {ACCENT_SOFT_ORANGE};
+            }}
+            QPushButton:pressed {{
+                background-color: #3A2A10;
+            }}
+        """)
+        btn_row.addWidget(self._open_folder_btn, 0)
+
         self._stop_btn = QPushButton("⏹  Стоп")
         self._stop_btn.setFixedHeight(40)
         self._stop_btn.setVisible(False)
@@ -2370,6 +2472,11 @@ class MainWindow(QMainWindow):
         # StartBtn / StopBtn в правой панели
         self._start_btn.clicked.connect(self._on_start_btn_clicked)
         self._stop_btn.clicked.connect(self._on_stop_clicked)
+        # Правило #13: именованный метод, не лямбда — иначе UniqueConnection
+        # не сработает и обработчик подключится повторно.
+        self._open_folder_btn.clicked.connect(
+            self._on_open_folder_clicked, Qt.UniqueConnection
+        )
 
     # ──────────────────────────────────────────────────────────────────────
     # НАВИГАЦИЯ
@@ -2508,7 +2615,10 @@ class MainWindow(QMainWindow):
         self._sidebar_chat_name.setText("не выбран")
         self._auth_screen.reset()  # разблокировать форму и кнопку "Войти"
         self._set_step(0)
-        self._log.append_success("✅ Выход выполнен. Авторизуйтесь снова.")
+        self._log.append_success(
+            "✅ Сессия забыта на этом компьютере. Авторизация Telegram цела — "
+            "снять её можно в самом Telegram, в списке устройств."
+        )
         self._show_toast("Выход выполнен", "success")
 
     def _on_logout_error(self, message: str) -> None:
@@ -2612,6 +2722,74 @@ class MainWindow(QMainWindow):
     # СЛОТЫ: ПАРСИНГ
     # ──────────────────────────────────────────────────────────────────────
 
+    def _set_btn_row_done(self) -> None:
+        """
+        Ряд после успешной выгрузки: главная кнопка — «Открыть папку».
+
+        Панель шириной 308px не вмещает две подписанные кнопки: запуску
+        честно нужно 223px, «📂 Открыть папку» просит 232 при 274 доступных.
+        Поэтому меняются ролями — после выгрузки человек идёт смотреть файлы,
+        а не запускать заново, и главное действие выглядит главным.
+        Запуск остаётся на месте значком с подсказкой, а не исчезает.
+
+        Ширину держит setFixedWidth: растяжку в раскладке двигать не нужно,
+        остаток ряда и так достаётся папке — она единственная растяжимая,
+        когда запуск зафиксирован, а «Стоп» спрятан. Проверено мутацией:
+        снятая растяжка ничего не меняла, значит и ставить её нечестно.
+        """
+        self._start_btn.setText("▶")
+        self._start_btn.setFixedWidth(40)
+        self._start_btn.setToolTip("Начать экспорт заново")
+        self._open_folder_btn.setVisible(True)
+
+    def _set_btn_row_normal(self) -> None:
+        """Обычный ряд: запуск во всю ширину, папки нет."""
+        self._open_folder_btn.setVisible(False)
+        self._start_btn.setMinimumWidth(0)
+        self._start_btn.setMaximumWidth(16777215)
+        self._start_btn.setToolTip("")
+        self._reset_start_btn_text()
+
+    def _show_open_folder(self, paths: list) -> None:
+        """
+        Перестраивает ряд под результат: показывает «Открыть папку».
+
+        Папка берётся из первого созданного файла, а не собирается заново из
+        названия чата: имя чата проходит через sanitize_filename, и вторая
+        сборка легко разойдётся с первой — кнопка повела бы в несуществующую
+        папку (тот же класс расхождения, из-за которого CollectResult возит
+        db_path готовым).
+
+        Пустой список или исчезнувшая папка — ряд остаётся обычным:
+        интерфейс не обещает того, чего нет (правило #27).
+        """
+        self._output_folder = None
+
+        if not paths:
+            self._set_btn_row_normal()
+            return
+        folder = os.path.dirname(os.path.abspath(str(paths[0])))
+        if not os.path.isdir(folder):
+            self._set_btn_row_normal()
+            return
+
+        self._output_folder = folder
+        self._set_btn_row_done()
+
+    def _on_open_folder_clicked(self) -> None:
+        """Открывает папку выгрузки в файловом менеджере системы."""
+        folder = getattr(self, "_output_folder", None)
+        if not folder or not os.path.isdir(folder):
+            self._show_toast("Папка не найдена", "error")
+            self._set_btn_row_normal()
+            return
+
+        # QDesktopServices берёт на себя разницу между Explorer, Finder и
+        # xdg-open — сборка идёт под все три платформы (build_binaries.yml).
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(folder)):
+            logger.warning("не удалось открыть папку: %s", folder)
+            self._show_toast("Не удалось открыть папку", "error")
+
     def _reset_start_btn_text(self) -> None:
         """Подпись кнопки говорит о результате в момент нажатия."""
         self._start_btn.setText(
@@ -2689,6 +2867,9 @@ class MainWindow(QMainWindow):
         self._members_export_chat = params.chat or {}
 
         self._update_progress(0)
+        # Новый прогон — прошлая папка больше не результат этой кнопки,
+        # и ряд обязан вернуться к обычному виду до смены подписи ниже.
+        self._set_btn_row_normal()
         self._start_btn.setEnabled(False)
         self._start_btn.setText("⏳  СОБИРАЮ СПИСОК...")
         self._settings_screen.set_parsing(True)
@@ -2866,6 +3047,9 @@ class MainWindow(QMainWindow):
                 w.wait(30_000)  # max 30 сек (загрузка чатов может быть долгой)
 
         self._update_progress(0)
+        # Новый прогон — прошлая папка больше не результат этой кнопки,
+        # и ряд обязан вернуться к обычному виду до смены подписи ниже.
+        self._set_btn_row_normal()
         self._start_btn.setEnabled(False)
         self._start_btn.setText("⏳  ВЫПОЛНЯЕТСЯ...")
         self._stop_btn.setVisible(True)
@@ -3042,6 +3226,7 @@ class MainWindow(QMainWindow):
         self._start_btn.setEnabled(True)
         self._reset_start_btn_text()
         self._stop_btn.setVisible(False)
+        self._show_open_folder(paths)
         self._settings_screen.set_parsing(False)
         self._rozetta.set_state("success")
         count = len(paths)

@@ -34,9 +34,11 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
+          # libpulse0 — для QtMultimedia: MainWindow создаёт QSoundEffect, и
+          # без libpulse.so.0 импорт модуля падает ещё на сборе тестов.
           sudo apt-get install -y libegl1 libdbus-1-3 libxkbcommon-x11-0 libxcb-icccm4 \
             libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
-            libxcb-xinerama0 libxcb-xfixes0 libxcb-shape0
+            libxcb-xinerama0 libxcb-xfixes0 libxcb-shape0 libpulse0
 
       - name: Install dependencies
         run: pip install -r .github/workflows/requirements-test.txt
@@ -51,8 +53,14 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: pytest tests/ --tb=short -q
 
+      # Выгрузка покрытия — отчёт, а не результат тестов, и решать судьбу
+      # сборки она не должна. Без continue-on-error шаг ронял весь job при
+      # зелёных 1145 тестах: например когда CODACY_PROJECT_TOKEN не задан
+      # или протух. Красный CI по такой причине читается как «тесты упали»
+      # и в следующий раз его просто перестанут смотреть.
       - name: Upload coverage to Codacy
         if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
         uses: codacy/codacy-coverage-reporter-action@v1.3.0
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
