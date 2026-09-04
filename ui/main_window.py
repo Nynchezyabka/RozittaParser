@@ -36,6 +36,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import time
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
@@ -1904,15 +1905,49 @@ class LogoutWorker(QThread):
         session_file = str(cfg.session_path)
         if not session_file.endswith(".session"):
             session_file += ".session"
-        try:
-            if os.path.exists(session_file):
-                os.remove(session_file)
-                self.log_message.emit("🗑 Session-файл удалён")
-        except OSError as exc:
-            self.error.emit(f"Не удалось удалить session-файл: {exc}")
+        if not self._remove_session_file(session_file):
             return
 
         self.logout_done.emit()
+
+    # Сколько раз пробовать удалить session-файл и с какой паузой.
+    # Полсекунды суммарно: дескриптор, который держат дольше, держат
+    # всерьёз, и ждать его молча — хуже, чем сказать об этом.
+    _RM_ATTEMPTS = 5
+    _RM_PAUSE_S  = 0.1
+
+    def _remove_session_file(self, session_file: str) -> bool:
+        """
+        Удаляет session-файл, переживая задержавшийся дескриптор.
+
+        Windows не даёт удалить файл, пока его кто-то держит открытым, и
+        отдаёт PermissionError. SQLite-соединение закрывается строкой выше,
+        но освобождение дескриптора не мгновенно — с первой попытки удаление
+        иногда не проходит, и выход раньше падал целиком.
+
+        Returns:
+            True — файла больше нет (или его и не было).
+            False — не удалось; ошибка уже отправлена в error.
+        """
+        last_exc: Optional[OSError] = None
+        for attempt in range(self._RM_ATTEMPTS):
+            try:
+                if not os.path.exists(session_file):
+                    return True
+                os.remove(session_file)
+                self.log_message.emit("🗑 Session-файл удалён")
+                return True
+            except OSError as exc:
+                last_exc = exc
+                if attempt + 1 < self._RM_ATTEMPTS:
+                    time.sleep(self._RM_PAUSE_S)
+
+        self.error.emit(
+            f"Не удалось удалить session-файл: {last_exc}. "
+            "Скорее всего он ещё занят — закройте приложение и удалите "
+            f"вручную: {session_file}"
+        )
+        return False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
