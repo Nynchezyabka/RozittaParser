@@ -12,7 +12,8 @@
 
 🗺️ [Интерактивная карта проекта](https://nynchezyabka.github.io/RozittaParser/map.html) · 📖 [DeepWiki](https://deepwiki.com/Nynchezyabka/RozittaParser) · [🇬🇧 English below](#-rozitta-parser-english)
 
-![Главное окно](https://github.com/user-attachments/assets/6f46f659-6d82-4dc3-829f-c0fb71549783)
+![Главное окно](https://github.com/user-attachments/assets/1e45e9c7-5d7e-4fc0-85d7-05fe41c07f58)
+
 
 ---
 
