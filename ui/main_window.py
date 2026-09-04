@@ -39,7 +39,7 @@ import tempfile
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
-from PySide6.QtGui import QCloseEvent, QColor, QFont
+from PySide6.QtGui import QCloseEvent, QColor, QDesktopServices, QFont
 from PySide6.QtMultimedia import QSoundEffect
 
 from PySide6.QtWidgets import (
@@ -1909,6 +1909,9 @@ class MainWindow(QMainWindow):
         self._active_workers: list[QThread] = []
         self._current_step: int = 0
         self._last_collect_result = None  # сохраняется в _run_stt для _on_stt_finished_slot
+        # Папка последней успешной выгрузки — для кнопки «Открыть папку».
+        # Берётся из пути созданного файла, а не собирается из названия чата.
+        self._output_folder: Optional[str] = None
 
         self._setup_window()
         self._build_ui()
@@ -2292,6 +2295,35 @@ class MainWindow(QMainWindow):
         """)
         btn_row.addWidget(self._start_btn, 1)
 
+        # Появляется только после успешной выгрузки: до неё открывать нечего,
+        # а папка чата может ещё не существовать. Прячется при следующем
+        # запуске — иначе повела бы к результату прошлого прогона.
+        self._open_folder_btn = QPushButton("📂  Открыть папку")
+        self._open_folder_btn.setFixedHeight(40)
+        self._open_folder_btn.setVisible(False)
+        self._open_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._open_folder_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {OVERLAY2_HEX};
+                border: 1px solid {ACCENT_ORANGE};
+                border-radius: {RADIUS_MD}px;
+                color: {ACCENT_ORANGE};
+                font-size: 13px;
+                font-weight: 600;
+                font-family: {FONT_FAMILY};
+                /* Поля скупые не для красоты: в ряду остаётся 234px, а с
+                   полями по 14 кнопке нужно 238 — подпись обрезалась бы. */
+                padding: 0 6px;
+            }}
+            QPushButton:hover {{
+                background-color: {ACCENT_SOFT_ORANGE};
+            }}
+            QPushButton:pressed {{
+                background-color: #3A2A10;
+            }}
+        """)
+        btn_row.addWidget(self._open_folder_btn, 0)
+
         self._stop_btn = QPushButton("⏹  Стоп")
         self._stop_btn.setFixedHeight(40)
         self._stop_btn.setVisible(False)
@@ -2370,6 +2402,11 @@ class MainWindow(QMainWindow):
         # StartBtn / StopBtn в правой панели
         self._start_btn.clicked.connect(self._on_start_btn_clicked)
         self._stop_btn.clicked.connect(self._on_stop_clicked)
+        # Правило #13: именованный метод, не лямбда — иначе UniqueConnection
+        # не сработает и обработчик подключится повторно.
+        self._open_folder_btn.clicked.connect(
+            self._on_open_folder_clicked, Qt.UniqueConnection
+        )
 
     # ──────────────────────────────────────────────────────────────────────
     # НАВИГАЦИЯ
@@ -2612,6 +2649,74 @@ class MainWindow(QMainWindow):
     # СЛОТЫ: ПАРСИНГ
     # ──────────────────────────────────────────────────────────────────────
 
+    def _set_btn_row_done(self) -> None:
+        """
+        Ряд после успешной выгрузки: главная кнопка — «Открыть папку».
+
+        Панель шириной 308px не вмещает две подписанные кнопки: запуску
+        честно нужно 223px, «📂 Открыть папку» просит 232 при 274 доступных.
+        Поэтому меняются ролями — после выгрузки человек идёт смотреть файлы,
+        а не запускать заново, и главное действие выглядит главным.
+        Запуск остаётся на месте значком с подсказкой, а не исчезает.
+
+        Ширину держит setFixedWidth: растяжку в раскладке двигать не нужно,
+        остаток ряда и так достаётся папке — она единственная растяжимая,
+        когда запуск зафиксирован, а «Стоп» спрятан. Проверено мутацией:
+        снятая растяжка ничего не меняла, значит и ставить её нечестно.
+        """
+        self._start_btn.setText("▶")
+        self._start_btn.setFixedWidth(40)
+        self._start_btn.setToolTip("Начать экспорт заново")
+        self._open_folder_btn.setVisible(True)
+
+    def _set_btn_row_normal(self) -> None:
+        """Обычный ряд: запуск во всю ширину, папки нет."""
+        self._open_folder_btn.setVisible(False)
+        self._start_btn.setMinimumWidth(0)
+        self._start_btn.setMaximumWidth(16777215)
+        self._start_btn.setToolTip("")
+        self._reset_start_btn_text()
+
+    def _show_open_folder(self, paths: list) -> None:
+        """
+        Перестраивает ряд под результат: показывает «Открыть папку».
+
+        Папка берётся из первого созданного файла, а не собирается заново из
+        названия чата: имя чата проходит через sanitize_filename, и вторая
+        сборка легко разойдётся с первой — кнопка повела бы в несуществующую
+        папку (тот же класс расхождения, из-за которого CollectResult возит
+        db_path готовым).
+
+        Пустой список или исчезнувшая папка — ряд остаётся обычным:
+        интерфейс не обещает того, чего нет (правило #27).
+        """
+        self._output_folder = None
+
+        if not paths:
+            self._set_btn_row_normal()
+            return
+        folder = os.path.dirname(os.path.abspath(str(paths[0])))
+        if not os.path.isdir(folder):
+            self._set_btn_row_normal()
+            return
+
+        self._output_folder = folder
+        self._set_btn_row_done()
+
+    def _on_open_folder_clicked(self) -> None:
+        """Открывает папку выгрузки в файловом менеджере системы."""
+        folder = getattr(self, "_output_folder", None)
+        if not folder or not os.path.isdir(folder):
+            self._show_toast("Папка не найдена", "error")
+            self._set_btn_row_normal()
+            return
+
+        # QDesktopServices берёт на себя разницу между Explorer, Finder и
+        # xdg-open — сборка идёт под все три платформы (build_binaries.yml).
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(folder)):
+            logger.warning("не удалось открыть папку: %s", folder)
+            self._show_toast("Не удалось открыть папку", "error")
+
     def _reset_start_btn_text(self) -> None:
         """Подпись кнопки говорит о результате в момент нажатия."""
         self._start_btn.setText(
@@ -2689,6 +2794,9 @@ class MainWindow(QMainWindow):
         self._members_export_chat = params.chat or {}
 
         self._update_progress(0)
+        # Новый прогон — прошлая папка больше не результат этой кнопки,
+        # и ряд обязан вернуться к обычному виду до смены подписи ниже.
+        self._set_btn_row_normal()
         self._start_btn.setEnabled(False)
         self._start_btn.setText("⏳  СОБИРАЮ СПИСОК...")
         self._settings_screen.set_parsing(True)
@@ -2866,6 +2974,9 @@ class MainWindow(QMainWindow):
                 w.wait(30_000)  # max 30 сек (загрузка чатов может быть долгой)
 
         self._update_progress(0)
+        # Новый прогон — прошлая папка больше не результат этой кнопки,
+        # и ряд обязан вернуться к обычному виду до смены подписи ниже.
+        self._set_btn_row_normal()
         self._start_btn.setEnabled(False)
         self._start_btn.setText("⏳  ВЫПОЛНЯЕТСЯ...")
         self._stop_btn.setVisible(True)
@@ -3042,6 +3153,7 @@ class MainWindow(QMainWindow):
         self._start_btn.setEnabled(True)
         self._reset_start_btn_text()
         self._stop_btn.setVisible(False)
+        self._show_open_folder(paths)
         self._settings_screen.set_parsing(False)
         self._rozetta.set_state("success")
         count = len(paths)
