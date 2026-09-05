@@ -145,40 +145,53 @@ class TestMarkdownTopicSuffix:
 
 
 class TestFormatMessageStatic:
-    def test_format_message_basic(self):
+    """
+    Вызовы через экземпляр, а не через класс.
+
+    `_format_message` перестал быть @staticmethod: он берёт описание
+    картинки через self._db. Название класса оставлено прежним, чтобы не
+    рвать историю — но «Static» здесь теперь только память о прошлом.
+    """
+
+    @pytest.fixture
+    def gen(self, tmp_path):
+        with DBManager(":memory:") as db:
+            yield MarkdownGenerator(db=db, output_dir=str(tmp_path))
+
+    def test_format_message_basic(self, gen):
         row = (
             0, -100, 1, None, 1, "Bob",
             "2025-06-15T09:30:00", "Hello!", None, None, None,
             None, None, 0, None, None, None,
         )
-        result = MarkdownGenerator._format_message(row, None)
+        result = gen._format_message(row, None)
         assert "**[2025-06-15 09:30] Bob:**" in result
         assert "Hello!" in result
         assert "---" in result
 
-    def test_format_message_with_stt(self):
+    def test_format_message_with_stt(self, gen):
         row = (
             0, -100, 1, None, 1, "Alice",
             "2025-06-15T09:30:00", "", None, None, None,
             None, None, 0, None, None, None,
         )
-        result = MarkdownGenerator._format_message(row, "voice text here")
+        result = gen._format_message(row, "voice text here")
         assert "*(STT: voice text here)*" in result
 
-    def test_format_message_no_username_uses_id(self):
+    def test_format_message_no_username_uses_id(self, gen):
         row = (
             0, -100, 1, None, 42, None,
             "2025-06-15T09:30:00", "text", None, None, None,
             None, None, 0, None, None, None,
         )
-        result = MarkdownGenerator._format_message(row, None)
+        result = gen._format_message(row, None)
         assert "id:42" in result
 
-    def test_format_message_empty_date(self):
+    def test_format_message_empty_date(self, gen):
         row = (
             0, -100, 1, None, 1, "A",
             None, "text", None, None, None,
             None, None, 0, None, None, None,
         )
-        result = MarkdownGenerator._format_message(row, None)
+        result = gen._format_message(row, None)
         assert "—" in result

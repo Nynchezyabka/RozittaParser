@@ -76,6 +76,12 @@ from features.export.filters import (
     PLACEHOLDER_TEXT,
     UserFilter,
 )
+from features.vlm.api import (
+    description_field,
+    frame_for_docx_lines,
+    frame_for_html,
+    frame_for_markdown,
+)
 
 # Индексы колонок из DBManager.get_messages() / get_post_with_comments()
 # ==============================================================================
@@ -276,6 +282,34 @@ def _group_by_merge(messages: List[tuple]) -> List[List[tuple]]:
             groups.append([messages[i]])
             i += 1
     return groups
+
+
+def _image_description(gen, row) -> Optional[str]:
+    """
+    Описание картинки для строки, если оно есть (FEAT-5).
+
+    Карта грузится один раз на чат и живёт на генераторе. Сделано так, а не
+    ещё одной загрузкой в каждом входе: карту расшифровок грузят девять
+    мест, и добавлять к ним десятое-восемнадцатое значило бы удвоить ровно
+    то дублирование, которое CLAUDE.md уже числит в долгах.
+
+    chat_id берётся из самой строки — поэтому функция работает во всех
+    четырёх генераторах и не требует править ни одну сигнатуру входа
+    (правило #20: именно на правках сигнатур проект получил C2 и B6).
+
+    Returns:
+        Текст описания или None. Сырой, без рамки: рамку ставит формат,
+        каждый по-своему (features/vlm/api.py).
+    """
+    chat_id = row[_COL_CHAT_ID]
+    cache = getattr(gen, "_img_desc_cache", None)
+    if cache is None or cache[0] != chat_id:
+        try:
+            cache = (chat_id, gen._db.get_image_descriptions_for_chat(chat_id))
+        except Exception:                      # старая БД без таблицы
+            cache = (chat_id, {})
+        gen._img_desc_cache = cache
+    return cache[1].get(row[_COL_MESSAGE_ID])
 
 
 # ── Сборка имени файла — единственная точка на все четыре формата ────────────
@@ -1109,6 +1143,21 @@ class DocxGenerator:
                 if is_comment:
                     stt_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
 
+        # --- Описание изображения (FEAT-5) ---
+        caption, desc = frame_for_docx_lines(_image_description(self, msg))
+        if desc:
+            desc_p = doc.add_paragraph()
+            desc_label = desc_p.add_run(f"{caption} ")
+            desc_label.bold           = True
+            desc_label.font.size      = Pt(10)
+            desc_label.font.color.rgb = RGBColor(80, 80, 80)
+            desc_run = desc_p.add_run(desc)
+            desc_run.font.size        = Pt(10)
+            desc_run.font.color.rgb   = RGBColor(40, 40, 40)
+            desc_run.italic           = True
+            if is_comment:
+                desc_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
+
         # --- Разделитель (не для комментариев) ---
         if not is_comment:
             sep_p = doc.add_paragraph(_SEPARATOR)
@@ -1383,8 +1432,11 @@ class JsonGenerator:
             json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return [str(out_path)]
-    @staticmethod
-    def _make_record(row, stt_text: Optional[str]) -> dict:
+    def _make_record(self, row, stt_text: Optional[str]) -> dict:
+        # Метод экземпляра, а не @staticmethod: описание картинки берётся
+        # через self._db. Все вызовы и так шли через self, поэтому места
+        # вызова не менялись — ровно тот случай, который стережёт
+        # tools/check_signatures.py.
         return {
             "message_id": row[_COL_MESSAGE_ID],
             "date":       row[_COL_DATE] or None,
@@ -1395,6 +1447,9 @@ class JsonGenerator:
             "text":       row[_COL_TEXT] or None,
             "media_path": row[_COL_MEDIA_PATH] or None,
             "stt_text":   stt_text,
+            # Без рамки: JSON читает программа, поле уже отделено ключом.
+            "image_description": description_field(
+                _image_description(self, row)),
         }
 
     def generate_by_posts(
@@ -1790,10 +1845,15 @@ class MarkdownGenerator:
         out_path.write_text("\n".join(lines), encoding="utf-8")
         return [str(out_path)]
         
-    @staticmethod
-    def _format_message(row, stt_text: Optional[str],
+    def _format_message(self, row, stt_text: Optional[str],
                         reply_author: Optional[str] = None) -> str:
-        """Форматирует одно сообщение в Markdown-блок."""
+        """
+        Форматирует одно сообщение в Markdown-блок.
+
+        Метод экземпляра, а не @staticmethod: описание картинки берётся
+        через self._db. Все вызовы и так шли через self, места вызова не
+        менялись (правило #20, стережёт tools/check_signatures.py).
+        """
 
         raw_date = row[_COL_DATE] or ""
         date_str = raw_date[:16].replace("T", " ") if raw_date else "—"
@@ -1812,6 +1872,10 @@ class MarkdownGenerator:
             lines.append(text)
         if stt_text:
             lines.append(f"\n*(STT: {stt_text.strip()})*")
+        # Описание картинки — цитатой с пометкой (COMPONENTS.md §4.4).
+        frame = frame_for_markdown(_image_description(self, row))
+        if frame:
+            lines.append(frame)
         lines.append("\n---\n")
         return "\n".join(lines) + "\n"
 
@@ -1902,6 +1966,7 @@ _HTML_TEMPLATE = """\
   .msg-media a:hover {{ text-decoration: underline; }}
   .msg-img {{ margin-top: 8px; max-width: 100%; max-height: 400px; border-radius: 8px; display: block; cursor: pointer; }}
   .msg-stt {{ margin-top: 6px; font-size: 0.82rem; color: #90a0b0; font-style: italic; padding-left: 4px; border-left: 2px solid #3a4a5a; }}
+  .msg-image-desc {{ margin-top: 6px; font-size: 0.82rem; color: #b0a090; font-style: italic; padding-left: 4px; border-left: 2px solid #5a4a3a; }}
   .scroll-top {{
     position: fixed; bottom: 20px; right: 20px;
     background: #FF9500; color: #0e1117;
@@ -1957,7 +2022,7 @@ _HTML_MSG = """\
         <span class="date">{date}</span>
         {reply_badge}
       </div>
-      {quote_block}{text_block}{media_block}{stt_block}
+      {quote_block}{text_block}{media_block}{stt_block}{image_block}
     </div>
   </div>
 </div>
@@ -2187,6 +2252,8 @@ class HtmlGenerator:
                     f'<div class="msg-stt">🎙 {html_lib.escape(stt.strip())}</div>'
                 )
 
+            image_block = frame_for_html(_image_description(self, row))
+
             depth_class = f"depth-{min(depth, 5)}"
 
             body_parts.append(_HTML_MSG.format(
@@ -2200,6 +2267,7 @@ class HtmlGenerator:
                 text_block=text_block,
                 media_block=media_block,
                 stt_block=stt_block,
+                image_block=image_block,
             ))
 
         body = "\n".join(body_parts)
@@ -2325,6 +2393,7 @@ class HtmlGenerator:
             text_block    = text_block,
             media_block   = media_block,
             stt_block     = stt_block,
+            image_block   = frame_for_html(_image_description(self, row)),
         )
 
     def generate_by_posts(

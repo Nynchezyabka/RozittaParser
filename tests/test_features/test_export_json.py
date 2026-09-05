@@ -199,34 +199,49 @@ class TestJsonTopicSuffix:
 
 
 class TestMakeRecord:
-    def test_static_make_record(self):
+    """
+    Вызовы через экземпляр, а не через класс.
+
+    `_make_record` перестал быть @staticmethod: теперь он берёт описание
+    картинки через self._db. Места вызова в самом генераторе и так шли
+    через self, поэтому менять пришлось только тесты — ровно та картина,
+    что описана в BUG-20: приложение работает, падают тесты, зовущие
+    через класс.
+    """
+
+    @pytest.fixture
+    def gen(self, tmp_path):
+        with DBManager(":memory:") as db:
+            yield JsonGenerator(db=db, output_dir=str(tmp_path))
+
+    def test_static_make_record(self, gen):
         row = (
             0, -100, 42, None, 1, "alice",
             "2025-01-01T10:00:00", "hello", None, None, None,
             None, None, 0, None, None, None,
         )
-        rec = JsonGenerator._make_record(row, None)
+        rec = gen._make_record(row, None)
         assert rec["message_id"] == 42
         assert rec["username"] == "alice"
         assert rec["text"] == "hello"
         assert rec["stt_text"] is None
 
-    def test_static_make_record_with_stt(self):
+    def test_static_make_record_with_stt(self, gen):
         row = (
             0, -100, 42, None, 1, "alice",
             "2025-01-01T10:00:00", "hello", None, None, None,
             None, None, 0, None, None, None,
         )
-        rec = JsonGenerator._make_record(row, "transcribed text")
+        rec = gen._make_record(row, "transcribed text")
         assert rec["stt_text"] == "transcribed text"
 
-    def test_static_make_record_none_fields(self):
+    def test_static_make_record_none_fields(self, gen):
         row = (
             0, -100, 1, None, 1, None,
             None, None, None, None, None,
             None, None, 0, None, None, None,
         )
-        rec = JsonGenerator._make_record(row, None)
+        rec = gen._make_record(row, None)
         assert rec["date"] is None
         assert rec["username"] is None
         assert rec["text"] is None
