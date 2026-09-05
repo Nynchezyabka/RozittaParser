@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QLineEdit,
 )
 
-from config import AppConfig
+from config import COMPONENTS_REGISTRY_URL, AppConfig
 from core.database import DBManager
 from features.export.filters import UserFilter
 from core.ui_shared.styles import (
@@ -3139,6 +3139,80 @@ class MainWindow(QMainWindow):
         self._on_stt_finished(self._last_collect_result)
 
     def _on_stt_finished(self, collect_result) -> None:
+        self._run_vlm(collect_result)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # ОПИСАНИЕ ИЗОБРАЖЕНИЙ (FEAT-5)
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _run_vlm(self, collect_result) -> None:
+        """
+        Описывает картинки между распознаванием речи и экспортом.
+
+        Порядок не случаен: описания должны лежать в БД до того, как
+        генераторы соберут документ, иначе выгрузка получится без них и
+        человеку придётся выгружать заново.
+
+        Функция выключена — идём дальше молча. Компонент не установлен —
+        тоже: диалог скачивания показывается ДО запуска выгрузки, а не
+        после часа парсинга (см. _confirm_vlm_component).
+        """
+        if not getattr(self._cfg, "describe_images", False):
+            self._start_export(collect_result)
+            return
+
+        chat_id = getattr(collect_result, "chat_id", None)
+        if chat_id is None:
+            self._start_export(collect_result)
+            return
+
+        db_path = getattr(collect_result, "db_path", "") or ""
+        if not db_path:
+            from core.utils import sanitize_filename
+            from config import DB_FILENAME
+            chat_title = getattr(collect_result, "chat_title", "") or ""
+            db_path = os.path.join(
+                str(self._cfg.output_dir), sanitize_filename(chat_title),
+                DB_FILENAME)
+
+        from features.vlm.ui import VlmWorker
+
+        self._last_collect_result = collect_result
+        self._update_progress(0)
+        self._set_status("busy", "Описываю изображения...")
+        self._rozetta.set_tip("Смотрю картинки...")
+
+        worker = VlmWorker(
+            db_path        = db_path,
+            chat_id        = chat_id,
+            components_dir = self._cfg.components_path,
+            registry_url   = COMPONENTS_REGISTRY_URL,
+        )
+        worker.log_message.connect(self._log.append_info, Qt.UniqueConnection)
+        worker.progress.connect(self._update_progress, Qt.UniqueConnection)
+        worker.error.connect(self._on_vlm_error, Qt.UniqueConnection)
+        worker.character_state.connect(self._rozetta.set_state,
+                                       Qt.UniqueConnection)
+        worker.finished.connect(self._on_vlm_finished_slot, Qt.UniqueConnection)
+        self._start_worker(worker)
+
+    def _on_vlm_finished_slot(self) -> None:
+        """Именованный слот: Qt.UniqueConnection не работает с лямбдой (правило #13)."""
+        self._start_export(self._last_collect_result)
+
+    def _on_vlm_error(self, message: str) -> None:
+        """
+        Сбой описания не отменяет выгрузку.
+
+        Документ без описаний картинок — всё ещё документ, а потерять час
+        парсинга из-за необязательной функции человек не простит. Ровно
+        так же ведёт себя ошибка STT.
+        """
+        self._log.append_error(
+            f"⚠️ Описание изображений не удалось (экспорт продолжается): "
+            f"{message}")
+
+    def _start_export(self, collect_result) -> None:
         fmts = self._settings_screen.get_export_formats()
         label = " + ".join(f.upper() for f in fmts)
         self._set_status("busy", f"Генерация {label}...")

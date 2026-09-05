@@ -68,6 +68,13 @@ setup_external_binaries()
 CONFIG_FILE   = "config_modern.json"        # хранит пользовательские настройки
 SESSION_NAME  = "telegram_session_modern"   # имя файла Telethon-сессии (без .session)
 DB_FILENAME   = "telegram_archive.db"       # имя файла SQLite в output_dir
+
+# Реестр загружаемых компонентов (COMPONENTS.md §3.1). Лежит ассетом
+# у релиза-«полки»: так его можно обновить, не выпуская приложение.
+COMPONENTS_REGISTRY_URL = (
+    "https://github.com/Nynchezyabka/RozittaParser/releases/download/"
+    "components/components_registry.json"
+)
 LOG_FILENAME  = "rozitta_parser.log"        # файл логов
 
 # --- Директории ---
@@ -143,6 +150,15 @@ class AppConfig:
     stt_model:    str        = field(default=STT_MODEL_DEFAULT)
     stt_language: str        = field(default=STT_LANGUAGE_DEFAULT)
 
+    # Описание изображений (FEAT-5). Работу делает загружаемый
+    # компонент, поэтому по умолчанию выключено: без него функция
+    # ничего не сделает, а включённый тумблер обещал бы обратное.
+    describe_images: bool    = False
+    # Куда ставить компоненты. Пусто — рядом с exe, как session и
+    # config: портативность это философия проекта. Переопределяется
+    # на случай маленького системного диска (COMPONENTS.md §2).
+    components_dir:  str     = ""
+
     # Поля, не сохраняемые в JSON (только runtime)
     output_dir:   str        = field(default="output", repr=False)
     session_name: str        = field(default=SESSION_NAME, repr=False)
@@ -184,6 +200,19 @@ class AppConfig:
     def session_path(self) -> str:
         """Полный путь к файлу Telethon-сессии."""
         return os.path.abspath(self.session_name)
+
+    @property
+    def components_path(self) -> str:
+        """
+        Куда ставятся загружаемые компоненты (COMPONENTS.md §2).
+
+        По умолчанию — папка `components` рядом с exe, там же где session
+        и config: всё лежит вместе, приложение переносится копированием.
+        Пользователь может увести её на другой диск, если системный мал.
+        """
+        if self.components_dir:
+            return os.path.abspath(self.components_dir)
+        return os.path.abspath("components")
 
     # ------------------------------------------------------------------
     # Валидация
@@ -265,6 +294,8 @@ def load_config(path: str = CONFIG_FILE) -> AppConfig:
             split_mode    = str(data.get("split_mode", "none")),
             stt_model     = str(data.get("stt_model", STT_MODEL_DEFAULT)),
             stt_language  = str(data.get("stt_language", STT_LANGUAGE_DEFAULT)),
+            describe_images = bool(data.get("describe_images", False)),
+            components_dir  = str(data.get("components_dir", "")),
             proxy_enabled = bool(data.get("proxy_enabled", False)),
             proxy_type    = str(data.get("proxy_type", "socks5")),
             proxy_host    = str(data.get("proxy_host", "127.0.0.1")),
@@ -311,6 +342,8 @@ def save_config(cfg: AppConfig, path: str = CONFIG_FILE) -> None:
         "split_mode":    cfg.split_mode,
         "stt_model":     cfg.stt_model,
         "stt_language":  cfg.stt_language,
+        "describe_images": cfg.describe_images,
+        "components_dir":  cfg.components_dir,
         "proxy_enabled": cfg.proxy_enabled,
         "proxy_type":    cfg.proxy_type,
         "proxy_host":    cfg.proxy_host,
