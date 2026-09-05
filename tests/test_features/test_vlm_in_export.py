@@ -56,12 +56,26 @@ GENERATORS = [
     (DocxGenerator, ".docx"),
 ]
 
+# Форматы для машины: описание нужно всегда — оно единственный способ
+# найти скриншот поиском по корпусу.
+FOR_MACHINES = [(MarkdownGenerator, ".md"), (JsonGenerator, ".json")]
+
+# Форматы для человека: он смотрит на саму картинку, и описание под ней —
+# шум. Оно появляется только там, где картинки не будет.
+FOR_HUMANS = [(HtmlGenerator, ".html"), (DocxGenerator, ".docx")]
+
 
 class TestDescriptionReachesEveryFormat:
     @pytest.mark.parametrize("gen_cls,ext", GENERATORS)
     def test_description_is_in_the_document(self, db_with_photo, tmp_path,
                                             gen_cls, ext):
-        """Правка, потерянная в одном генераторе, роняет ровно один случай."""
+        """
+        Правка, потерянная в одном генераторе, роняет ровно один случай.
+
+        Файла картинки на диске нет — значит описание обязано быть во всех
+        четырёх форматах: для машины по существу, для человека вместо
+        пропавшего изображения.
+        """
         db_with_photo.insert_image_description(1, CHAT, DESCRIPTION)
         gen = gen_cls(db=db_with_photo, output_dir=str(tmp_path))
         path = gen.generate(CHAT, "Канал", period_label="alltime")[0]
@@ -79,6 +93,56 @@ class TestDescriptionReachesEveryFormat:
         gen = gen_cls(db=db_with_photo, output_dir=str(tmp_path))
         path = gen.generate(CHAT, "Канал", period_label="alltime")[0]
         assert vlm.IMAGE_MARK not in _read(path)
+
+
+class TestHumanFormatsDoNotDuplicateThePicture:
+    """
+    Асимметрия форматов, та же по смыслу, что у заглушек фильтра
+    (EXPORT_NAMING.md §7): что нужно документу, вредно корпусу.
+
+    Человек смотрит на фотографию — сообщать ему словами «куст с белыми
+    цветами» незачем. Машина картинку не видит вовсе.
+    """
+
+    @pytest.fixture
+    def db_with_real_file(self, db_with_photo, tmp_path):
+        """Та же база, но файл картинки лежит на диске."""
+        from PIL import Image
+
+        img = tmp_path / "фото.jpg"
+        Image.new("RGB", (80, 60), (10, 90, 40)).save(img, "JPEG")
+        with db_with_photo._cursor() as cur:
+            cur.execute("UPDATE messages SET media_path = ? WHERE message_id = 1",
+                        (str(img),))
+        db_with_photo.insert_image_description(1, CHAT, DESCRIPTION)
+        return db_with_photo
+
+    @pytest.mark.parametrize("gen_cls,ext", FOR_HUMANS)
+    def test_no_description_when_the_picture_is_there(
+            self, db_with_real_file, tmp_path, gen_cls, ext):
+        gen = gen_cls(db=db_with_real_file, output_dir=str(tmp_path))
+        path = gen.generate(CHAT, "Канал", period_label="alltime")[0]
+        assert "номер 222" not in _read(path),             f"{ext}: описание дублирует картинку, которую человек и так видит"
+
+    @pytest.mark.parametrize("gen_cls,ext", FOR_MACHINES)
+    def test_machines_get_it_regardless(self, db_with_real_file, tmp_path,
+                                        gen_cls, ext):
+        """Наличие файла на диске машинным форматам безразлично."""
+        gen = gen_cls(db=db_with_real_file, output_dir=str(tmp_path))
+        path = gen.generate(CHAT, "Канал", period_label="alltime")[0]
+        assert "номер 222" in _read(path),             f"{ext}: описание пропало, скриншот стал ненаходимым"
+
+    @pytest.mark.parametrize("gen_cls,ext", FOR_HUMANS)
+    def test_description_returns_when_the_file_is_gone(
+            self, db_with_photo, tmp_path, gen_cls, ext):
+        """
+        Файл удалили или не скачали — «📎 [медиафайл недоступен]» это всё,
+        что осталось бы. Описание становится единственным следом.
+        """
+        db_with_photo.insert_image_description(1, CHAT, DESCRIPTION)
+        gen = gen_cls(db=db_with_photo, output_dir=str(tmp_path))
+        path = gen.generate(CHAT, "Канал", period_label="alltime")[0]
+        assert "номер 222" in _read(path)
 
 
 class TestFramingSurvivesTheDocument:

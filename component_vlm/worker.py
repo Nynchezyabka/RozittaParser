@@ -48,12 +48,56 @@ EXIT_FATAL = 2
 # Имена весов, которые компонент ожидает найти в своей папке models/.
 # Решение CM-0: Qwen3-VL 4B в Q4_K_M, проектор Q8_0 — тот же счёт, что у
 # F16, на полсекунды быстрее и на 390 МБ легче.
+# Модель публикуется разбитой: у GitHub предел 2 ГиБ на файл в релизе,
+# а она весит 2497 МБ (§3.1.1). Серверу отдаётся первый кусок — остальные
+# llama.cpp находит сам по имени.
 MODEL_FILES = {
-    "base": ("Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+    "base": ("Qwen3VL-4B-00001-of-00002.gguf",
              "mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf"),
 }
 
 logger = logging.getLogger("rozitta.vlm")
+
+
+def _default_root() -> Path:
+    """
+    Папка компонента: рядом с ней лежат бинарники llama.cpp и веса.
+
+    В собранном виде считать её от `__file__` нельзя: PyInstaller кладёт
+    модули внутрь `_internal`, и путь уезжает на уровень глубже, чем нужно.
+    У замороженной программы честный ориентир один — сам исполняемый файл.
+
+    ROZITTA_VLM_ROOT перекрывает оба случая: без него воркер нельзя было бы
+    прогнать из репозитория против настоящей модели, и обещание «работает»
+    осталось бы непроверенным до самой сборки.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+_MODELS_SEARCH_DEPTH = 3
+
+
+def _find_models_dir(root: Path, model_file: str) -> Path:
+    """
+    Ищет папку `models` с нужным файлом, поднимаясь от root вверх.
+
+    Считать уровни было ошибкой: в бою раскладка
+    `components/vlm/1.0.0/RozittaVLM/` кладёт веса на ДВА уровня выше
+    воркера, а не на один, — и первая сборка честно упала, не найдя их.
+    Подъём вверх переживает и эту раскладку, и отладочную, где веса лежат
+    прямо рядом.
+
+    Returns:
+        Первую подходящую папку. Если ничего не нашлось — `root/models`:
+        пусть ошибка назовёт ожидаемое место, а не самое дальнее.
+    """
+    for level in [root] + list(root.parents)[:_MODELS_SEARCH_DEPTH]:
+        candidate = level / "models"
+        if (candidate / model_file).is_file():
+            return candidate
+    return root / "models"
 
 
 def _progress(done: int, total: int) -> None:
@@ -98,15 +142,7 @@ def describe_images(
         raise EngineError(f"неизвестная модель: {model}")
     model_file, mmproj_file = names
 
-    # Веса ищем и рядом с воркером, и на уровень выше. Второе — обычный
-    # случай в бою: установка кладёт их рядом с папками версий, чтобы
-    # обновление сборки не стирало три гигабайта (COMPONENTS.md §3.1).
-    models_dir = root / "models"
-    if not (models_dir / model_file).is_file():
-        shared = root.parent / "models"
-        if (shared / model_file).is_file():
-            models_dir = shared
-
+    models_dir = _find_models_dir(root, model_file)
     server_exe = find_binaries(root)
 
     descriptions: Dict[str, Optional[str]] = {}
@@ -177,13 +213,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not images:
         return _fail(result_path, "в задании нет картинок", EXIT_TASK_ERROR)
 
-    # В собранном компоненте бинарники и веса лежат рядом с воркером.
-    # ROZITTA_VLM_ROOT нужен, чтобы прогнать воркер из репозитория против
-    # настоящей модели, не собирая exe: без такой возможности CM-2
-    # проверялся бы только моками, а обещание «работает» осталось бы
-    # непроверенным до самого CM-4.
-    root = Path(os.environ.get("ROZITTA_VLM_ROOT")
-                or Path(__file__).resolve().parent.parent)
+    root = Path(os.environ.get("ROZITTA_VLM_ROOT") or _default_root())
     try:
         payload = describe_images(images, root, task.get("model") or "base")
     except EngineError as exc:

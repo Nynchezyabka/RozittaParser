@@ -284,6 +284,37 @@ def _group_by_merge(messages: List[tuple]) -> List[List[tuple]]:
     return groups
 
 
+def _image_is_shown(row) -> bool:
+    """
+    Картинка попадёт в документ своим видом, а не описанием.
+
+    Нужно форматам, которые читает человек. Описывать словами то, что он и
+    так видит, — шум: модель сообщает «куст с белыми цветами» тому, кто
+    смотрит на куст с белыми цветами.
+
+    А вот когда файла нет — «📎 [медиафайл недоступен]» это всё, что
+    остаётся, и описание становится единственным следом содержимого.
+    """
+    media_path = row[_COL_MEDIA_PATH]
+    if not media_path or not os.path.exists(media_path):
+        return False
+    return is_image_path(os.path.abspath(media_path))
+
+
+def _description_for_humans(gen, row) -> Optional[str]:
+    """
+    Описание для DOCX и HTML — только если самой картинки не будет.
+
+    Асимметрия между форматами намеренная, как у заглушек фильтра
+    (EXPORT_NAMING.md §7): что нужно документу, вредно корпусу, и наоборот.
+    MD и JSON читает машина — там описание нужно всегда, оно и есть
+    единственный способ найти скриншот поиском.
+    """
+    if _image_is_shown(row):
+        return None
+    return _image_description(gen, row)
+
+
 def _image_description(gen, row) -> Optional[str]:
     """
     Описание картинки для строки, если оно есть (FEAT-5).
@@ -1144,7 +1175,7 @@ class DocxGenerator:
                     stt_p.paragraph_format.left_indent = Inches(_COMMENT_INDENT_INCHES)
 
         # --- Описание изображения (FEAT-5) ---
-        caption, desc = frame_for_docx_lines(_image_description(self, msg))
+        caption, desc = frame_for_docx_lines(_description_for_humans(self, msg))
         if desc:
             desc_p = doc.add_paragraph()
             desc_label = desc_p.add_run(f"{caption} ")
@@ -2252,7 +2283,7 @@ class HtmlGenerator:
                     f'<div class="msg-stt">🎙 {html_lib.escape(stt.strip())}</div>'
                 )
 
-            image_block = frame_for_html(_image_description(self, row))
+            image_block = frame_for_html(_description_for_humans(self, row))
 
             depth_class = f"depth-{min(depth, 5)}"
 
@@ -2393,7 +2424,7 @@ class HtmlGenerator:
             text_block    = text_block,
             media_block   = media_block,
             stt_block     = stt_block,
-            image_block   = frame_for_html(_image_description(self, row)),
+            image_block   = frame_for_html(_description_for_humans(self, row)),
         )
 
     def generate_by_posts(
