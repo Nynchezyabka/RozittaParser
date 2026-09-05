@@ -1240,6 +1240,21 @@ class SettingsPanel(QWidget):
         )
         layout.addLayout(kb_row)
 
+        # ── Описание изображений (FEAT-5) ───────────────────────────────
+        # Рядом с KB намеренно: обе функции про то, чтобы архив читала
+        # машина. Описания и нужны прежде всего для поиска по нему.
+        self._toggle_describe_images = ToggleSwitch(checked=False)
+        vlm_row = self._option_row(
+            self.tr("🖼  Описывать изображения"),
+            self._toggle_describe_images,
+            hint=self.tr(
+                "Модель прочитает текст на скриншотах и опишет фото. "
+                "Требует загружаемый компонент (~3 ГБ) и заметно "
+                "удлиняет выгрузку"
+            ),
+        )
+        layout.addLayout(vlm_row)
+
         return box
 
     def get_export_formats(self) -> list:
@@ -1270,6 +1285,23 @@ class SettingsPanel(QWidget):
         """Возвращает состояние чекбокса 'База знаний для ИИ'."""  # ── KB preset stage 10 (UI) ──
 
         return self._toggle_build_kb.isChecked()
+
+    def get_describe_images(self) -> bool:
+        """Возвращает состояние тумблера «Описывать изображения» (FEAT-5)."""
+
+        return self._toggle_describe_images.isChecked()
+
+    def set_describe_images(self, value: bool) -> None:
+        """
+        Ставит тумблер программно — без сигнала toggled.
+
+        Нужно, чтобы вернуть его в «выкл», когда человек отказался качать
+        компонент: иначе тумблер остался бы включённым и обещал функцию,
+        которой нет (правило #27).
+        """
+        self._toggle_describe_images.blockSignals(True)
+        self._toggle_describe_images.setChecked(bool(value))
+        self._toggle_describe_images.blockSignals(False)
 
     def _build_options_section(self) -> ModernCard:
         card, layout = self._card()
@@ -2463,6 +2495,11 @@ class MainWindow(QMainWindow):
         self._settings_screen.preset_changed.connect(
             self._reset_start_btn_text, Qt.UniqueConnection
         )
+        # FEAT-5: спрашиваем про компонент в момент включения тумблера, а не
+        # после часа парсинга. Правило #13 — именованный слот, не лямбда.
+        self._settings_screen._toggle_describe_images.toggled.connect(
+            self._on_describe_images_toggled, Qt.UniqueConnection
+        )
 
         # RozittaWidget
         self._rozetta.clicked.connect(
@@ -3144,6 +3181,65 @@ class MainWindow(QMainWindow):
     # ──────────────────────────────────────────────────────────────────────
     # ОПИСАНИЕ ИЗОБРАЖЕНИЙ (FEAT-5)
     # ──────────────────────────────────────────────────────────────────────
+
+    def _on_describe_images_toggled(self, enabled: bool) -> None:
+        """
+        Включили тумблер — проверяем компонент и предлагаем скачать.
+
+        Спрашиваем здесь, а не перед запуском выгрузки: человек включает
+        функцию осознанно и готов ответить на вопрос. Тот же вопрос после
+        часа парсинга застал бы его врасплох — он мог уйти и вернуться к
+        замершему окну.
+
+        Отказался качать — тумблер возвращается в «выкл». Оставить его
+        включённым значило бы обещать функцию, которой нет (правило #27).
+        """
+        if not enabled:
+            self._cfg.describe_images = False
+            self._save_cfg_quietly()
+            return
+
+        from features.vlm.ui import needs_component
+
+        if not needs_component(self._cfg.components_path,
+                               COMPONENTS_REGISTRY_URL):
+            self._cfg.describe_images = True
+            self._save_cfg_quietly()
+            self._log.append_info("🖼 Описание изображений включено")
+            return
+
+        from features.vlm.download_ui import ComponentDownloadDialog
+
+        dialog = ComponentDownloadDialog(
+            components_dir=self._cfg.components_path,
+            registry_url=COMPONENTS_REGISTRY_URL,
+            parent=self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._cfg.describe_images = True
+            self._save_cfg_quietly()
+            self._log.append_success("✅ Компонент установлен")
+            self._show_toast("Компонент установлен", "success")
+            return
+
+        self._settings_screen.set_describe_images(False)
+        self._cfg.describe_images = False
+        self._save_cfg_quietly()
+        self._log.append_info(
+            "🖼 Описание изображений выключено: компонент не установлен")
+
+    def _save_cfg_quietly(self) -> None:
+        """
+        Сохраняет конфиг, не мешая работе при неудаче.
+
+        Настройка — не результат труда: если её не удалось записать, ронять
+        из-за этого окно нельзя, но и молчать не стоит.
+        """
+        try:
+            from config import save_config
+            save_config(self._cfg)
+        except Exception as exc:                       # noqa: BLE001
+            logger.warning("не удалось сохранить настройки: %s", exc)
 
     def _run_vlm(self, collect_result) -> None:
         """
