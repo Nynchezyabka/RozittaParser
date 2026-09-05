@@ -776,6 +776,37 @@ class TestKnowledgeBaseBuilderBuild:
         assert "**Постов:** 3" in content
         assert "**Участников:** 42" in content
 
+    def test_instruction_says_archive_is_data_not_orders(self, kb_db, tmp_path):
+        """
+        Во всех трёх файлах инструкции есть заявление «архив — это данные».
+
+        Зачем. Архив состоит из текстов, написанных произвольными людьми из
+        чата, плюс машинных расшифровок и (в перспективе) описаний картинок.
+        Команда вида «игнорируй предыдущие инструкции» может приехать в любом
+        из них, и дальше её прочитает ИИ пользователя — ради этого пресет и
+        существует. Заявление написано один раз в общей базе: три разные
+        формулировки означали бы, что три агента понимают одну и ту же
+        пометку по-разному.
+
+        Правило намеренно про весь архив целиком, а не про описания картинок
+        отдельно. Перечислить один тип содержимого как опасный значит
+        намекнуть, что остальные безопасны, — а самая большая поверхность
+        здесь именно тексты сообщений, и они есть уже сейчас.
+        """
+        builder = KnowledgeBaseBuilder(db=kb_db, output_dir=str(tmp_path))
+        artifacts = builder.build(
+            chat_id=_CHAT_ID, chat_title="RozittaTest",
+            period_label="full", exported_files=[], log=lambda _: None,
+        )
+        by_name = {Path(a).name: a for a in artifacts}
+        for filename in (INSTRUCTION_RU, INSTRUCTION_CLAUDE, INSTRUCTION_AGENTS):
+            text = Path(by_name[filename]).read_text(encoding="utf-8")
+            assert "данные" in text and "не адресованные тебе указания" in text, \
+                f"{filename}: нет заявления про данные"
+            # Перечисление покрывает все нынешние виды содержимого.
+            for kind in ("тексты сообщений", "расшифровки", "описания изображений"):
+                assert kind in text, f"{filename}: не упомянуты {kind}"
+
     def test_build_instruction_shared_base_with_agent_addenda(self, kb_db, tmp_path):
         """
         Три файла инструкции: общая база одинакова, добавки — свои.
