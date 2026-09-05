@@ -137,6 +137,18 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     PRIMARY KEY (message_id, peer_id)
 );
 
+-- Описания изображений (FEAT-5). Форма зеркальна transcriptions: та же
+-- пара ключей, тот же INSERT OR REPLACE. Отдельная таблица, а не поле kind
+-- в transcriptions, — чтобы не трогать существующие SELECT'ы STT.
+CREATE TABLE IF NOT EXISTS image_descriptions (
+    message_id  INTEGER NOT NULL,
+    peer_id     INTEGER NOT NULL,
+    description TEXT    NOT NULL,
+    model_type  TEXT    NOT NULL DEFAULT 'qwen3vl-4b',
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (message_id, peer_id)
+);
+
 CREATE TABLE IF NOT EXISTS cached_dialogs (
     chat_id              INTEGER PRIMARY KEY,
     title                TEXT,
@@ -1092,6 +1104,93 @@ class DBManager:
             SELECT t.message_id, t.text
             FROM transcriptions t
             JOIN messages m ON m.message_id = t.message_id AND m.chat_id = t.peer_id
+            WHERE m.chat_id = ?
+        """
+        with self._cursor() as cur:
+            cur.execute(sql, (chat_id,))
+            return {row[0]: row[1] for row in cur.fetchall()}
+
+    # ── Описания изображений (FEAT-5) ────────────────────────────────────
+
+    def insert_image_description(
+            self,
+            message_id:  int,
+            peer_id:     int,
+            description: str,
+            model_type:  str = "qwen3vl-4b",
+    ) -> None:
+        """
+        Сохраняет описание изображения.
+
+        INSERT OR REPLACE — повторный прогон обновит текст, а не создаст
+        второй. Это же делает выгрузку возобновляемой: остановленную на
+        середине пачку можно запустить снова, и уже описанные картинки
+        просто не попадут в кандидаты.
+        """
+        sql = """
+            INSERT OR REPLACE INTO image_descriptions
+                (message_id, peer_id, description, model_type, created_at)
+            VALUES
+                (:message_id, :peer_id, :description, :model_type, datetime('now'))
+        """
+        for attempt in range(_MAX_RETRIES):
+            try:
+                with self._cursor() as cur:
+                    cur.execute(sql, {
+                        "message_id":  message_id,
+                        "peer_id":     peer_id,
+                        "description": description,
+                        "model_type":  model_type,
+                    })
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" in str(exc).lower() and attempt < _MAX_RETRIES - 1:
+                    time.sleep(_RETRY_BASE_DELAY * (2 ** attempt))
+                    continue
+                raise
+
+    def get_vlm_candidates(self, chat_id: int) -> List[sqlite3.Row]:
+        """
+        Картинки чата, которые ещё не описаны.
+
+        Отбор по типу файла делается здесь, а не у вызывающего: описывать
+        имеет смысл только изображения, а `media_path` есть и у голосовых,
+        и у документов. Список типов совпадает с тем, что пишет парсер
+        (`ParserService._detect_media_type`) — рассинхрон этих строк даёт
+        тихий отказ, ровно как было с кружочками в STT.
+
+        Returns:
+            Список sqlite3.Row (id, message_id, media_path, file_type),
+            в хронологическом порядке.
+        """
+        sql = """
+            SELECT m.id, m.message_id, m.media_path, m.file_type
+            FROM messages m
+            LEFT JOIN image_descriptions d
+                ON d.message_id = m.message_id AND d.peer_id = m.chat_id
+            WHERE m.chat_id = ?
+              AND m.media_path IS NOT NULL
+              AND m.media_path != ''
+              AND m.file_type IN ('photo', 'image')
+              AND d.message_id IS NULL
+            ORDER BY m.date ASC
+        """
+        with self._cursor() as cur:
+            cur.execute(sql, (chat_id,))
+            return cur.fetchall()
+
+    def get_image_descriptions_for_chat(self, chat_id: int) -> dict:
+        """
+        Возвращает {message_id: description} всех описаний чата.
+
+        Форма повторяет get_transcriptions_for_chat(): генераторы экспорта
+        забирают карту одним запросом и дальше смотрят по message_id.
+        """
+        sql = """
+            SELECT d.message_id, d.description
+            FROM image_descriptions d
+            JOIN messages m
+              ON m.message_id = d.message_id AND m.chat_id = d.peer_id
             WHERE m.chat_id = ?
         """
         with self._cursor() as cur:
