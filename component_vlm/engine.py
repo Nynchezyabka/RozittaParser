@@ -277,13 +277,28 @@ def find_binaries(root: Path) -> Path:
     Порядок можно перекрыть переменной ROZITTA_VLM_BACKEND — нужно для
     отладки и для машин, где Vulkan есть, но неисправен.
     """
+    # Имена перечислены точно, а не шаблоном `llama-server*`. Шаблон
+    # подбирал `llama-server-impl.dll` — и подбирал ПЕРВЫМ, потому что при
+    # сортировке дефис идёт раньше точки. Воркер честно пытался запустить
+    # библиотеку и получал «не является приложением Win32». Мокнутые тесты
+    # этого не видели: в них find_binaries подменена целиком.
+    names = ("llama-server.exe", "llama-server")
+
+    def _look(pattern: str) -> Optional[Path]:
+        for name in names:
+            for candidate in sorted(root.glob(pattern.format(name=name))):
+                if candidate.is_file():
+                    return candidate
+        return None
+
     preferred = os.environ.get("ROZITTA_VLM_BACKEND", "").strip().lower()
     order = [preferred] if preferred else ["vulkan", "cpu"]
     for backend in order:
-        for candidate in sorted(root.glob(f"*{backend}*/**/llama-server*")):
-            if candidate.is_file():
-                return candidate
-    for candidate in sorted(root.glob("**/llama-server*")):
-        if candidate.is_file():
-            return candidate
+        found = _look(f"*{backend}*/**/{{name}}")
+        if found is not None:
+            return found
+
+    found = _look("**/{name}")
+    if found is not None:
+        return found
     raise EngineError(f"llama-server не найден в {root}")

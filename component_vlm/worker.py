@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -168,7 +169,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not images:
         return _fail(result_path, "в задании нет картинок", EXIT_TASK_ERROR)
 
-    root = Path(__file__).resolve().parent.parent
+    # В собранном компоненте бинарники и веса лежат рядом с воркером.
+    # ROZITTA_VLM_ROOT нужен, чтобы прогнать воркер из репозитория против
+    # настоящей модели, не собирая exe: без такой возможности CM-2
+    # проверялся бы только моками, а обещание «работает» осталось бы
+    # непроверенным до самого CM-4.
+    root = Path(os.environ.get("ROZITTA_VLM_ROOT")
+                or Path(__file__).resolve().parent.parent)
     try:
         payload = describe_images(images, root, task.get("model") or "base")
     except EngineError as exc:

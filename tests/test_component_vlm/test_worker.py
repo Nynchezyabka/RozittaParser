@@ -313,6 +313,56 @@ class TestLengthBudget:
 # Промпт
 # ──────────────────────────────────────────────────────────────────────────────
 
+class TestFindBinaries:
+    """
+    Поиск llama-server. Раздел появился после сквозного прогона: шаблон
+    `llama-server*` подбирал `llama-server-impl.dll`, причём первым —
+    при сортировке дефис идёт раньше точки. Воркер пытался запустить
+    библиотеку и падал с «не является приложением Win32».
+
+    Прежние тесты этого не ловили, потому что подменяли find_binaries
+    целиком. Здесь она работает по-настоящему.
+    """
+
+    def _layout(self, root: Path, backend: str, with_decoy: bool = True):
+        d = root / f"llama-b10816-bin-win-{backend}-x64"
+        d.mkdir(parents=True, exist_ok=True)
+        if with_decoy:
+            (d / "llama-server-impl.dll").write_bytes(b"not an exe")
+        (d / "llama-server.exe").write_bytes(b"MZ")
+        return d
+
+    def test_picks_the_executable_not_the_dll(self, tmp_path):
+        self._layout(tmp_path, "vulkan")
+        assert engine.find_binaries(tmp_path).name == "llama-server.exe"
+
+    def test_prefers_vulkan_over_cpu(self, tmp_path):
+        """
+        Vulkan быстрее вчетверо (замер CM-0: 8 с против 33 на картинку)
+        и работает на любой видеокарте без CUDA. При наличии обеих сборок
+        выбор очевиден.
+        """
+        self._layout(tmp_path, "cpu")
+        self._layout(tmp_path, "vulkan")
+        chosen = engine.find_binaries(tmp_path)
+        assert "vulkan" in str(chosen)
+
+    def test_falls_back_to_cpu(self, tmp_path):
+        self._layout(tmp_path, "cpu")
+        assert "cpu" in str(engine.find_binaries(tmp_path))
+
+    def test_backend_can_be_overridden(self, tmp_path, monkeypatch):
+        """Vulkan бывает установлен, но неисправен — нужен путь в обход."""
+        self._layout(tmp_path, "cpu")
+        self._layout(tmp_path, "vulkan")
+        monkeypatch.setenv("ROZITTA_VLM_BACKEND", "cpu")
+        assert "cpu" in str(engine.find_binaries(tmp_path))
+
+    def test_missing_binaries_is_an_engine_error(self, tmp_path):
+        with pytest.raises(engine.EngineError, match="не найден"):
+            engine.find_binaries(tmp_path)
+
+
 class TestPrompt:
     def test_prompt_asks_for_verbatim_text(self):
         """OCR — главная польза замера; без него описания теряют смысл для поиска."""
