@@ -98,7 +98,15 @@ def describe_images(
         raise EngineError(f"неизвестная модель: {model}")
     model_file, mmproj_file = names
 
+    # Веса ищем и рядом с воркером, и на уровень выше. Второе — обычный
+    # случай в бою: установка кладёт их рядом с папками версий, чтобы
+    # обновление сборки не стирало три гигабайта (COMPONENTS.md §3.1).
     models_dir = root / "models"
+    if not (models_dir / model_file).is_file():
+        shared = root.parent / "models"
+        if (shared / model_file).is_file():
+            models_dir = shared
+
     server_exe = find_binaries(root)
 
     descriptions: Dict[str, Optional[str]] = {}

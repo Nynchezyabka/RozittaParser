@@ -400,6 +400,82 @@ class TestDownload:
                      if p.name.startswith(".")]
         assert leftovers == [], f"остались временные папки: {leftovers}"
 
+    def test_weights_are_downloaded_next_to_the_component(self, tmp_path):
+        """
+        Веса едут отдельными файлами, а не внутри архива.
+
+        Причина внешняя и жёсткая: у GitHub предел 2 ГиБ на файл в релизе,
+        а модель весит 2.5 ГБ. Поэтому она публикуется разбитой, и вместе
+        со сборкой качаются отдельные файлы весов.
+        """
+        zip_path = make_zip(tmp_path)
+        w1 = tmp_path / "model-00001-of-00002.gguf"
+        w2 = tmp_path / "model-00002-of-00002.gguf"
+        w1.write_bytes(b"first shard")
+        w2.write_bytes(b"second shard")
+
+        url = make_registry(tmp_path, zip_path)
+        root = tmp_path / "components"
+        cm = ComponentManager(root, url)
+        version, info = cm.pick_version(cm.fetch_registry(), "vlm")
+        info["models"] = [
+            {"file": w1.name, "size_bytes": w1.stat().st_size,
+             "sha256": hashlib.sha256(w1.read_bytes()).hexdigest(),
+             "urls": [w1.as_uri()]},
+            {"file": w2.name, "size_bytes": w2.stat().st_size,
+             "urls": [w2.as_uri()]},
+        ]
+        cm.download("vlm", version, info)
+
+        # Рядом с папками версий, а не внутри: версию подменяют целиком.
+        models = root / "vlm" / "models"
+        assert (models / w1.name).read_bytes() == b"first shard"
+        assert (models / w2.name).read_bytes() == b"second shard"
+        assert not (root / "vlm" / version / "models").exists()
+
+    def test_existing_weights_are_not_refetched(self, tmp_path):
+        """
+        Прерванную установку можно продолжить, а не качать три гигабайта
+        заново. Совпал размер — файл считается на месте.
+        """
+        zip_path = make_zip(tmp_path)
+        weight = tmp_path / "w.gguf"
+        weight.write_bytes(b"x" * 100)
+        url = make_registry(tmp_path, zip_path)
+        root = tmp_path / "components"
+        cm = ComponentManager(root, url)
+        version, info = cm.pick_version(cm.fetch_registry(), "vlm")
+        info["models"] = [{"file": "w.gguf", "size_bytes": 100,
+                           "urls": [weight.as_uri()]}]
+
+        cm.download("vlm", version, info)
+        # Второй заход: источник убираем — если бы качал заново, упал бы.
+        weight.unlink()
+        cm.download("vlm", version, info)
+        assert (root / "vlm" / "models" / "w.gguf").is_file()
+
+    def test_bad_weight_checksum_is_caught(self, tmp_path):
+        zip_path = make_zip(tmp_path)
+        weight = tmp_path / "w.gguf"
+        weight.write_bytes("данные".encode("utf-8"))
+        url = make_registry(tmp_path, zip_path)
+        cm = ComponentManager(tmp_path / "components", url)
+        version, info = cm.pick_version(cm.fetch_registry(), "vlm")
+        info["models"] = [{"file": "w.gguf", "sha256": "0" * 64,
+                           "urls": [weight.as_uri()]}]
+        with pytest.raises(ComponentIntegrityError):
+            cm.download("vlm", version, info)
+
+    def test_component_without_weights_still_installs(self, tmp_path):
+        """Не у каждого компонента есть веса — отсутствие списка это норма."""
+        zip_path = make_zip(tmp_path)
+        cm = ComponentManager(tmp_path / "components",
+                              make_registry(tmp_path, zip_path))
+        version, info = cm.pick_version(cm.fetch_registry(), "vlm")
+        assert "models" not in info
+        cm.download("vlm", version, info)
+        assert cm.get_installed("vlm") is not None
+
     def test_falls_back_to_mirror(self, tmp_path):
         """Первая ссылка мертва — берём вторую, а не сдаёмся."""
         zip_path = make_zip(tmp_path)

@@ -407,3 +407,31 @@ def test_component_does_not_import_the_app():
                 imported.add(node.module.split(".")[0])
         leaked = imported & forbidden
         assert not leaked, f"{path}: компонент тянет приложение — {leaked}"
+
+
+def test_app_does_not_import_the_component():
+    """
+    Обратная проверка, и она важнее прямой.
+
+    PyInstaller собирает основной exe, идя по импортам от main.py. Стоит
+    хоть одному модулю приложения импортировать component_vlm — и в exe
+    приедут Pillow и всё, что компонент тянет за собой. Смысл затеи в том,
+    что основная сборка от этой функции не растёт ни на байт: тяжёлое
+    качается отдельно и только по кнопке.
+    """
+    import ast
+
+    for folder in ("core", "features", "ui"):
+        for path in Path(folder).rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                names = []
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    names = [node.module]
+                for name in names:
+                    assert not name.startswith("component_vlm"), (
+                        f"{path}: приложение импортирует компонент — "
+                        f"он приедет в exe вместе с Pillow"
+                    )

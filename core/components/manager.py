@@ -341,8 +341,69 @@ class ComponentManager:
         finally:
             tmp_path.unlink(missing_ok=True)
 
+        self._download_models(name, info, target, progress_cb, cancel_flag)
+
         logger.info("компонент %s %s установлен в %s", name, version, target)
         return target
+
+    def _download_models(
+        self,
+        name:        str,
+        info:        dict,
+        target:      Path,
+        progress_cb: ProgressCb,
+        cancel_flag: CancelFlag,
+    ) -> None:
+        """
+        Докачивает веса модели в <версия>/models/.
+
+        Веса едут отдельными файлами, а не внутри архива, по двум причинам.
+        Первая — у GitHub жёсткий предел 2 ГиБ на файл в релизе, и модель
+        в него не влезает даже одна, не то что в архив со сборкой. Поэтому
+        она публикуется разбитой (llama-gguf-split), а llama.cpp понимает
+        такую нативно: серверу отдаётся первый кусок, остальные он находит
+        сам.
+
+        Вторая — обновление сборки не должно тянуть за собой гигабайты.
+        Веса меняются редко, бинарники llama.cpp часто.
+
+        **Поэтому веса лежат рядом с папками версий, а не внутри них.**
+        Папку версии установка подменяет целиком (иначе неудачная
+        переустановка оставила бы человека без компонента), и веса внутри
+        неё стирались бы при каждом обновлении сборки — три гигабайта
+        заново ради пятидесяти мегабайт бинарников. Разные версии
+        компонента одни и те же веса просто делят.
+
+        Уже скачанное с совпавшим размером не перекачивается: прерванную
+        установку можно продолжить, а не начинать заново.
+        """
+        models = info.get("models") or []
+        if not models:
+            return
+
+        models_dir = target.parent / "models"
+        models_dir.mkdir(parents=True, exist_ok=True)
+
+        for entry in models:
+            if cancel_flag():
+                raise ComponentCancelled("Скачивание отменено")
+            filename = entry.get("file")
+            urls = list(entry.get("urls") or [])
+            if not filename or not urls:
+                raise RegistryError(
+                    f"Компонент «{name}»: в описании весов нет file или urls")
+
+            dest = models_dir / filename
+            expected_size = int(entry.get("size_bytes") or 0)
+            if dest.is_file() and expected_size and \
+                    dest.stat().st_size == expected_size:
+                logger.info("веса уже на месте: %s", filename)
+                continue
+
+            self._download_to(urls, dest, entry, progress_cb, cancel_flag)
+            expected = (entry.get("sha256") or "").lower().strip()
+            if expected:
+                self._verify(dest, expected)
 
     def _download_to(
         self,
