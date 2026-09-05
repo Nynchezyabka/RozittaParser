@@ -1,0 +1,332 @@
+name: Build VLM component
+
+# Сборка и публикация компонента «Распознавание изображений»
+# (COMPONENTS.md §7). Три тега, у каждого своя работа:
+#
+#   components-vlm-X.Y.Z          сборка: ~30 МБ, меняется часто
+#   components-vlm-weights-N      веса: ~2.9 ГБ, меняются редко
+#   components                    «полка» с реестром, на неё смотрит приложение
+#
+# Разделение не косметическое: правка бинарника не должна означать
+# перезалив трёх гигабайт, а обновление весов — пересборку exe.
+#
+# Ничего настраивать в интерфейсе GitHub не нужно: права ниже, токен
+# выдаётся автоматически.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия компонента (например 1.0.0)"
+        type: string
+        required: true
+        default: "1.0.0"
+      publish_weights:
+        description: "Также собрать и выложить веса (~2.9 ГБ, долго)"
+        type: boolean
+        required: false
+        default: false
+      weights_tag:
+        description: "Тег релиза весов (нужен всегда — на него ссылается реестр)"
+        type: string
+        required: false
+        default: "components-vlm-weights-1"
+  push:
+    tags:
+      - "components-vlm-[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+env:
+  # Сборка llama.cpp прибита гвоздями намеренно: «последняя» означала бы,
+  # что компонент, собранный сегодня и завтра, ведёт себя по-разному, а
+  # разбираться в этом потом будет некому.
+  LLAMA_BUILD: b10816
+  COMPONENT_NAME: vlm
+  PROTOCOL: 1
+  MIN_APP_VERSION: "1.9.0"
+
+jobs:
+  build:
+    name: Собрать компонент
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      weights_tag: ${{ steps.vars.outputs.weights_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Определить версию
+        id: vars
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            VERSION="${GITHUB_REF_NAME#components-vlm-}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "weights_tag=${{ inputs.weights_tag || 'components-vlm-weights-1' }}" >> "$GITHUB_OUTPUT"
+          echo "Версия компонента: $VERSION"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Установить зависимости сборки
+        shell: bash
+        run: pip install pyinstaller "pillow>=10.0.0"
+
+      - name: Скачать бинарники llama.cpp
+        shell: bash
+        run: |
+          BASE="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_BUILD}"
+          mkdir -p llama_bin
+          for backend in cpu vulkan; do
+            NAME="llama-${LLAMA_BUILD}-bin-win-${backend}-x64"
+            echo "качаю $NAME"
+            curl -sSfL -o "$NAME.zip" "$BASE/$NAME.zip"
+            # 7z, а не unzip: он предустановлен на раннерах Windows,
+            # а unzip в Git Bash есть не всегда.
+            7z x -y -o"llama_bin/$NAME" "$NAME.zip" >/dev/null
+            rm "$NAME.zip"
+          done
+          # Vulkan даёт вчетверо (замер CM-0: 8 с против 33 на картинку) и
+          # работает на любой видеокарте без CUDA-рантайма, который сам
+          # весит 390 МБ. CPU — для машин без карты вовсе.
+          du -sm llama_bin || true
+
+      - name: Собрать воркер
+        shell: bash
+        run: |
+          python -m PyInstaller rozitta_vlm.spec --noconfirm
+          test -f dist/RozittaVLM/RozittaVLM.exe || {
+            echo "::error::PyInstaller не создал RozittaVLM.exe"; exit 1; }
+
+      - name: Проверить, что в сборку не приехало лишнее
+        shell: bash
+        run: |
+          # Смысл компонента в том, что он лёгкий. Если сюда просочится
+          # torch или Qt, обновление начнёт весить сотни мегабайт, а
+          # заметят это не скоро.
+          FAIL=0
+          for junk in PySide6 telethon torch numpy docx; do
+            N=$(find dist/RozittaVLM -iname "*${junk}*" | wc -l)
+            if [[ "$N" -gt 0 ]]; then
+              echo "::error::в сборку попал $junk ($N файлов)"; FAIL=1
+            fi
+          done
+          SIZE=$(du -sm dist/RozittaVLM | cut -f1)
+          echo "размер сборки: ${SIZE} МиБ"
+          if [[ "$SIZE" -gt 120 ]]; then
+            echo "::error::сборка раздулась до ${SIZE} МиБ — ожидалось ~30"
+            FAIL=1
+          fi
+          exit $FAIL
+
+      - name: Собрать архив компонента
+        id: pack
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          NAME="RozittaVLM-win64-${VERSION}"
+          mkdir -p "pack/RozittaVLM"
+          cp -r dist/RozittaVLM/* "pack/RozittaVLM/"
+          cp -r llama_bin/* "pack/RozittaVLM/"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path("pack/RozittaVLM/component.json").write_text(json.dumps({
+              "name": os.environ["COMPONENT_NAME"],
+              "version": os.environ["VERSION"],
+              "protocol": int(os.environ["PROTOCOL"]),
+              "entry": "RozittaVLM.exe",
+          }, ensure_ascii=False), encoding="utf-8")
+          print("component.json записан")
+          PY
+          (cd pack && 7z a -tzip -mx=5 "../${NAME}.zip" "RozittaVLM" >/dev/null)
+          ls -la "${NAME}.zip"
+          echo "zip=${NAME}.zip" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+
+      - name: Опубликовать сборку
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        with:
+          tag_name: components-vlm-${{ steps.vars.outputs.version }}
+          name: "Компонент «Распознавание изображений» ${{ steps.vars.outputs.version }}"
+          body: |
+            Загружаемый компонент Rozitta Parser (COMPONENTS.md).
+
+            Внутри: воркер на llama.cpp `${{ env.LLAMA_BUILD }}`, сборки CPU
+            и Vulkan. Веса лежат отдельным релизом —
+            `${{ steps.vars.outputs.weights_tag }}`: у GitHub предел 2 ГиБ
+            на файл, а модель весит 2497 МБ, поэтому она публикуется
+            разбитой.
+
+            Скачивать вручную не нужно — приложение делает это само, когда
+            включают тумблер «Описывать изображения».
+          files: ${{ steps.pack.outputs.zip }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: component-zip
+          path: ${{ steps.pack.outputs.zip }}
+          retention-days: 7
+
+  weights:
+    name: Собрать и выложить веса
+    runs-on: windows-latest
+    if: inputs.publish_weights
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Скачать модель и проектор
+        shell: bash
+        run: |
+          REPO="https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main"
+          mkdir -p raw weights
+          echo "качаю модель (~2.5 ГБ)"
+          curl -sSfL -o raw/model.gguf "$REPO/Qwen3VL-4B-Instruct-Q4_K_M.gguf"
+          echo "качаю проектор (~454 МБ)"
+          curl -sSfL -o "weights/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf" \
+            "$REPO/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf"
+          du -sm raw weights
+
+      - name: Разбить модель под предел GitHub
+        shell: bash
+        run: |
+          # У GitHub жёсткий предел 2 ГиБ на файл в релизе, модель — 2497 МБ.
+          # llama-gguf-split режет её штатно, а llama-server понимает
+          # разбитую нативно: получает первый кусок, остальные находит сам.
+          BASE="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_BUILD}"
+          NAME="llama-${LLAMA_BUILD}-bin-win-cpu-x64"
+          curl -sSfL -o tool.zip "$BASE/$NAME.zip"
+          7z x -y -otool tool.zip >/dev/null
+          find tool -name "llama-gguf-split.exe" -exec cp {} . \;
+          ./llama-gguf-split.exe --split --split-max-size 1500M \
+            raw/model.gguf weights/Qwen3VL-4B
+          ls -la weights/
+          for f in weights/*.gguf; do
+            SIZE=$(stat -c %s "$f")
+            if [[ "$SIZE" -gt 2147483648 ]]; then
+              echo "::error::$f больше 2 ГиБ — GitHub такой ассет не примет"
+              exit 1
+            fi
+          done
+
+      - name: Опубликовать веса
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        with:
+          tag_name: ${{ needs.build.outputs.weights_tag }}
+          name: "Веса Qwen3-VL 4B для компонента"
+          body: |
+            Веса модели для компонента «Распознавание изображений».
+
+            Модель разбита на куски: у GitHub предел 2 ГиБ на файл, а она
+            весит 2497 МБ. llama.cpp понимает разбитую модель нативно —
+            серверу отдаётся первый кусок, остальные он находит сам.
+
+            Выбор сделан замером на живых фото (CM-0): Qwen3-VL 4B в Q4_K_M
+            с проектором Q8_0. Проектор F16 при том же счёте весит на
+            390 МБ больше, а модель 2B при равном балле пересказывает
+            вместо того, чтобы переписывать текст.
+
+            Отдельный релиз от сборки: веса меняются редко, бинарники часто.
+          files: weights/*.gguf
+
+  registry:
+    name: Обновить реестр
+    runs-on: ubuntu-latest
+    needs: [build, weights]
+    # Веса могли не собираться — тогда их описание переносится из текущего
+    # реестра. Ждать провалившийся шаг незачем, но и молча пропускать его
+    # тоже: always() плюс проверка результата build ниже.
+    if: always() && needs.build.result == 'success'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: component-zip
+
+      - name: Забрать текущий реестр (если он есть)
+        shell: bash
+        run: |
+          URL="https://github.com/${{ github.repository }}/releases/download/components/components_registry.json"
+          curl -sfL -o previous.json "$URL" && echo "прежний реестр получен" \
+            || echo "прежнего реестра нет — первая публикация"
+
+      - name: Собрать реестр
+        shell: bash
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          WTAG="${{ needs.build.outputs.weights_tag }}"
+          BASE="https://github.com/${{ github.repository }}/releases/download"
+          ZIP="RozittaVLM-win64-${VERSION}.zip"
+
+          ARGS=(--name "$COMPONENT_NAME" --version "$VERSION"
+                --protocol "$PROTOCOL" --min-app-version "$MIN_APP_VERSION"
+                --zip "$ZIP"
+                --zip-url "$BASE/components-vlm-${VERSION}/${ZIP}"
+                --out components_registry.json)
+
+          if [[ "${{ needs.weights.result }}" == "success" ]]; then
+            echo "веса собраны в этом прогоне — беру описание с релиза"
+            mkdir -p weights
+            for f in Qwen3VL-4B-00001-of-00002.gguf \
+                     Qwen3VL-4B-00002-of-00002.gguf \
+                     mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf; do
+              curl -sSfL -o "weights/$f" "$BASE/$WTAG/$f"
+            done
+            ARGS+=(--weights-dir weights --weights-base "$BASE/$WTAG")
+          else
+            echo "веса не пересобирались — переношу описание из прежнего реестра"
+            ARGS+=(--previous previous.json)
+          fi
+
+          python tools/make_component_registry.py "${ARGS[@]}"
+          cat components_registry.json
+
+      - name: Проверить, что реестр не остался без весов
+        shell: bash
+        run: |
+          # Реестр без описания весов установится, но компонент не заработает:
+          # воркер не найдёт модель и вернёт код 2. Лучше уронить сборку.
+          python - <<'PY'
+          import json, sys
+          reg = json.load(open("components_registry.json", encoding="utf-8"))
+          entry = reg["components"]["vlm"]
+          models = entry["versions"][entry["latest"]].get("models") or []
+          if not models:
+              print("::error::в реестре нет весов — компонент не заработает. "
+                    "Запустите с publish_weights, либо проверьте, что релиз "
+                    "весов существует.")
+              sys.exit(1)
+          print(f"весов в реестре: {len(models)}")
+          PY
+
+      - name: Выложить реестр на полку
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        with:
+          tag_name: components
+          name: "Реестр компонентов"
+          body: |
+            Список загружаемых компонентов Rozitta Parser.
+
+            Приложение читает отсюда `components_registry.json`, когда
+            включают функцию, требующую компонент. Файл обновляется
+            workflow'ом при каждой публикации сборки.
+
+            Этот релиз — полка, а не выпуск: скачивать его вручную не нужно.
+          files: components_registry.json
